@@ -1,0 +1,13 @@
+{
+    "display_name": "Cellar Link (TavernCellar)",
+    "loading_order": 200,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Qianzhuo",
+    "version": "0.1.0",
+    "homePage": "https://github.com/qianzhuowo/TavernCellar",
+    "auto_update": true,
+    "description": "连接本地 TavernCellar 伴侣程序：把角色卡、世界书取出到本地工作区编辑，并同步回 SillyTavern / TauriTavern。"
+}

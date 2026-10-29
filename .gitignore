@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build / packaging output
+dist/
+build/
+out/
+*.tgz
+*.vsix
+
+# Test output, coverage, local scratch (live-test scripts, isolated CELLAR_HOME, test workspaces)
+.tmp/
+tmp/
+coverage/
+.nyc_output/
+test-results/
+*.lcov
+
+# Runtime state that must never be committed
+.env
+.env.*
+.tavern-cellar/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
