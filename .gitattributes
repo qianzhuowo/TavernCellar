@@ -1,0 +1,23 @@
+# Normalize text to LF in the repository and in every working copy, regardless of core.autocrlf.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary assets (character card PNGs, images, fonts, archives)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary
+*.tgz   binary
+*.vsix  binary
+
+# Lockfiles: diff as text but treat as generated in reviews
+package-lock.json -diff linguist-generated=true
