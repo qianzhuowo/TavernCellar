@@ -59,13 +59,17 @@ CLI → `POST /api/checkout` → 伴侣程序向插件发 `item.get` → 解码�
 - 工作区有本地修改（W ≠ B）：标记冲突，把酒馆版本保存到 `.cellar/conflicts/`，不改动工作区文件。
 
 ### 自动同步
-绑定上 `autoSync: true` 时，文件监视发现 W ≠ B 且没有冲突，就自动执行一次同步。自动同步只走实时连接，不会离线写入酒馆目录。第 2 阶段会把同步模式并入版本管理。
+绑定上 `autoSync: true` 时，文件监视发现 W ≠ B 且没有冲突，就自动执行一次同步。可写的连接是实时连接，或处于「不开酒馆也同步」（`write`）的离线链接。第 2 阶段会把同步模式并入版本管理。
 
 ### 离线访问（按酒馆数据目录）
 配置 `locations` 设置了酒馆目录、且该酒馆启用过一次 Cellar Link（其设置里保存了 `targetId`）时，伴侣程序为它建立离线链接 `OfflineLink`，接口与实时连接相同：
 - 实时连接优先；酒馆未连接时，浏览、取出、拉取、同步都改为直接读写数据目录。读出的数据与插件报告的一致，哈希可以互通。
 - 写入仅在酒馆未运行时进行（运行中的酒馆会用内存里的副本覆盖文件，返回 `tavern_running`）。每次写入都复核基准哈希，先备份到工作区 `.cellar/backups/`（每项保留 5 份），再以临时文件 + 改名写入，最后复读。
 - `cellar use` / 「接受连接」关闭某类酒馆时，它的实时连接和离线访问一并关闭。
+- **酒馆未运行时**：每个酒馆位置有 `offlineSync`，由用户选择（`cellar tavern offline <st:N|tt:N> <wait|write>`、`POST /api/taverns/offline-sync`、Studio 设置与向导）：
+  - `wait`（默认，不写入配置）：等酒馆启动再同步。离线时照常编辑工作区，不写酒馆文件；手动同步返回 `waiting_for_tavern`（HTTP 423），状态标 `waiting: true`。Cellar Link 连上后，伴侣程序把开了随时同步、W ≠ B 且无冲突的项推送过去；酒馆在此期间也改过时，按基准哈希拒绝并记为冲突，不会覆盖。
+  - `write`：不开酒馆也同步。离线时手动同步和随时同步都直接写数据目录（规则同上，先备份）。从 `wait` 切到 `write` 时，积压的随时同步项立即写入。
+  - 两种方式都可离线浏览、取出、拉取。离线绑定在状态里带 `offlineSync`。
 - `GET /api/status` 对离线绑定直接读取酒馆当前哈希 T，给出真实状态并标 `offline: true`：`in-sync`、`local-changes`（W ≠ B）、`tavern-changes`（T ≠ B）、`both-changed`（W、T 都变且不同；同步会被拒绝并记为冲突）、`conflict`、`invalid`。
 
 ## 4. 目标（酒馆实例）

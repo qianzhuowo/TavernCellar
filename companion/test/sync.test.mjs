@@ -220,6 +220,38 @@ test('auto sync pushes on file save', async () => {
     assert.equal(tavern.store.lorebook.get('Book').entries[1].disable, false, 'entry template from capabilities applied');
 });
 
+test('reconnect pushes auto-sync edits made while the tavern was away; a changed tavern gets a conflict', async () => {
+    let away = new FakeTavern(server.port, { targetId: 'catchup-target' });
+    await away.ready;
+    const co = await api('POST', '/api/checkout', { target: 'catchup-target', kind: 'lorebook', id: 'Book' });
+    const path = co.result.path;
+    await api('POST', '/api/auto-sync', { path, target: 'catchup-target', enabled: true });
+    away.close();
+    await until(async () => !(await api('GET', '/api/status')).result.targets.some(t => t.id === 'catchup-target'));
+
+    const file = join(dir, path, 'entries/0000-c.md');
+    await writeFile(file, (await readFile(file, 'utf8')).replace('body', 'edited while away'));
+    await sleep(900); // watcher runs; no writable link, so nothing is pushed yet
+
+    const back = new FakeTavern(server.port, { targetId: 'catchup-target' });
+    await back.ready;
+    await until(() => back.store.lorebook.get('Book').entries[0].content === 'edited while away');
+    back.close();
+    await until(async () => !(await api('GET', '/api/status')).result.targets.some(t => t.id === 'catchup-target'));
+
+    await writeFile(file, (await readFile(file, 'utf8')).replace('edited while away', 'edited again'));
+    await sleep(900);
+    away = new FakeTavern(server.port, { targetId: 'catchup-target' }); // fresh store: differs from the last synced version
+    away.store.lorebook.get('Book').entries[0].content = 'changed in tavern meanwhile';
+    await away.ready;
+    await until(async () => {
+        const item = (await api('GET', '/api/status')).result.items.find(i => i.path === path);
+        return item.bindings[0].status === 'conflict';
+    });
+    assert.equal(away.store.lorebook.get('Book').entries[0].content, 'changed in tavern meanwhile', 'conflict never overwrites the tavern');
+    away.close();
+});
+
 test('invalid workspace files are not synced', async () => {
     const puts = tavern.puts;
     await writeFile(join(dir, 'lorebooks/Book/book.json'), '{ nope');

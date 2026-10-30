@@ -95,6 +95,19 @@ test('offline mode wait: edits stay local; switching to write pushes auto-sync i
     await engine.setAutoSync('lorebooks/Book', { enabled: false });
 });
 
+test('offline mode write: auto-sync writes the data folder on save', async () => {
+    setMode('write');
+    await engine.setAutoSync('lorebooks/Book', { enabled: true });
+    const entryDir = join(ws.root, 'lorebooks', 'Book', 'entries');
+    const [entry] = (await readdir(entryDir)).filter(n => n.endsWith('.md'));
+    const file = join(entryDir, entry);
+    await writeFile(file, (await readFile(file, 'utf8')).replace('edited locally!', 'edited locally!!'));
+    await engine.onFilesChanged('lorebooks/Book');
+    assert.equal(JSON.parse(await readFile(worldFile, 'utf8')).entries[0].content.trim(), 'edited locally!!');
+    assert.equal((await statusOf()).status, 'in-sync');
+    await engine.setAutoSync('lorebooks/Book', { enabled: false });
+});
+
 test('offline: both sides changed shows both-changed and sync refuses', async () => {
     const entryDir = join(ws.root, 'lorebooks', 'Book', 'entries');
     const [entry] = (await readdir(entryDir)).filter(n => n.endsWith('.md'));
