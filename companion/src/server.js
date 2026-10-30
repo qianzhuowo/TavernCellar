@@ -4,7 +4,10 @@
  */
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import {
     CLOSE, ERR, HELLO_TIMEOUT_MS, LINK_PATH, MSG, PROTOCOL_VERSION, ProtocolError, REQUEST_TIMEOUT_MS, TAVERN_HOSTS,
@@ -20,6 +23,63 @@ import { OfflineLink } from './taverns/offline.js';
 
 export const SERVER_NAME = 'TavernCellar';
 export const SERVER_VERSION = '0.1.0';
+export const STUDIO_PATH = '/studio/';
+
+/** Folder served at /studio/: the built Studio UI when present, otherwise the prototype. */
+export function defaultStudioDir() {
+    const studio = fileURLToPath(new URL('../../studio/', import.meta.url));
+    const built = join(studio, 'dist');
+    return existsSync(join(built, 'index.html')) ? built : join(studio, 'prototype');
+}
+
+const MIME = {
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml',
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2', '.woff': 'font/woff', '.map': 'application/json; charset=utf-8',
+};
+
+/** Static, read-only files for the Studio page. Returns false when the path is not a Studio path. */
+async function serveStudio(req, res, pathname, studioDir) {
+    if (pathname === '/' || pathname === '/studio') {
+        res.writeHead(302, { Location: STUDIO_PATH });
+        res.end();
+        return true;
+    }
+    if (!pathname.startsWith(STUDIO_PATH)) return false;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { Allow: 'GET, HEAD' });
+        res.end();
+        return true;
+    }
+    let rel;
+    try {
+        rel = decodeURIComponent(pathname.slice(STUDIO_PATH.length)) || 'index.html';
+    } catch {
+        rel = '\0';
+    }
+    const root = resolve(studioDir);
+    const file = resolve(root, rel);
+    if (rel.includes('\0') || (file !== root && !file.startsWith(root + sep))) {
+        res.writeHead(400);
+        res.end();
+        return true;
+    }
+    try {
+        const body = await readFile(file);
+        res.writeHead(200, {
+            'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+            'Cache-Control': 'no-cache',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'",
+        });
+        res.end(req.method === 'HEAD' ? undefined : body);
+    } catch {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Not found');
+    }
+    return true;
+}
 
 function tokenMatches(expected, given) {
     if (typeof given !== 'string') return false;
@@ -195,7 +255,7 @@ function normalizeLocations(body) {
 /**
  * @param {{config: {port:number, token:string, allowOrigins:string[], taverns:{st:boolean, tt:boolean}, stPorts?:number[], stDir?:string|null}, workspace: import('./workspace/workspace.js').Workspace, log?: Function, watch?: boolean, persistConfig?: (config: object) => Promise<void>}} options
  */
-export async function startServer({ config, workspace, log = console.log, watch = true, persistConfig = saveConfig }) {
+export async function startServer({ config, workspace, log = console.log, watch = true, persistConfig = saveConfig, studioDir = defaultStudioDir() }) {
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
@@ -266,6 +326,9 @@ export async function startServer({ config, workspace, log = console.log, watch 
         };
         try {
             if (!isLoopbackHost(req.headers.host, port)) throw new ProtocolError(ERR.UNAUTHORIZED, 'Unexpected Host header');
+            const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+            // Studio page: static files only, no data and no token; everything it shows comes through the API later.
+            if (await serveStudio(req, res, pathname, studioDir)) return;
             // Control API is for local non-browser clients only (CLI, Studio main process); no CORS by design.
             // The bearer token is read from the local config file by those clients; it is never shown to users.
             if (req.headers.origin) throw new ProtocolError(ERR.UNAUTHORIZED, 'Browser origins may not use the control API');

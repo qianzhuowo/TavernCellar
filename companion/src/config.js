@@ -21,7 +21,7 @@ export function configPath() {
 export async function loadConfig() {
     let config = {};
     try {
-        config = JSON.parse(await readFile(configPath(), 'utf8'));
+        config = JSON.parse((await readFile(configPath(), 'utf8')).replace(/^\uFEFF/, '')); // Notepad may add a BOM
     } catch (error) {
         if (error.code !== 'ENOENT') throw new Error(`Cannot read ${configPath()}: ${error.message}`);
     }

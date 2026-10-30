@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /** cellar — TavernCellar companion CLI. Run `cellar help` for usage. */
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 import { configPath, loadConfig, saveConfig } from './config.js';
 import { Workspace } from './workspace/workspace.js';
-import { startServer } from './server.js';
+import { startServer, STUDIO_PATH } from './server.js';
 import { detectTaverns } from './detect.js';
 import { detectTtDataRoot, resolveLocations } from './taverns/locations.js';
 
@@ -11,6 +13,8 @@ const USAGE = `TavernCellar 伴侣程序
 
 用法:
   cellar init [目录]                    创建工作区并设为默认工作区
+  cellar studio [--no-open]             启动伴侣程序并在浏览器中打开 Cellar Studio
+                                        （已在运行则只打开页面；没有工作区时使用 ~/TavernCellar）
   cellar serve [--workspace 目录] [--port 端口]
                                         启动服务（酒馆中的 Cellar Link 会自动连接）
   cellar detect                         检测本机的 SillyTavern / TauriTavern（按实例）、插件安装、离线可用情况
@@ -128,6 +132,29 @@ function print(value) {
     console.log(JSON.stringify(value, null, 2));
 }
 
+/** Opens a URL in the default browser (detached; errors are reported, not thrown). */
+function openBrowser(url) {
+    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+        : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    try {
+        const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+        child.on('error', () => console.log(`请手动在浏览器中打开 ${url}`));
+        child.unref();
+    } catch {
+        console.log(`请手动在浏览器中打开 ${url}`);
+    }
+}
+
+/** True when a TavernCellar companion already answers on the configured port. */
+async function studioRunning(url) {
+    try {
+        const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(1500) });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
 async function main() {
     const [command = 'help', ...rest] = process.argv.slice(2);
     const { positional, flags } = parseArgs(rest);
@@ -151,6 +178,37 @@ async function main() {
             const server = await startServer({ config, workspace: ws, log: msg => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`) });
             console.log('在酒馆中启用 Cellar Link 后会自动连接，无需令牌。\n');
             console.log(formatDetection(await detectTaverns({ config }), true));
+            const stop = async () => { await server.close(); process.exit(0); };
+            process.on('SIGINT', stop);
+            process.on('SIGTERM', stop);
+            return;
+        }
+        case 'studio': {
+            const url = `http://127.0.0.1:${config.port}${STUDIO_PATH}`;
+            const open = !flags['no-open'];
+            if (await studioRunning(url)) {
+                console.log(`伴侣程序已在运行：${url}`);
+                if (open) openBrowser(url);
+                return;
+            }
+            let dir = config.workspace;
+            if (!dir) {
+                dir = join(homedir(), 'TavernCellar');
+                console.log(`尚未设置工作区，使用默认目录 ${dir}（可用 cellar init <目录> 更改）`);
+            }
+            const ws = await Workspace.init(dir);
+            if (config.workspace !== ws.root) { config.workspace = ws.root; await saveConfig(config); }
+            let server;
+            try {
+                server = await startServer({ config, workspace: ws, log: msg => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`) });
+            } catch (error) {
+                if (error.code === 'EADDRINUSE') throw new Error(`端口 ${config.port} 已被其他程序占用。可在 ${configPath()} 中修改 port`);
+                throw error;
+            }
+            console.log(`\nCellar Studio：${url}`);
+            console.log('关闭此窗口即停止伴侣程序。\n');
+            console.log(formatDetection(await detectTaverns({ config }), true));
+            if (open) openBrowser(url);
             const stop = async () => { await server.close(); process.exit(0); };
             process.on('SIGINT', stop);
             process.on('SIGTERM', stop);

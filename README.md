@@ -11,11 +11,18 @@
 
 需要 Node.js ≥ 20。
 
+**Windows：双击 `Start Cellar Studio.bat`。** 首次运行会自动安装依赖，然后启动伴侣程序并在浏览器中打开 Cellar Studio（`http://127.0.0.1:7349/studio/`）。关闭那个命令行窗口即停止伴侣程序；已在运行时再双击只会重新打开页面。没有设置工作区时使用 `用户目录\TavernCellar`。
+
+> 目前 Studio 页面还是可点击的界面原型（示例数据）。同步功能已可通过下面的命令使用，伴侣程序本身是真实运行的。
+
+命令行：
+
 ```bash
 cd companion
 npm install
 node src/cli.js init <工作区目录>   # 创建工作区
 node src/cli.js serve               # 只监听 127.0.0.1:7349，启动时显示检测到的酒馆
+node src/cli.js studio              # 同上，并在浏览器中打开 Studio
 ```
 
 酒馆里装好 **Cellar Link** 插件后会自动连接伴侣程序，不需要令牌。`cellar detect` 查看本机的 SillyTavern / TauriTavern 及插件安装情况；`cellar use st|tt|all` 选择接受哪个酒馆的连接。之后：
