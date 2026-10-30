@@ -104,6 +104,11 @@ function readCookie(req, name) {
 const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false };
 const UI_RULES = { theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false] };
 
+/** Heartbeat: a frozen tavern tab keeps its socket open but runs no JavaScript, so only an app-level ping reveals it. */
+const HEARTBEAT_INTERVAL_MS = 15000;
+const HEARTBEAT_TIMEOUT_MS = 10000;
+const UNRESPONSIVE_MESSAGE = '酒馆页面没有响应：可能被浏览器置于后台休眠。切换到酒馆页面后会自动恢复。';
+
 /** One Cellar Link WebSocket connection. Admission is decided by Origin/Host at upgrade time (no pairing token). */
 class LinkConnection {
     constructor(socket, { origin, isHostEnabled, onReady, onClose, onEvent, log }) {
@@ -118,6 +123,7 @@ class LinkConnection {
         this.seq = 0;
         /** @type {Map<string, {resolve: Function, reject: Function, timer: NodeJS.Timeout}>} */
         this.pending = new Map();
+        this.heartbeat = null;
         this.helloTimer = setTimeout(() => this.close(CLOSE.HELLO_TIMEOUT, 'hello timeout'), HELLO_TIMEOUT_MS);
         socket.on('message', data => this.#onMessage(String(data)));
         socket.on('close', () => this.#onSocketClose());
@@ -132,18 +138,29 @@ class LinkConnection {
         try { this.socket.close(code, reason); } catch { /* already closed */ }
     }
 
-    /** Sends a request to the plugin and resolves with its response payload. */
+    /** Sends a request to the plugin and resolves with its response payload. Fails at once while the page is unresponsive. */
     request(type, payload = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         if (!this.target) return Promise.reject(new ProtocolError(ERR.NOT_CONNECTED, 'Link not ready'));
+        if (type !== MSG.PING && this.target.responsive === false) return Promise.reject(new ProtocolError(ERR.TIMEOUT, UNRESPONSIVE_MESSAGE));
         const id = `s${++this.seq}`;
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pending.delete(id);
-                reject(new ProtocolError(ERR.TIMEOUT, `${type} timed out`));
+                reject(new ProtocolError(ERR.TIMEOUT, type === MSG.PING ? `${type} timed out` : `${type} 超时：${UNRESPONSIVE_MESSAGE}`));
             }, timeoutMs);
             this.pending.set(id, { resolve, reject, timer });
             this.send(request(id, type, payload));
         });
+    }
+
+    #startHeartbeat() {
+        const beat = async () => {
+            const ok = await this.request(MSG.PING, {}, HEARTBEAT_TIMEOUT_MS).then(() => true, () => false);
+            if (!this.target || ok === this.target.responsive) return;
+            this.target.responsive = ok;
+            this.log(ok ? `tavern responsive again: ${this.target.label}` : `tavern not responding (tab asleep?): ${this.target.label}`);
+        };
+        this.heartbeat = setInterval(beat, HEARTBEAT_INTERVAL_MS);
     }
 
     async #onMessage(text) {
@@ -205,8 +222,9 @@ class LinkConnection {
             this.close(CLOSE.TAVERN_DISABLED, 'tavern disabled');
             return;
         }
-        this.target = { id: t.id, host: t.host, label: String(t.label ?? t.host).slice(0, 120), hostVersion: String(t.hostVersion ?? ''), origin: this.origin };
+        this.target = { id: t.id, host: t.host, label: String(t.label ?? t.host).slice(0, 120), hostVersion: String(t.hostVersion ?? ''), origin: this.origin, responsive: true };
         this.send(okResponse(msg.id, { server: { name: SERVER_NAME, version: SERVER_VERSION, protocol: PROTOCOL_VERSION } }));
+        this.#startHeartbeat();
         try {
             await this.onReady(this, p.capabilities ?? {});
         } catch (error) {
@@ -216,6 +234,7 @@ class LinkConnection {
 
     #onSocketClose() {
         clearTimeout(this.helloTimer);
+        clearInterval(this.heartbeat);
         for (const { reject, timer } of this.pending.values()) {
             clearTimeout(timer);
             reject(new ProtocolError(ERR.NOT_CONNECTED, 'Link closed'));

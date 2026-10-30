@@ -18,6 +18,26 @@ export const STATUS = Object.freeze({
 
 const MIN_BACKOFF_MS = 5000;
 const MAX_BACKOFF_MS = 60000;
+const KEEPALIVE_LOCK = 'tavern-cellar-link';
+
+/**
+ * Holding a Web Lock exempts the tab from background freezing (Chrome/Edge "sleeping tabs", energy saver).
+ * A frozen tab keeps its WebSocket open but runs no JavaScript, so every companion request would time out.
+ */
+class KeepAlive {
+    #release = null;
+
+    hold() {
+        if (this.#release || !navigator.locks?.request) return;
+        navigator.locks.request(KEEPALIVE_LOCK, { mode: 'shared' }, () => new Promise(resolve => { this.#release = resolve; }))
+            .catch(error => console.warn('[Cellar Link] keep-alive lock unavailable', error));
+    }
+
+    release() {
+        this.#release?.();
+        this.#release = null;
+    }
+}
 
 export class LinkClient {
     /**
@@ -38,6 +58,7 @@ export class LinkClient {
         this.backoff = MIN_BACKOFF_MS;
         this.retryTimer = null;
         this.server = null;
+        this.keepAlive = new KeepAlive();
     }
 
     start() {
@@ -52,6 +73,7 @@ export class LinkClient {
         const socket = this.socket;
         this.socket = null;
         this.ready = false;
+        this.keepAlive.release();
         if (socket) socket.close(1000, 'stopped');
         this.onStatus(STATUS.IDLE);
     }
@@ -102,6 +124,7 @@ export class LinkClient {
             if (this.socket !== socket) return; // superseded
             this.socket = null;
             this.ready = false;
+            this.keepAlive.release();
             if (!this.wanted) return;
             if (TERMINAL_CLOSE_CODES.includes(ev.code)) {
                 const reason = {
@@ -139,6 +162,7 @@ export class LinkClient {
                 this.ready = true;
                 this.backoff = MIN_BACKOFF_MS;
                 this.server = msg.payload?.server ?? null;
+                this.keepAlive.hold();
                 this.onStatus(STATUS.CONNECTED, this.server ? `${this.server.name} ${this.server.version}` : '');
                 this.onReady();
             }
@@ -150,7 +174,8 @@ export class LinkClient {
         let reply;
         try {
             if (!this.ready) throw new ProtocolError(ERR.UNAUTHORIZED, 'Handshake not complete');
-            reply = okResponse(msg.id, await this.onRequest(msg.type, msg.payload ?? {}));
+            // Heartbeat: answered here so the companion learns whether this page is actually running.
+            reply = okResponse(msg.id, msg.type === MSG.PING ? {} : await this.onRequest(msg.type, msg.payload ?? {}));
         } catch (error) {
             if (!(error instanceof ProtocolError)) console.error('[Cellar Link] request failed', msg.type, error);
             reply = errorResponse(msg.id, error);

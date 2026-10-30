@@ -50,13 +50,14 @@
 | `item.get` | `{ kind, id }` | `{ kind, id, hash, data }` |
 | `item.put` | `{ kind, id, data, baseHash }` | `{ kind, id, hash, data, warnings: [] }` |
 | `watch.set` | `{ items: [{ kind, id }] }` | `{ count }` |
-| `ping` | `{}` | `{ now }` |
+| `ping` | `{}` | `{}` |
 
 - `kind`：`character`（id 为头像文件名，如 `Alice.png`）或 `lorebook`（id 为世界书名称）。
 - `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
 - `watch.set` 整体替换监视列表。
+- `ping` 是心跳：伴侣程序每 15 秒发送一次，10 秒内没有响应就把该酒馆标记为无响应（`/api/status` 中 `targets[].responsive = false`），之后的请求立即失败（`timeout`），不再逐个等待 30 秒；下一次心跳得到响应时自动恢复。原因是浏览器会冻结后台标签页：WebSocket 仍然连着，但页面脚本不运行。插件在已连接期间持有 Web Lock（`tavern-cellar-link`）以避免被冻结。
 
 ## 5. 插件 → 伴侣程序的事件
 
