@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useApp } from './stores/app.js';
 import { useUi } from './stores/ui.js';
 import { connectEvents } from './events.js';
@@ -31,15 +31,28 @@ const refreshSoon = () => { clearTimeout(statusTimer); statusTimer = window.setT
 let stopEvents = null;
 let wasDown = false;
 let loadTimer = 0;
+/** first load failed: the companion is unreachable even before anything was shown */
+const bootFailed = ref(false);
 
-async function load() {
-  try {
-    await app.loadAll();
-  } catch (e) {
-    app.online = false;
-    clearTimeout(loadTimer);
-    loadTimer = window.setTimeout(load, 2000);
-  }
+/** @type {Promise<void>|null} */
+let inflight = null;
+
+function load() {
+  // mount, SSE open and SSE hello can all ask for a load at boot: share one
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      await app.loadAll();
+    } catch (e) {
+      app.online = false;
+      bootFailed.value = true;
+      clearTimeout(loadTimer);
+      loadTimer = window.setTimeout(load, 2000);
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 const onHash = () => ui.syncRoute();
@@ -99,7 +112,7 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
 
   <div v-if="app.ready && hasInspector && ui.inspectorDrawer" class="drawer-scrim insp-scrim" @click="ui.inspectorDrawer = false" />
 
-  <div v-if="!app.online" class="offline-overlay" role="alertdialog" aria-live="assertive">
+  <div v-if="!app.online && (app.ready || bootFailed)" class="offline-overlay" role="alertdialog" aria-live="assertive">
     <div class="offline-card">
       <Icon name="spin" size="lg" />
       <div>
