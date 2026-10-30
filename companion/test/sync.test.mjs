@@ -53,6 +53,8 @@ class FakeTavern {
         if (!current) throw new ProtocolError(ERR.NOT_FOUND, payload.id);
         if (type === MSG.ITEM_GET) return { data: current, hash: await hashData(current) };
         if (type === MSG.ITEM_PUT) {
+            const sneak = this.beforePut?.shift();
+            if (sneak) { sneak(current); return this.handle({ type, payload }); }
             const currentHash = await hashData(current);
             if (payload.baseHash !== currentHash) throw new ProtocolError(ERR.CONFLICT, 'changed', { currentHash });
             this.puts++;
@@ -205,6 +207,50 @@ test('concurrent edits produce a conflict, never a silent overwrite', async () =
     const forced = await api('POST', '/api/sync', { path: 'characters/Alice', force: true });
     assert.equal(forced.result.result, 'synced');
     assert.equal(tavern.store.character.get('Alice.png').data.description, 'local version');
+});
+
+const bindingOf = async path => (await api('GET', '/api/status')).result.items.find(i => i.path === path).bindings[0];
+
+test('slot merge: tavern and workspace edit different fields -> merged, then sync writes the merge', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'merged local');
+    await tavern.edit('character', 'Alice.png', d => { d.data.personality = 'tavern personality'; });
+    await until(async () => (await readFile(join(dir, 'characters/Alice/personality.md'), 'utf8').catch(() => '')) === 'tavern personality');
+    assert.equal((await bindingOf('characters/Alice')).status, 'local-changes');
+    assert.equal(await readFile(join(dir, 'characters/Alice/description.md'), 'utf8'), 'merged local');
+    const synced = await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal(synced.result.result, 'synced');
+    const stored = tavern.store.character.get('Alice.png').data;
+    assert.equal(stored.description, 'merged local');
+    assert.equal(stored.personality, 'tavern personality');
+});
+
+test('slot merge: same field on both sides -> only that slot conflicts; resolving it in the files clears it', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L2');
+    await tavern.edit('character', 'Alice.png', d => { d.data.description = 'T2'; d.data.scenario = 'tavern scenario'; });
+    await until(async () => (await bindingOf('characters/Alice')).status === 'conflict');
+    assert.equal(await readFile(join(dir, 'characters/Alice/scenario.md'), 'utf8'), 'tavern scenario', 'other slots still merged');
+    const details = (await api('POST', '/api/conflict', { path: 'characters/Alice' })).result;
+    assert.deepEqual(details.slots.map(s => [s.slot, s.label, s.workspace, s.tavern, s.base]), [['data.description', '角色描述', 'L2', 'T2', 'merged local']]);
+    const blocked = await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal(blocked.error.code, 'conflict');
+    assert.match(blocked.error.message, /角色描述/);
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'T2');
+    await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
+});
+
+test('slot merge: the tavern changes again during the merge -> merged again before writing', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L3');
+    await until(async () => (await bindingOf('characters/Alice')).status === 'local-changes');
+    // Silent tavern edits (no item.changed): the first lands before our write, the second before the retried write.
+    tavern.beforePut = [d => { d.data.scenario = 'S-first'; }, d => { d.data.mes_example = 'M-second'; }];
+    const putsBefore = tavern.puts;
+    const result = await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal(result.result?.result, 'merged', JSON.stringify(result));
+    assert.equal(tavern.puts, putsBefore + 1);
+    const stored = tavern.store.character.get('Alice.png').data;
+    assert.deepEqual([stored.description, stored.scenario, stored.mes_example], ['L3', 'S-first', 'M-second']);
+    assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
 });
 
 test('auto sync pushes on file save', async () => {

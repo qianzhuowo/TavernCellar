@@ -189,6 +189,29 @@ export class Workspace {
         await rm(this.internal('conflicts', ...path.split('/'), `${targetId}.json`), { force: true });
     }
 
+    async loadConflict(path, targetId) {
+        try {
+            return JSON.parse(await readFile(this.internal('conflicts', ...path.split('/'), `${targetId}.json`), 'utf8'));
+        } catch {
+            return undefined;
+        }
+    }
+
+    /** The data both sides last agreed on (three-way merge base), per item and target. */
+    async saveBase(path, targetId, data) {
+        const file = this.internal('base', ...path.split('/'), `${targetId}.json`);
+        await mkdir(dirname(file), { recursive: true });
+        await atomicWrite(file, JSON.stringify(data) + '\n');
+    }
+
+    async loadBase(path, targetId) {
+        try {
+            return JSON.parse(await readFile(this.internal('base', ...path.split('/'), `${targetId}.json`), 'utf8'));
+        } catch {
+            return undefined;
+        }
+    }
+
     async saveTemplate(name, value) {
         const file = this.internal('templates', `${name}.json`);
         await mkdir(dirname(file), { recursive: true });

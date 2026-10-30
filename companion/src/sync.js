@@ -13,6 +13,10 @@ import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
+import { merge3, slotLabel, slotsOf } from './codec/slots.js';
+
+/** Re-merge attempts when the tavern changes again between our merge and the write (rule 6). */
+const MAX_MERGE_ATTEMPTS = 2;
 
 /** Name of the lorebook a character is bound to (data.extensions.world), if any. */
 function linkedWorldName(card) {
@@ -267,7 +271,7 @@ export class SyncEngine {
         return this.withLock(path, async () => {
             this.ws.manifest.items.push(item);
             const written = await this.writeItem(item, remote.data);
-            this.ws.setSyncState(path, target.id, { base: remote.hash, tavern: remote.hash });
+            await this.#agree(item, target.id, remote.data, remote.hash);
             await this.ws.saveManifest();
             await this.ws.saveState();
             await this.pushWatchList(target.id);
@@ -289,22 +293,26 @@ export class SyncEngine {
         return this.withLock(path, () => this.#syncLocked(item, targetId, binding, link, force));
     }
 
-    async #syncLocked(item, targetId, binding, link, force) {
+    async #syncLocked(item, targetId, binding, link, force, attempt = 0) {
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
         const local = await this.encodeItem(item);
         if (local.hash === state.base && !force) return { path: item.path, target: targetId, result: 'up-to-date', hash: local.hash };
         this.#assertCanWrite(targetId);
-        if (state.conflict && !force) {
-            throw new ProtocolError(ERR.CONFLICT, `${item.path} has an unresolved conflict with ${targetId}; pull --force or sync --force`);
-        }
+        // An open conflict is re-evaluated: the user may have resolved the conflicting slots in the files.
+        if (state.conflict && !force) return this.#reconcile(item, targetId, binding, link, { push: true, attempt });
         let baseHash = state.base;
         if (force) baseHash = (await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id })).hash;
         let result;
         try {
             result = await link.request(MSG.ITEM_PUT, { kind: item.kind, id: binding.id, data: local.data, baseHash });
         } catch (error) {
-            if (error.code === ERR.CONFLICT) await this.#markConflict(item, targetId, binding, link, error.details?.currentHash);
-            throw error;
+            if (error.code !== ERR.CONFLICT || force) throw error;
+            if (attempt >= MAX_MERGE_ATTEMPTS) {
+                await this.#markConflict(item, targetId, binding, link, error.details?.currentHash);
+                throw error;
+            }
+            // The tavern changed since the base: merge slot by slot and try again against its current version.
+            return this.#reconcile(item, targetId, binding, link, { push: true, attempt: attempt + 1 });
         }
         const warnings = [...(result.warnings ?? [])];
         if (result.hash !== local.hash) {
@@ -313,11 +321,51 @@ export class SyncEngine {
             await this.writeItem(item, result.data);
             if (warnings.length) warnings.push('Workspace updated to match the tavern');
         }
-        this.ws.setSyncState(item.path, targetId, { base: result.hash, tavern: result.hash, conflict: undefined });
-        await this.ws.clearConflict(item.path, targetId);
+        await this.#agree(item, targetId, result.data ?? local.data, result.hash);
         await this.ws.saveState();
         this.log(`synced ${item.path} -> ${targetId}${warnings.length ? ` (${warnings.length} warning(s))` : ''}`);
         return { path: item.path, target: targetId, result: 'synced', hash: result.hash, warnings };
+    }
+
+    /**
+     * Both sides changed since the base: three-way merge per slot (codec/slots.js).
+     * Clean -> the merged data goes to the workspace, the base moves to the tavern's version, and with `push` the
+     * merge is written back (re-checked against the tavern's hash, rule 6). Conflicting slots keep the workspace
+     * value; all other slots are merged into the workspace, and nothing is written to the tavern until resolved.
+     * Without a usable base snapshot (items synced before slot merge existed) the whole item is one conflict.
+     */
+    async #reconcile(item, targetId, binding, link, { push, attempt = 0 }) {
+        const state = this.ws.getSyncState(item.path, targetId) ?? {};
+        const remote = await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id });
+        const local = await this.encodeItem(item).catch(() => null);
+        if (local && local.hash === remote.hash) {
+            await this.#agree(item, targetId, remote.data, remote.hash);
+            await this.ws.saveState();
+            return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash };
+        }
+        const base = await this.ws.loadBase(item.path, targetId);
+        const baseUsable = local && base !== undefined && (await hashData(base)) === state.base;
+        const { data, conflicts } = baseUsable ? merge3(item.kind, base, local.data, remote.data) : { data: local?.data, conflicts: ['*'] };
+        if (baseUsable && (await hashData(data)) !== local.hash) await this.writeItem(item, data);
+        if (conflicts.length) {
+            await this.#recordConflict(item, targetId, remote, conflicts);
+            const labels = conflicts.map(slot => (slot === '*' ? '整项' : slotLabel(slot, slotsOf(item.kind, local?.data ?? {}).get(slot)))).join('、');
+            throw new ProtocolError(ERR.CONFLICT, `${item.path} 与酒馆在这些地方都有修改：${labels}`, { slots: conflicts });
+        }
+        await this.#agree(item, targetId, remote.data, remote.hash);
+        await this.ws.saveState();
+        this.log(`merged ${item.path} with ${targetId}`);
+        const mergedHash = await hashData(data);
+        if (mergedHash === remote.hash || !push) return { path: item.path, target: targetId, result: 'merged', hash: mergedHash, pending: mergedHash !== remote.hash };
+        const pushed = await this.#syncLocked(item, targetId, binding, link, false, attempt);
+        return { ...pushed, result: 'merged', merged: true };
+    }
+
+    /** Records that workspace and tavern agree on `data`: the base hash and the base snapshot used for merging. */
+    async #agree(item, targetId, data, hash) {
+        this.ws.setSyncState(item.path, targetId, { base: hash, tavern: hash, conflict: undefined });
+        await this.ws.saveBase(item.path, targetId, data);
+        await this.ws.clearConflict(item.path, targetId);
     }
 
     async pull(path, { target: targetSpec, force = false } = {}) {
@@ -326,14 +374,14 @@ export class SyncEngine {
         return this.withLock(path, async () => {
             const state = this.ws.getSyncState(item.path, targetId) ?? {};
             const local = await this.encodeItem(item).catch(() => null); // unreadable files count as local changes
-            const remote = await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id });
-            if (local?.hash !== state.base && local?.hash !== remote.hash && !force) {
-                await this.#recordConflict(item, targetId, remote);
-                throw new ProtocolError(ERR.CONFLICT, `${item.path} has local changes; use pull --force to discard them`);
+            if (!force && local?.hash !== state.base) {
+                const result = await this.#reconcile(item, targetId, binding, link, { push: false });
+                this.log(`pulled ${item.path} <- ${targetId} (${result.result})`);
+                return result.result === 'up-to-date' ? { ...result, result: 'pulled' } : result;
             }
+            const remote = await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id });
             await this.writeItem(item, remote.data);
-            this.ws.setSyncState(item.path, targetId, { base: remote.hash, tavern: remote.hash, conflict: undefined });
-            await this.ws.clearConflict(item.path, targetId);
+            await this.#agree(item, targetId, remote.data, remote.hash);
             await this.ws.saveState();
             this.log(`pulled ${item.path} <- ${targetId}`);
             return { path: item.path, target: targetId, result: 'pulled', hash: remote.hash };
@@ -367,14 +415,14 @@ export class SyncEngine {
             if (remote.hash === state.base) return;
             if (local && local.hash === state.base) {
                 await this.writeItem(item, remote.data);
-                this.ws.setSyncState(item.path, targetId, { base: remote.hash, tavern: remote.hash, conflict: undefined });
+                await this.#agree(item, targetId, remote.data, remote.hash);
                 await this.ws.saveState();
                 this.log(`tavern change pulled: ${item.path} <- ${targetId}`);
-            } else if (local && local.hash === remote.hash) {
-                this.ws.setSyncState(item.path, targetId, { base: remote.hash, tavern: remote.hash, conflict: undefined });
-                await this.ws.saveState();
             } else {
-                await this.#recordConflict(item, targetId, remote);
+                // Both sides changed: merge; auto-sync items push the merge back right away.
+                const push = binding.autoSync && Boolean(this.#writableConn(targetId));
+                await this.#reconcile(item, targetId, binding, conn.link, { push })
+                    .catch(error => this.log(`tavern change on ${item.path}: ${error.message}`));
             }
         });
     }
@@ -417,11 +465,30 @@ export class SyncEngine {
         }
     }
 
-    async #recordConflict(item, targetId, remote) {
-        const file = await this.ws.saveConflict(item.path, targetId, { kind: item.kind, hash: remote.hash, data: remote.data });
-        this.ws.setSyncState(item.path, targetId, { tavern: remote.hash, conflict: { at: new Date().toISOString(), file } });
+    async #recordConflict(item, targetId, remote, slots = ['*']) {
+        const file = await this.ws.saveConflict(item.path, targetId, { kind: item.kind, hash: remote.hash, data: remote.data, slots });
+        this.ws.setSyncState(item.path, targetId, { tavern: remote.hash, conflict: { at: new Date().toISOString(), file, slots } });
         await this.ws.saveState();
-        this.log(`CONFLICT ${item.path} <-> ${targetId}; tavern version saved to ${file}`);
+        this.log(`CONFLICT ${item.path} <-> ${targetId} (${slots.join(', ')}); tavern version saved to ${file}`);
+    }
+
+    /** Conflicting slots of one binding with both sides' values (and the base value when known), for the conflict view. */
+    async conflictDetails(path, { target: targetSpec } = {}) {
+        const item = this.requireItem(path);
+        const bound = Object.keys(item.bindings ?? {});
+        const targetId = targetSpec ? bound.find(id => id === targetSpec || id.startsWith(targetSpec)) : bound.find(id => this.ws.getSyncState(path, id)?.conflict);
+        const conflict = targetId && this.ws.getSyncState(path, targetId)?.conflict;
+        if (!conflict) return { path, target: targetId ?? null, slots: [] };
+        const [local, saved, base] = await Promise.all([
+            this.encodeItem(item).then(r => r.data, () => null),
+            this.ws.loadConflict(path, targetId),
+            this.ws.loadBase(path, targetId),
+        ]);
+        const l = slotsOf(item.kind, local ?? {}), t = slotsOf(item.kind, saved?.data ?? {}), b = base ? slotsOf(item.kind, base) : new Map();
+        const slots = (conflict.slots ?? ['*']).map(slot => slot === '*'
+            ? { slot, label: '整项', workspace: local, tavern: saved?.data ?? null, base: base ?? null }
+            : { slot, label: slotLabel(slot, l.get(slot) ?? t.get(slot)), workspace: l.get(slot) ?? null, tavern: t.get(slot) ?? null, base: b.get(slot) ?? null });
+        return { path, target: targetId, at: conflict.at, slots };
     }
 
     // ---- status ------------------------------------------------------------
