@@ -1,10 +1,13 @@
 // 资料库 state: chosen tavern, kind, query, loaded catalog page(s).
 import { defineStore } from 'pinia';
-import { api, errorText } from '../api.js';
+import { api, errorText, isAborted } from '../api.js';
 import { useApp } from './app.js';
 import { useUi } from './ui.js';
 
 const PAGE = 120;
+/** In-flight catalog request; aborted whenever the query changes or the library is left. */
+/** @type {AbortController|null} */
+let inflight = null;
 
 export const useLibrary = defineStore('library', {
   state: () => ({
@@ -19,7 +22,10 @@ export const useLibrary = defineStore('library', {
     items: [],
     total: 0,
     loading: false,
+    /** loading has taken long enough to explain why */
+    slow: false,
     error: '',
+    errorCode: '',
     /** @type {Record<string, boolean>} */
     busy: {},
     seq: 0
@@ -58,7 +64,15 @@ export const useLibrary = defineStore('library', {
     setTarget(id) { this.target = id; localStorage.setItem('cs.lib.target', id); this.tag = ''; this.reload(); },
     /** @param {'character'|'lorebook'} k */
     setKind(k) { this.kind = k; localStorage.setItem('cs.lib.kind', k); this.tag = ''; this.reload(); },
+    /** Drop any pending page load (old tavern/kind/query, or the page was left). */
+    cancel() {
+      if (inflight) { inflight.abort(); inflight = null; }
+      this.seq++;
+      this.loading = false;
+      this.slow = false;
+    },
     async reload() {
+      this.cancel();
       this.ensureTarget();
       this.items = [];
       this.total = 0;
@@ -69,16 +83,29 @@ export const useLibrary = defineStore('library', {
     async loadMore() {
       if (this.loading || !this.target) return;
       const seq = ++this.seq;
+      const ctl = new AbortController();
+      inflight = ctl;
       this.loading = true;
+      this.slow = false;
+      const slowTimer = setTimeout(() => { if (seq === this.seq) this.slow = true; }, 6000);
+      this.error = '';
+      this.errorCode = '';
       try {
-        const r = await api.catalog({ target: this.target, kind: this.kind, query: this.query || undefined, offset: this.items.length, limit: PAGE });
+        const r = await api.catalog({ target: this.target, kind: this.kind, query: this.query || undefined, offset: this.items.length, limit: PAGE }, ctl.signal);
         if (seq !== this.seq) return;
         this.items = this.items.concat(r.items || []);
         this.total = r.total || 0;
       } catch (e) {
-        if (seq === this.seq) this.error = errorText(e);
+        if (seq === this.seq && !isAborted(e)) {
+          this.error = errorText(e);
+          this.errorCode = /** @type {any} */ (e).code || '';
+          // a timeout usually means the tavern page went to sleep: let the status pills catch up
+          if (/** @type {any} */ (e).code === 'timeout') useApp().refreshStatus();
+        }
       } finally {
-        if (seq === this.seq) this.loading = false;
+        clearTimeout(slowTimer);
+        if (inflight === ctl) inflight = null;
+        if (seq === this.seq) { this.loading = false; this.slow = false; }
       }
     },
     /** @param {any} entry */

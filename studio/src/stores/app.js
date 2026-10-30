@@ -5,6 +5,31 @@ import { uiStatus, isDirty, isConflict, bindingMode, worstStatus } from '../lib/
 import { baseName } from '../lib/desktop.js';
 import { useUi } from './ui.js';
 
+/**
+ * Single-flight with one trailing rerun: while a run is in flight, further calls coalesce into
+ * exactly one more run after it. Keeps SSE-driven refreshes (one per companion log line) from
+ * stacking up requests and exhausting the browser's per-host connection pool.
+ * @param {() => Promise<void>} fn
+ */
+function coalesced(fn) {
+  /** @type {Promise<void>|null} */
+  let running = null;
+  let again = false;
+  const run = () => {
+    if (running) { again = true; return running; }
+    running = (async () => {
+      try {
+        do { again = false; await fn(); } while (again);
+      } finally { running = null; }
+    })();
+    return running;
+  };
+  return run;
+}
+
+let statusRun = /** @type {null | (() => Promise<void>)} */ (null);
+let tavernsRun = /** @type {null | (() => Promise<void>)} */ (null);
+
 export const useApp = defineStore('app', {
   state: () => ({
     /** companion reachable (initial load succeeded and SSE stream up) */
@@ -56,18 +81,23 @@ export const useApp = defineStore('app', {
       };
     },
 
-    /** Per-host connection summary for title/status bars: online | offline | closed | none. */
+    /** Per-host connection summary for title/status bars: online | stale | offline | closed | none. */
     hostState(s) {
       const out = {};
       for (const host of ['st', 'tt']) {
         const st = s.status || {};
+        const live = (st.targets || []).filter((t) => t.host === host);
         if (this.taverns[host] === false) out[host] = 'closed';
-        else if ((st.targets || []).some((t) => t.host === host)) out[host] = 'online';
+        else if (live.some((t) => t.responsive !== false)) out[host] = 'online';
+        else if (live.length) out[host] = 'stale';
         else if ((st.offlineTargets || []).some((t) => t.host === host)) out[host] = 'offline';
         else out[host] = 'none';
       }
       return out;
     },
+
+    /** @returns {(id: string) => boolean} live target whose page stopped answering */
+    isStale() { return (id) => { const t = this.target(id); return !!t.live && t.responsive === false; }; },
 
     dirtyCount() { return this.items.filter((i) => i.bindings.some((b) => isDirty(uiStatus(b.status)))).length; },
     conflictCount() { return this.items.filter((i) => i.bindings.some((b) => isConflict(uiStatus(b.status)))).length; },
@@ -77,7 +107,7 @@ export const useApp = defineStore('app', {
 
     /** @returns {(b: any) => string} */
     modeOf() {
-      return (b) => bindingMode(b, this.target(b.target).host, this.taverns);
+      return (b) => bindingMode(b, this.target(b.target), this.taverns);
     },
 
     worst() { return (/** @type {any} */ it) => worstStatus(it); }
@@ -97,24 +127,34 @@ export const useApp = defineStore('app', {
       this.refreshTaverns();
     },
 
-    async refreshStatus() {
-      try {
-        this.status = await api.status();
-        useUi().pruneTabs(this.items.map((i) => i.path));
-      } catch (e) { /* the SSE stream decides online/offline */ }
+    refreshStatus() {
+      if (!statusRun) {
+        statusRun = coalesced(async () => {
+          try {
+            this.status = await api.status();
+            useUi().pruneTabs(this.items.map((i) => i.path));
+          } catch (e) { /* the SSE stream decides online/offline */ }
+        });
+      }
+      return statusRun();
     },
 
-    async refreshTaverns() {
-      this.detecting = true;
-      try {
-        const [detect, locations] = await Promise.all([api.detect(), api.locations()]);
-        this.detect = detect;
-        this.locations = locations;
-      } catch (e) {
-        useUi().toast(errorText(e), 'alert');
-      } finally {
-        this.detecting = false;
+    refreshTaverns() {
+      if (!tavernsRun) {
+        tavernsRun = coalesced(async () => {
+          this.detecting = true;
+          try {
+            const [detect, locations] = await Promise.all([api.detect(), api.locations()]);
+            this.detect = detect;
+            this.locations = locations;
+          } catch (e) {
+            useUi().toast(errorText(e), 'alert');
+          } finally {
+            this.detecting = false;
+          }
+        });
       }
+      return tavernsRun();
     },
 
     /** @param {Partial<{theme:string, density:string, wizardDone:boolean}>} patch */
@@ -133,7 +173,8 @@ export const useApp = defineStore('app', {
     async switchWorkspace(dir) {
       const r = await api.setWorkspace(dir);
       if (this.settings) this.settings.workspace = r.workspace;
-      await this.refreshStatus();
+      // don't hold the caller (button spinner) on the status refetch
+      this.refreshStatus();
       return r.workspace;
     },
 

@@ -70,6 +70,7 @@
 .sync-note { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-xs); color: var(--text-2); line-height: 1.5; }
 .sync-note svg { flex: none; margin-top: 2px; }
 .sync-note.err { color: var(--st-conflict); }
+.sync-note.warn { color: var(--st-warn); }
 .sync-ops { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .sync-ops .tlabel { font-size: var(--fs-sm); }
 .sync-row.mode-none .sync-ops .btn, .sync-row.mode-closed .sync-ops .btn { opacity: .5; }

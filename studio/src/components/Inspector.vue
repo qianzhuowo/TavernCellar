@@ -7,7 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { api, errorText } from '../api.js';
 import { desktop, copyText, joinPath } from '../lib/desktop.js';
-import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, OFF_MODE, STATUS } from '../lib/status.js';
+import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const app = useApp();
@@ -17,7 +17,7 @@ const abs = computed(() => joinPath(app.workspace, props.path));
 /** @type {Record<string, string>} */
 const busy = reactive({});
 
-const dotClass = (/** @type {string} */ m) => (m === 'online' ? 'on' : m === 'offline' ? 'wait' : 'off');
+const dotClass = (/** @type {string} */ m) => MODE_DOT[m] || 'off';
 
 function subline(/** @type {any} */ b) {
   const mode = app.modeOf(b);
@@ -83,6 +83,7 @@ async function copyPath() {
             </div>
             <StatusBadge :status="uiStatus(b.status)" :label="STATUS[uiStatus(b.status)].label + (app.modeOf(b) === 'offline' ? ' · 离线' : '')" />
           </div>
+          <div v-if="app.modeOf(b) === 'stale'" class="sync-note warn"><Icon name="alert" size="sm" />{{ STALE_HINT }}</div>
           <div v-if="b.waiting" class="sync-note"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</div>
           <div v-if="b.tavernError" class="sync-note err"><Icon name="alert" size="sm" />{{ b.tavernError }}</div>
           <div v-if="isConflict(uiStatus(b.status))" class="sync-note err"><Icon name="alert" size="sm" />冲突处理将在后续开放</div>

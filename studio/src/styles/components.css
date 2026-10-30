@@ -56,7 +56,7 @@
 }
 .input:hover, .select:hover, .textarea:hover { border-color: var(--line-strong); }
 .input:focus, .select:focus, .textarea:focus, .chip-input:focus-within {
-  border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--accent-line); box-shadow: var(--input-glow);
 }
 .input.num { width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
 .input.mono { font-family: var(--font-mono); }
@@ -111,7 +111,7 @@ kbd {
   background: var(--text-3); transition: transform .15s var(--ease), background .15s;
 }
 .toggle input:checked + .track { background: var(--accent); border-color: var(--accent); }
-.toggle input:checked + .track::after { transform: translateX(13px); background: #fff; }
+.toggle input:checked + .track::after { transform: translateX(13px); background: var(--on-color); }
 .toggle input:focus-visible + .track { box-shadow: var(--focus); }
 .toggle .tlabel { font-size: var(--fs-md); color: var(--text-2); }
 .toggle.sync input:checked + .track { background: var(--st-synced); border-color: var(--st-synced); }
@@ -120,7 +120,7 @@ kbd {
 .check { display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; font-size: var(--fs-md); color: var(--text-2); }
 .check input { appearance: none; width: 16px; height: 16px; margin: 0; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--bg-input); display: grid; place-items: center; cursor: pointer; flex: none; }
 .check input:checked { background: var(--accent); border-color: var(--accent); }
-.check input:checked::after { content: ""; width: 8px; height: 4px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px,-1px); }
+.check input:checked::after { content: ""; width: 8px; height: 4px; border: 2px solid var(--on-color); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px,-1px); }
 
 /* ---------- Chips ---------- */
 .chip {
@@ -159,6 +159,9 @@ kbd {
 .dot.on { background: var(--st-synced); box-shadow: 0 0 0 3px var(--st-synced-bg); }
 .dot.off { border: 1.5px solid var(--st-off); }
 .dot.wait { background: var(--st-local); animation: pulse 1.2s ease-in-out infinite; }
+.dot.stale { background: var(--st-warn); box-shadow: 0 0 0 3px var(--st-warn-bg); }
+.stale-badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--r-sm);
+  font-size: var(--fs-xs); font-weight: 600; color: var(--st-warn); background: var(--st-warn-bg); vertical-align: 3px; margin-left: 10px; }
 @keyframes pulse { 50% { opacity: .35; } }
 
 /* lorebook status lamps — self-drawn */
@@ -210,7 +213,7 @@ kbd {
 }
 
 /* ---------- Drawer / toast / empty ---------- */
-.drawer-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 60; }
+.drawer-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 60; }
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; z-index: 61;
   background: var(--bg-2); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow-2);

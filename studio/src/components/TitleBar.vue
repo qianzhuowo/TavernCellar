@@ -2,11 +2,11 @@
 import Icon from './Icon.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { HOST, MODE_LABEL, MODE_TIP } from '../lib/status.js';
+import { HOST, MODE_LABEL, MODE_TIP, MODE_DOT } from '../lib/status.js';
 
 const app = useApp();
 const ui = useUi();
-const dotClass = (/** @type {string} */ m) => (m === 'online' ? 'on' : m === 'offline' ? 'wait' : 'off');
+const dotClass = (/** @type {string} */ m) => MODE_DOT[m] || 'off';
 const toggleTheme = () => app.saveUi({ theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
 </script>
 

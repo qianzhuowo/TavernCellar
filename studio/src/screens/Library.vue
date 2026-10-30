@@ -5,7 +5,7 @@ import Seg from '../components/Seg.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
-import { hueOf, initialOf, relTime } from '../lib/status.js';
+import { hueOf, initialOf, relTime, STALE_HINT } from '../lib/status.js';
 
 const app = useApp();
 const ui = useUi();
@@ -18,6 +18,7 @@ let qTimer = 0;
 let io = null;
 
 const cur = computed(() => lib.current);
+const stale = computed(() => !!cur.value && !!cur.value.live && (cur.value.responsive === false || lib.errorCode === 'timeout'));
 const sub = computed(() => {
   const t = cur.value;
   if (!t) return '';
@@ -52,7 +53,7 @@ onMounted(() => {
   io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting) && lib.hasMore && !lib.loading) lib.loadMore(); }, { rootMargin: '400px' });
   if (sentinel.value) io.observe(sentinel.value);
 });
-onBeforeUnmount(() => io && io.disconnect());
+onBeforeUnmount(() => { if (io) io.disconnect(); clearTimeout(qTimer); lib.cancel(); });
 // sources can appear later (tavern connects): pick one then
 watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.reload(); });
 </script>
@@ -61,7 +62,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
   <div class="page lib">
     <div class="page-head">
       <div>
-        <h2>资料库 <span v-if="cur && !cur.live" class="offline-badge"><Icon name="disk" size="sm" />离线 · 直接读取数据目录</span></h2>
+        <h2>资料库 <span v-if="cur && !cur.live" class="offline-badge"><Icon name="disk" size="sm" />离线 · 直接读取数据目录</span><span v-else-if="cur && cur.responsive === false" class="stale-badge" :title="STALE_HINT"><span class="dot stale" />无响应</span></h2>
         <p class="muted">{{ sub || '选择一个酒馆浏览' }}</p>
       </div>
       <div class="page-actions">
@@ -84,7 +85,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
       <p class="muted">打开装有 Cellar Link 的酒馆页面，或在设置中填写酒馆位置以离线浏览。</p>
       <a class="btn" href="#/settings/conn"><Icon name="settings" size="sm" />酒馆连接设置</a>
     </div>
-    <div v-else-if="lib.error" class="banner conflict"><Icon name="alert" /><div class="grow">读取失败：{{ lib.error }}</div><button class="btn sm" @click="lib.reload()">重试</button></div>
+    <div v-else-if="lib.error" class="banner" :class="stale ? 'warn' : 'conflict'"><Icon name="alert" /><div class="grow"><b v-if="stale">酒馆无响应</b><template v-else>读取失败：</template>{{ stale ? ' · ' : '' }}{{ lib.error }}</div><button class="btn sm" :disabled="lib.loading" @click="lib.reload()"><Icon :name="lib.loading ? 'spin' : 'refresh'" size="sm" />重试</button></div>
     <div v-else-if="!lib.loading && !lib.shown.length" class="empty">
       <Icon :name="lib.kind === 'character' ? 'user' : 'book'" />
       <h3>{{ lib.query || lib.tag ? '没有匹配的结果' : '这个酒馆里还没有' + (lib.kind === 'character' ? '角色' : '世界书') }}</h3>
@@ -116,7 +117,8 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
     </div>
 
     <div ref="sentinel" class="load-more faint">
-      <template v-if="lib.loading"><Icon name="spin" size="sm" /> 加载中…</template>
+      <template v-if="lib.loading && lib.slow"><Icon name="spin" size="sm" /> 酒馆迟迟没有响应…<span v-if="cur && cur.live">若酒馆页面在后台，切换过去即可恢复。</span><button class="btn sm ghost" @click="lib.cancel()">取消</button></template>
+      <template v-else-if="lib.loading"><Icon name="spin" size="sm" /> 加载中…</template>
       <template v-else-if="lib.hasMore"><button class="btn sm ghost" @click="lib.loadMore()">加载更多（{{ lib.items.length }} / {{ lib.total }}）</button></template>
       <template v-else-if="lib.items.length">共 {{ lib.total }} 项</template>
     </div>

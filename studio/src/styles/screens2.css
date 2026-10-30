@@ -17,10 +17,10 @@
 .in-ws {
   position: absolute; top: 8px; right: 8px; z-index: 1;
   display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px; border-radius: var(--r-pill);
-  font-size: var(--fs-xs); font-weight: 600; color: #fff; background: rgba(20, 16, 12, .72); backdrop-filter: blur(4px);
+  font-size: var(--fs-xs); font-weight: 600; color: #fff; background: var(--chip-shade); backdrop-filter: blur(4px);
   border: 1px solid rgba(255,255,255,.18);
 }
-.in-ws svg { color: #b9d27f; }
+.in-ws svg { color: var(--in-ws); }
 .in-ws.static { position: static; background: var(--st-synced-bg); color: var(--st-synced); border: 0; }
 .in-ws.static svg { color: currentColor; }
 .cat-info { padding: var(--sp-3); display: flex; flex-direction: column; gap: 6px; }
@@ -83,6 +83,7 @@
 .dt-pill.warn { background: var(--st-local-bg); color: var(--st-local); }
 .dt-pill.info { background: var(--st-remote-bg); color: var(--st-remote); }
 .dt-pill.wait { color: var(--st-local); }
+.dt-pill.stale { background: var(--st-warn-bg); color: var(--st-warn); }
 .dt-pill .dot { margin: 0; }
 .dt-fields { display: grid; grid-template-columns: 1fr 170px; gap: 8px var(--sp-3); align-items: start; }
 .dt-fields.two { grid-template-columns: 1fr 1fr; }
@@ -167,7 +168,8 @@
 .wz-opt { display: flex; align-items: flex-start; gap: var(--sp-3); text-align: left; padding: var(--sp-4); border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--bg-3); cursor: pointer; }
 .wz-opt:hover { border-color: var(--line-strong); }
 .wz-opt.on { border-color: var(--accent-line); background: var(--accent-soft); }
-.wz-opt .grow { flex: 1; }
+.wz-opt .grow { flex: 1; min-width: 0; }
+.wz-opt .path-box { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .wz-opt > svg { color: var(--accent-text); margin-top: 1px; }
 .wz-opt .faint { font-size: var(--fs-sm); margin-top: 2px; }
 .wz-radio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 3px; flex: none; }

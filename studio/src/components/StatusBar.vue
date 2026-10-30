@@ -1,10 +1,10 @@
 <script setup>
 import Icon from './Icon.vue';
 import { useApp } from '../stores/app.js';
-import { HOST, MODE_LABEL, MODE_TIP } from '../lib/status.js';
+import { HOST, MODE_LABEL, MODE_TIP, MODE_DOT } from '../lib/status.js';
 
 const app = useApp();
-const dotClass = (/** @type {string} */ m) => (m === 'online' ? 'on' : m === 'offline' ? 'wait' : 'off');
+const dotClass = (/** @type {string} */ m) => MODE_DOT[m] || 'off';
 </script>
 
 <template>

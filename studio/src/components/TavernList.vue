@@ -9,7 +9,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { errorText } from '../api.js';
 import { desktop } from '../lib/desktop.js';
-import { HOST, OFF_MODE, PLUGIN_HINT, ONCE_HINT, REPO_URL } from '../lib/status.js';
+import { HOST, OFF_MODE, PLUGIN_HINT, ONCE_HINT, REPO_URL, STALE_HINT } from '../lib/status.js';
 
 const app = useApp();
 const ui = useUi();
@@ -34,9 +34,11 @@ function inst(/** @type {'st'|'tt'} */ host, /** @type {number} */ i) {
   const r = resolved.value.find((x) => x.key === key) || {};
   const d = (det.value[host].instances || []).find((x) => x.key === key) || {};
   const targetId = d.targetId || r.targetId || null;
-  const live = !!targetId && (app.status.targets || []).some((t) => t.id === targetId);
+  const lt = targetId ? (app.status.targets || []).find((t) => t.id === targetId) : null;
+  const live = !!lt;
+  const stale = !!lt && lt.responsive === false;
   return {
-    key, host, loc, r, d, targetId, live,
+    key, host, loc, r, d, targetId, live, stale,
     label: d.label || r.label || (host === 'st' ? 'SillyTavern' : 'TauriTavern'),
     version: d.version || '',
     running: !!d.running,
@@ -58,7 +60,8 @@ const ttList = computed(() => locs.value.tt.map((_, i) => inst('tt', i)));
 /** Running STs on known ports that have no directory configured yet. */
 const stUnconfigured = computed(() => (det.value.st.unconfigured || []).map((u) => {
   const conn = (det.value.st.otherConnections || []).find((c) => c.origin === u.url);
-  return { ...u, connected: !!conn && (app.status.targets || []).some((t) => t.id === conn.id) };
+  const lt = conn ? (app.status.targets || []).find((t) => t.id === conn.id) : null;
+  return { ...u, connected: !!lt, stale: !!lt && lt.responsive === false };
 }));
 /** Connected via Cellar Link only, not matching any running port we know. */
 const stLinkOnly = computed(() => (det.value.st.otherConnections || []).filter((c) => !stUnconfigured.value.some((u) => u.url === c.origin)));
@@ -166,7 +169,8 @@ const counts = (/** @type {any} */ x) => (x.d && x.d.counts) || null;
               <span class="dt-pill" :class="x.running ? 'ok' : 'dim'"><span class="dot" :class="x.running ? 'on' : 'off'" />{{ x.running ? '运行中' : '未运行' }}</span>
               <span v-if="x.plugin === false" class="dt-pill warn"><Icon name="alert" size="sm" />Cellar Link 未安装</span>
               <span v-else-if="x.plugin" class="dt-pill ok"><Icon name="puzzle" size="sm" />Cellar Link 已安装</span>
-              <span v-if="x.live" class="dt-pill ok"><Icon name="plug" size="sm" />已连接</span>
+              <span v-if="x.stale" class="dt-pill stale" :title="STALE_HINT"><span class="dot stale" />无响应</span>
+              <span v-else-if="x.live" class="dt-pill ok"><Icon name="plug" size="sm" />已连接</span>
               <span v-else-if="x.running" class="dt-pill wait"><span class="dot wait" />等待连接…</span>
               <span class="dt-pill" :class="x.offlineReady ? 'info' : 'dim'">{{ x.offlineReady ? '离线可用' : '离线不可用' }}</span>
             </div>
@@ -231,7 +235,8 @@ const counts = (/** @type {any} */ x) => (x.d && x.d.counts) || null;
               <b>SillyTavern (:{{ u.port }})</b><span class="faint mono">{{ u.url }}</span>
               <div class="dt-pills">
                 <span class="dt-pill ok"><span class="dot on" />运行中</span>
-                <span v-if="u.connected" class="dt-pill ok"><Icon name="plug" size="sm" />已连接</span>
+                <span v-if="u.stale" class="dt-pill stale" :title="STALE_HINT"><span class="dot stale" />无响应</span>
+                <span v-else-if="u.connected" class="dt-pill ok"><Icon name="plug" size="sm" />已连接</span>
                 <span v-else class="dt-pill wait"><span class="dot wait" />等待连接…</span>
               </div>
               <span class="grow" />

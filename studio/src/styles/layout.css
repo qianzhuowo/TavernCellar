@@ -62,8 +62,8 @@ svg.ic.lg { width: 20px; height: 20px; }
 .brand-mark {
   width: 22px; height: 22px; border-radius: 6px;
   display: grid; place-items: center;
-  background: linear-gradient(145deg, var(--accent-hover), #5e1626);
-  color: #fbe9d6;
+  background: linear-gradient(145deg, var(--logo-wine), var(--logo-deep));
+  color: var(--logo-ink);
 }
 .brand-mark svg { width: 14px; height: 14px; }
 .titlebar .sep { color: var(--text-3); }
@@ -92,16 +92,16 @@ svg.ic.lg { width: 20px; height: 20px; }
   display: grid; place-items: center;
   color: var(--text-3); background: none; border: 0; cursor: pointer;
 }
-.activity .act:hover { color: var(--text); background: var(--bg-3); }
+.activity .act:hover { color: var(--text); background: var(--row-hover); }
 .activity .act.on { color: var(--text); }
 .activity .act.on::before {
   content: ""; position: absolute; left: -6px; top: 9px; bottom: 9px; width: 3px;
-  border-radius: 0 3px 3px 0; background: var(--accent-hover);
+  border-radius: 0 3px 3px 0; background: var(--accent);
 }
 .activity .act svg { width: 20px; height: 20px; }
 .activity .act .dot {
   position: absolute; right: 6px; top: 6px; min-width: 15px; height: 15px; padding: 0 4px;
-  border-radius: 8px; background: var(--st-conflict); color: #fff;
+  border-radius: 8px; background: var(--st-conflict); color: var(--on-color);
   font-size: 10px; line-height: 15px; font-weight: 700; text-align: center;
 }
 .activity .grow { flex: 1; }
@@ -138,8 +138,8 @@ svg.ic.lg { width: 20px; height: 20px; }
   height: 34px; padding: 0 var(--sp-2) 0 22px; border-radius: var(--r-md);
   cursor: pointer; color: var(--text-2);
 }
-.tree-item:hover { background: var(--bg-3); color: var(--text); }
-.tree-item.on { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent-hover); }
+.tree-item:hover { background: var(--row-hover); color: var(--text); }
+.tree-item.on { background: var(--sel); color: var(--text); box-shadow: inset 2px 0 0 var(--sel-line); }
 .tree-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-item .badges { display: flex; gap: 3px; }
 .tree-item.reserved { opacity: .5; cursor: default; }
@@ -160,8 +160,8 @@ svg.ic.lg { width: 20px; height: 20px; }
   border-right: 1px solid var(--line); color: var(--text-3);
   cursor: pointer; white-space: nowrap; font-size: var(--fs-md);
 }
-.tab:hover { color: var(--text-2); background: var(--bg-3); }
-.tab.on { color: var(--text); background: var(--bg-1); }
+.tab:hover { color: var(--text-2); background: var(--row-hover); }
+.tab.on { color: var(--text); background: var(--bg-1); box-shadow: inset 0 1px 0 var(--tab-active-line); }
 .tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--bg-1); }
 .tab .bar { position: absolute; left: 0; right: 0; top: 0; height: 2px; }
 .tab .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }

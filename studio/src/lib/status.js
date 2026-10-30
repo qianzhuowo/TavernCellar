@@ -56,18 +56,25 @@ export const REPO_URL = 'https://github.com/qianzhuowo/TavernCellar';
 
 /**
  * Access mode of a binding / target:
- * online (Cellar Link connected) | offline (tavern not running, data folder usable) | closed (接受连接 off) | none.
+ * online (Cellar Link connected) | stale (connected but the page stopped answering) |
+ * offline (tavern not running, data folder usable) | closed (接受连接 off) | none.
  */
-export function bindingMode(/** @type {any} */ b, /** @type {string|undefined} */ host, /** @type {{st:boolean,tt:boolean}} */ taverns) {
+export function bindingMode(/** @type {any} */ b, /** @type {any} */ target, /** @type {{st:boolean,tt:boolean}} */ taverns) {
+  const host = target && target.host;
   if (host && taverns && taverns[host] === false) return 'closed';
-  if (b.connected) return 'online';
+  if (b.connected) return target && target.responsive === false ? 'stale' : 'online';
   if (b.offline) return 'offline';
   return 'none';
 }
 
-export const MODE_LABEL = { online: '已连接', offline: '离线', closed: '已关闭', none: '未连接' };
+export const STALE_HINT = '酒馆页面可能在后台休眠，切换到酒馆页面即可恢复';
+
+/** Dot class per mode (CSS .dot.on / .wait / .stale / .off). */
+export const MODE_DOT = { online: 'on', stale: 'stale', offline: 'wait', closed: 'off', none: 'off' };
+export const MODE_LABEL = { online: '已连接', stale: '无响应', offline: '离线', closed: '已关闭', none: '未连接' };
 export const MODE_TIP = {
   online: 'Cellar Link 已连接',
+  stale: STALE_HINT,
   offline: '酒馆未运行 · 直接读写数据目录',
   closed: CLOSED_HINT,
   none: '酒馆未连接，且没有可用的数据目录'

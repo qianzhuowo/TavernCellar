@@ -1,5 +1,5 @@
 /* =========================================================
-   Cellar Studio prototype — theme variables
+   Cellar Studio — theme variables
    Dark theme ("wine cellar") is default; light = parchment.
    ========================================================= */
 
@@ -65,48 +65,66 @@
   --lh-editor: 1.6;
 }
 
-/* ---------------- Dark (default) ---------------- */
+/* ---------------- Dark (default) — VS Code "Default Dark Modern" ---------------- */
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg-0: #110f0b;        /* title bar / activity bar */
-  --bg-1: #17140f;        /* app base */
-  --bg-2: #1d1914;        /* panels */
-  --bg-3: #241f19;        /* raised: cards, inputs */
-  --bg-4: #2d2720;        /* hover */
-  --bg-input: #1a1712;
-  --line: #342d25;
-  --line-strong: #4a4035;
-  --text: #ece3d4;
-  --text-2: #bfb2a0;
-  --text-3: #8a7d6c;
-  --text-inv: #fff8ee;
+  --bg-0: #181818;        /* title bar / activity bar / status bar / inactive tabs */
+  --bg-1: #1F1F1F;        /* editor / app base, active tab */
+  --bg-2: #181818;        /* side panels, inspector */
+  --bg-3: #313131;        /* raised: cards, secondary buttons, dropdowns */
+  --bg-4: #2A2D2E;        /* hover rows */
+  --bg-input: #313131;
+  --line: #2B2B2B;
+  --line-strong: #3C3C3C;  /* input / dropdown border */
+  --text: #CCCCCC;
+  --text-2: #9D9D9D;
+  --text-3: #6E7681;
+  --text-inv: #FFFFFF;     /* text on accent */
 
-  --accent: #a3344d;          /* 酒红 */
-  --accent-hover: #b83e59;
-  --accent-soft: rgba(184, 62, 89, .16);
-  --accent-line: rgba(184, 62, 89, .55);
-  --accent-text: #e48a9d;
+  --accent: #0078D4;
+  --accent-hover: #026EC1;
+  --accent-soft: rgba(0, 120, 212, .16);
+  --accent-line: #0078D4;
+  --accent-text: #4daafc;  /* links, accent icons */
+  --sel: #04395E;          /* focused selection */
+  --sel-blur: #37373D;     /* unfocused selection */
+  --badge-bg: #616161;
+  --tab-active-line: #0078D4;
+  --sel-line: transparent;
+  --row-hover: #2A2D2E;
+  --input-glow: none;
+  --chip-shade: rgba(0, 0, 0, .62);
 
-  --st-synced: #8fa75a;       /* 橄榄绿 */
-  --st-local: #e0a542;        /* 琥珀 */
-  --st-remote: #6c9fd6;       /* 蓝 */
-  --st-conflict: #e0583f;     /* 砖红 */
-  --st-off: #7d7266;          /* 灰 */
-  --st-synced-bg: rgba(143,167,90,.14);
-  --st-local-bg: rgba(224,165,66,.14);
-  --st-remote-bg: rgba(108,159,214,.14);
-  --st-conflict-bg: rgba(224,88,63,.15);
-  --st-off-bg: rgba(125,114,102,.14);
+  --st-synced: #89D185;
+  --st-local: #D29922;
+  --st-remote: #3794FF;
+  --st-conflict: #F85149;
+  --st-warn: #CCA700;
+  --st-off: #6E7681;
+  --st-synced-bg: rgba(46, 160, 67, .15);
+  --st-local-bg: rgba(210, 153, 34, .15);
+  --st-remote-bg: rgba(55, 148, 255, .14);
+  --st-conflict-bg: rgba(248, 81, 73, .14);
+  --st-warn-bg: rgba(204, 167, 0, .15);
+  --st-off-bg: rgba(110, 118, 129, .16);
 
-  --lamp-const: #5b8fe0;      /* 🔵 永久 */
-  --lamp-key: #6fb35a;        /* 🟢 关键词 */
-  --lamp-vec: #b07ad8;        /* 🔗 向量化 */
+  --lamp-const: #3794FF;
+  --lamp-key: #2EA043;
+  --lamp-vec: #B180D7;
 
-  --diff-add: rgba(143,167,90,.24);
-  --diff-del: rgba(224,88,63,.24);
-  --focus: 0 0 0 2px var(--bg-1), 0 0 0 4px rgba(228,138,157,.7);
-  --scroll-thumb: #3b3229;
+  --diff-add: rgba(46, 160, 67, .25);
+  --diff-del: rgba(248, 81, 73, .25);
+  --focus: 0 0 0 1px #0078D4;
+  --scroll-thumb: rgba(121, 121, 121, .4);
+  --on-color: #FFFFFF;            /* text on saturated fills (toggle knob, badges) */
+  --scrim: rgba(0, 0, 0, .45);
+  --logo-wine: #b83e59;           /* wine-glass app icon (brand, kept) */
+  --logo-deep: #5e1626;
+  --logo-ink: #fbe9d6;
+  --in-ws: #89D185;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .36), 0 2px 6px rgba(0, 0, 0, .24);
 }
 
 /* ---------------- Light (parchment) ---------------- */
@@ -141,6 +159,22 @@
   --st-remote-bg: rgba(47,106,168,.11);
   --st-conflict-bg: rgba(184,54,31,.11);
   --st-off-bg: rgba(139,127,113,.12);
+  --st-warn: #8a6d00;
+  --st-warn-bg: rgba(168,130,0,.13);
+  --sel: rgba(138, 34, 56, .10);
+  --sel-blur: rgba(138, 34, 56, .06);
+  --badge-bg: #e6dbc6;
+  --tab-active-line: transparent;
+  --sel-line: #9e2a43;
+  --row-hover: #fbf7ef;
+  --input-glow: 0 0 0 3px rgba(138, 34, 56, .10);
+  --chip-shade: rgba(20, 16, 12, .72);
+  --logo-wine: #9e2a43;
+  --on-color: #fff;
+  --scrim: rgba(0,0,0,.35);
+  --logo-deep: #5e1626;
+  --logo-ink: #fbe9d6;
+  --in-ws: #b9d27f;
 
   --lamp-const: #2e67c2;
   --lamp-key: #3f8a2c;
