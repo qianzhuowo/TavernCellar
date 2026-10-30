@@ -4,10 +4,13 @@
  */
 import { deepClone, getPath, hasPath, setPath, unsetPath } from './object-path.js';
 import { needsRaw, normalizeText } from './text.js';
+import { joinParts, ownsPartFile, splitParts } from './character-parts.js';
 
 export const META_FILE = 'cellar-item.json';
 export const CARD_FILE = 'card.json';
-const CODEC_VERSION = 1;
+/** 2: regex scripts, Tavern Helper scripts and variables split into their own files. */
+export const CHARACTER_CODEC_VERSION = 2;
+const CODEC_VERSION = CHARACTER_CODEC_VERSION;
 
 /** Long text fields split into their own files: [file, card path]. */
 export const TEXT_FIELDS = Object.freeze([
@@ -41,7 +44,7 @@ const TEXT_FIELD_FILES = new Set(TEXT_FIELDS.map(([file]) => file));
 
 /** True for files the character codec reads or writes (see CODECS.owns). */
 export function ownsCharacterFile(rel) {
-    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel);
+    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel);
 }
 
 /**
@@ -81,6 +84,8 @@ export function decodeCharacter(card) {
         unsetPath(rest, GREETINGS_PATH);
     }
 
+    splitParts(rest, files, meta);
+
     files[CARD_FILE] = JSON.stringify(rest, null, 2) + '\n';
     files[META_FILE] = JSON.stringify(meta, null, 2) + '\n';
     return files;
@@ -109,6 +114,8 @@ export function encodeCharacter(files) {
     } else if ((meta.emptyArrays ?? []).includes(GREETINGS_PATH)) {
         setPath(card, GREETINGS_PATH, []);
     }
+
+    joinParts(card, files, meta);
 
     for (const top of meta.mirrors ?? []) {
         const path = V1_MIRRORS.find(([key]) => key === top)?.[1];

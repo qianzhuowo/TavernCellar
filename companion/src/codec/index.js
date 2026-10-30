@@ -1,10 +1,12 @@
-import { decodeCharacter, encodeCharacter, ownsCharacterFile } from './character.js';
+import { CHARACTER_CODEC_VERSION, decodeCharacter, encodeCharacter, ownsCharacterFile } from './character.js';
 import { decodeLorebook, encodeLorebook, ownsLorebookFile } from './lorebook.js';
 
 /**
  * Per-kind codec registry. `folder` is the workspace top-level directory; `nameOf` derives the item folder name.
  * `owns(rel)` tells which files in an item folder belong to the codec: only those are ever deleted when the
  * tavern version is written back, so users can keep their own notes next to the card.
+ * `version` is the layout version written to cellar-item.json (`codec`); items with an older one are re-laid out
+ * on startup (content unchanged, so hashes and sync state stay valid).
  */
 export const CODECS = Object.freeze({
     character: {
@@ -13,6 +15,7 @@ export const CODECS = Object.freeze({
         decode: data => decodeCharacter(data),
         encode: (files) => encodeCharacter(files),
         owns: rel => ownsCharacterFile(rel),
+        version: CHARACTER_CODEC_VERSION,
     },
     lorebook: {
         folder: 'lorebooks',
@@ -20,6 +23,7 @@ export const CODECS = Object.freeze({
         decode: data => decodeLorebook(data),
         encode: (files, options) => encodeLorebook(files, options),
         owns: rel => ownsLorebookFile(rel),
+        version: 1,
     },
 });
 

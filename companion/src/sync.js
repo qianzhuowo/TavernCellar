@@ -53,6 +53,31 @@ export class SyncEngine {
         return hash;
     }
 
+    /**
+     * Re-lays out items written by an older codec version (e.g. regex still inside card.json). The content is
+     * encoded from the old files and decoded into the current layout, so hashes and sync state stay valid.
+     * Items whose files cannot be encoded right now (user mid-edit) are left alone and retried next start.
+     */
+    async upgradeLayouts() {
+        for (const item of this.ws.manifest.items) {
+            await this.withLock(item.path, async () => {
+                const files = await this.ws.readItemFiles(item.path).catch(() => null);
+                const codec = codecFor(item.kind);
+                let version = 0;
+                try { version = JSON.parse(files?.['cellar-item.json'] ?? '{}').codec ?? 0; } catch { return; }
+                if (!files || version >= codec.version) return;
+                try {
+                    const before = await this.encodeItem(item);
+                    const hash = await this.writeItem(item, before.data);
+                    if (hash !== before.hash) throw new Error('content changed during re-layout');
+                    this.log(`upgraded layout of ${item.path} (codec ${version} -> ${codec.version})`);
+                } catch (error) {
+                    this.log(`could not upgrade layout of ${item.path}: ${error.message}`);
+                }
+            });
+        }
+    }
+
     requireItem(path) {
         const item = this.ws.getItem(path);
         if (!item) throw new ProtocolError(ERR.NOT_FOUND, `No workspace item at ${path}`);

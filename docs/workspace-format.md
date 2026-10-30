@@ -58,8 +58,15 @@ characters/Alice/
 ├─ creator_notes.md            data.creator_notes
 ├─ depth_prompt.md             data.extensions.depth_prompt.prompt（角色备注）
 └─ alternate_greetings/
-    ├─ 01.md                   data.alternate_greetings[0]
-    └─ 02.md
+│   ├─ 01.md                   data.alternate_greetings[0]
+│   └─ 02.md
+├─ regex/                      data.extensions.regex_scripts（角色正则）
+│   ├─ 01-美化界面.json        一条正则（不含 replaceString）
+│   └─ 01-美化界面.replace.txt 它的 replaceString
+├─ scripts/                    酒馆助手脚本
+│   ├─ 01-MVU.json             一个脚本（不含 content）
+│   └─ 01-MVU.js               它的 content
+└─ variables.json              酒馆助手变量
 ```
 
 规则：
@@ -68,6 +75,12 @@ characters/Alice/
 - 备用开场白按文件名中的数字排序；空数组记录在元数据中，以便与“没有该字段”区分。
 - V1 顶层镜像字段（`description`、`personality`、`scenario`、`first_mes`、`mes_example`，以及 `creatorcomment` ↔ `data.creator_notes`）：取出时若与 `data.*` 相同，就从 `card.json` 中省略并记录在元数据里，写回时自动与 `data.*` 保持一致；若不同则原样保留在 `card.json` 中。
 - 换行：原值不含 `\r` 时，写回前把编辑器产生的 `\r\n` 规范为 `\n`；原值含 `\r` 时原样保留。
+- 正则与脚本：文件名 `NN-名称`，**编号决定顺序**，名称只是方便辨认（取自 scriptName / name）。改编号即调整顺序；删掉一对文件即删除该条；复制一对并改编号即新增。`.json` 里仍可修改其他参数（禁用、作用范围等）。
+- 酒馆助手有三种存储形态：对象 `tavern_helper: { scripts, variables }`、键值对数组 `tavern_helper: [["scripts", …], ["variables", …]]`、旧版 `TavernHelper_scripts: […]`。取出时记录形态（元数据 `helper`），写回时按原形态还原；`tavern_helper` 中的其他键留在 `card.json`。
+- 无法识别的形态（例如数组中有非对象元素、脚本 content 不是字符串）整段原样留在 `card.json`，不拆分。
+- 小白X（`xiaobaix-*`）、MVU 变量组等其他扩展字段暂留在 `card.json`。
+
+格式版本：元数据 `codec` 为 2。伴侣程序启动时，把旧版本（`codec: 1`，正则和脚本还在 `card.json` 里）的资料项自动重新拆分；内容不变，哈希和同步状态不受影响。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
 
 ## 4. 世界书
 

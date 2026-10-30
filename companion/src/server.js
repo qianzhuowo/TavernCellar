@@ -312,6 +312,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     const sessionId = randomBytes(24).toString('hex');
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
+    await engine.upgradeLayouts();
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
     let port = config.port;
     let stopWatching = () => {};
