@@ -279,16 +279,34 @@ export class SyncEngine {
             } catch (e) {
                 error = e.message;
             }
-            const bindings = Object.entries(item.bindings ?? {}).map(([targetId, binding]) => {
+            const bindings = await Promise.all(Object.entries(item.bindings ?? {}).map(async ([targetId, binding]) => {
                 const state = this.ws.getSyncState(item.path, targetId) ?? {};
+                const liveConn = this.targets.tryGetLive(targetId);
+                const conn = liveConn ?? this.targets.tryGet(targetId);
+                // Offline: read the tavern's current hash from its folder, so the status is real, not last known.
+                let tavernHash = state.tavern;
+                let tavernError;
+                if (!liveConn && conn) {
+                    try {
+                        tavernHash = (await conn.link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id })).hash;
+                    } catch (e) {
+                        tavernError = e.message;
+                    }
+                }
+                const localChanged = !error && localHash !== state.base;
+                const tavernChanged = Boolean(tavernHash) && tavernHash !== state.base;
                 let status = 'in-sync';
                 if (state.conflict) status = 'conflict';
                 else if (error) status = 'invalid';
-                else if (localHash !== state.base) status = 'local-changes';
-                else if (state.tavern && state.tavern !== state.base) status = 'tavern-changes';
-                const live = Boolean(this.targets.tryGetLive(targetId));
-                return { target: targetId, id: binding.id, autoSync: binding.autoSync, connected: live, offline: !live && Boolean(this.targets.tryGet(targetId)), status };
-            });
+                else if (localChanged && tavernChanged && tavernHash !== localHash) status = 'both-changed';
+                else if (localChanged && tavernHash !== localHash) status = 'local-changes';
+                else if (tavernChanged && tavernHash !== localHash) status = 'tavern-changes';
+                return {
+                    target: targetId, id: binding.id, autoSync: binding.autoSync,
+                    connected: Boolean(liveConn), offline: !liveConn && Boolean(conn), status,
+                    ...(tavernError ? { tavernError } : {}),
+                };
+            }));
             items.push({ path: item.path, kind: item.kind, error, bindings });
         }
         return {
