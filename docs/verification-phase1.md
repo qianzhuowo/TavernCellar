@@ -49,6 +49,35 @@ Test data only: character `TavernCellar_Test`, lorebook `TavernCellar_Test_WI` (
 - tt's character cache (file name key, 30 min TTL) is not a problem because `merge-attributes` invalidates it.
 - Deleting the character that is currently open makes tt show "current character no longer available" and reload — expected host behaviour.
 
+## TauriTavern (tt) — 2026-10-30, live round 2, passed
+
+Western-fantasy test card `TavernCellar_Test` (scout 艾德里克) bound to lorebook `TavernCellar_Test_WI` (4 entries, one constant),
+created through tt's own endpoints. Isolated `CELLAR_HOME` / workspace under `.tmp/`; companion on 7349; tt 2.4.0 driven via CDP 9333.
+
+| Check | Result |
+| --- | --- |
+| catalog + checkout (character with alternate greetings, lorebook) | pass |
+| workspace → tt: description, new `alternate_greetings/03.md`, lorebook entry | pass (in tt API and in-memory list) |
+| tt editor → workspace: personality box (form autosave), WI save | pulled automatically within ~3 s |
+| same field edited on both sides | `conflict`; workspace kept; tavern copy in `.cellar/conflicts/`; sync/pull refuse without `--force` |
+| `sync --force` resolves | pass, tt form shows workspace text |
+| auto-sync on, edit files | pushed within ~1 s, no command |
+| tt closed → offline | status `offline=True in-sync`; catalog works |
+| offline `sync` | PNG / JSON written in data dir; original backed up to `.cellar/backups/<target>/` |
+| restart tt | tt shows offline edits; Link reconnects; both items `in-sync` (no false conflict) |
+
+Observed: the first sync after tt saved the card warns `Tavern normalized the saved data: spec, spec_version` once
+(tt adds the spec fields); later syncs are clean. Auto-sync does not write offline — offline write-back is explicit.
+
+### Driving tt for tests
+
+- Launch through WMI `Win32_Process.Create` **with the full current environment plus**
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`. `EnvironmentVariables` replaces the whole
+  environment; with only the one variable WebView2 starts but never opens the DevTools port.
+- `Process.MainWindowHandle` is the hidden single-instance window (`com.tauritavern.client-siw`), not the UI.
+- With *close to tray* enabled, WM_CLOSE only hides the window. The graceful-exit event cannot be emitted from the
+  page while hidden (`failed to send message to the webview`); use the tray menu *Exit*, or stop the test instance.
+
 ## SillyTavern 1.15.0 — pending
 
 ST (`127.0.0.1:8000`) was not running during this session. Same checklist to be run with a temporary browser
