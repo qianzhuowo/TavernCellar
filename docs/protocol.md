@@ -5,8 +5,10 @@
 ## 1. 传输
 
 - 伴侣程序监听 `127.0.0.1:<port>`（默认 `7349`）。
-- `GET /link` 升级为 WebSocket：供 Cellar Link 使用。
-- `/api/*`：HTTP 控制接口，供 CLI 与以后的编辑器使用，需要 `Authorization: Bearer <令牌>`。
+- `GET /link` 升级为 WebSocket：供 Cellar Link 使用。准入条件：Host 为伴侣程序自己的回环地址，且 Origin 存在并属于允许的酒馆来源（见 architecture.md §5）。不满足时返回 HTTP 403。无令牌。
+- `/api/*`：HTTP 控制接口，供 CLI 与 Studio 主进程使用，需要 `Authorization: Bearer <内部令牌>`（从本机配置文件读取）。其中：
+  - `GET /api/detect`：检测本机酒馆（ST 通过回环端口的 `GET /version` 识别；tt 通过进程与运行配置文件中的 `data_root`）、插件是否安装、当前连接及来源。
+  - `POST /api/taverns`：`{ st?: boolean, tt?: boolean }`，设置接受哪类酒馆的连接；关闭时断开现有连接（`4403`）。
 
 ## 2. 消息信封（WebSocket，JSON 文本帧）
 
@@ -31,7 +33,6 @@
 // 插件 → 伴侣程序
 { "type": "hello", "payload": {
     "protocol": 1,
-    "token": "<配对令牌>",
     "target": { "id": "<targetId>", "label": "SillyTavern @ 127.0.0.1:8000", "host": "st", "hostVersion": "1.15.0" },
     "capabilities": { "worldInfoEntryTemplate": { /* 酒馆的 newWorldInfoEntryTemplate */ } }
 } }
@@ -39,7 +40,7 @@
 { "ok": true, "payload": { "server": { "name": "TavernCellar", "version": "0.1.0", "protocol": 1 } } }
 ```
 
-`host` 取值：`st` 或 `tt`（存在 `window.__TAURITAVERN__` 时为 `tt`）。
+`host` 取值：`st` 或 `tt`（页面为 Tauri 环境——存在 `window.__TAURI_INTERNALS__`、协议为 `tauri:` 或主机为 `tauri.localhost`——时为 `tt`）。伴侣程序关闭了该类酒馆时，握手返回 `tavern_disabled` 并以 `4403` 关闭。旧版插件在 payload 中发送的 `token` 字段被忽略。
 
 ## 4. 伴侣程序 → 插件的请求
 
@@ -67,7 +68,8 @@
 
 | code | 含义 |
 |---|---|
-| `unauthorized` | 令牌错误；随后以 `4401` 关闭连接 |
+| `unauthorized` | 握手不合法（如 target 描述无效）；随后以 `4401` 关闭连接。HTTP 接口中表示内部令牌 / Origin / Host 不合法 |
+| `tavern_disabled` | 伴侣程序关闭了该类酒馆的连接；随后以 `4403` 关闭连接 |
 | `protocol_mismatch` | 协议版本不兼容；随后以 `4400` 关闭连接 |
 | `bad_request` | 参数不合法 |
 | `not_found` | 指定的项不存在 |
@@ -81,7 +83,8 @@
 | 码 | 含义 | 插件的处理 |
 |---|---|---|
 | `4400` | 协议不兼容 | 停止重连，提示升级 |
-| `4401` | 令牌错误 | 停止重连，提示检查令牌 |
+| `4401` | 握手被拒绝 | 停止重连 |
+| `4403` | 伴侣程序未接受该类酒馆 | 按最长间隔（60 秒）继续重试，重新启用后自动连上 |
 | `4408` | 握手超时 | 正常重连 |
 | `4409` | 同一 targetId 有新连接，本连接被替换 | 停止重连 |
 

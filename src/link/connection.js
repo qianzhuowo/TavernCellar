@@ -12,16 +12,17 @@ export const STATUS = Object.freeze({
     CONNECTING: 'connecting',
     CONNECTED: 'connected',
     WAITING: 'waiting',   // disconnected, will retry
+    REFUSED: 'refused',   // companion turned this tavern type off; retries slowly so re-enabling reconnects
     STOPPED: 'stopped',   // terminal error; needs user action
 });
 
-const MIN_BACKOFF_MS = 1000;
-const MAX_BACKOFF_MS = 30000;
+const MIN_BACKOFF_MS = 5000;
+const MAX_BACKOFF_MS = 60000;
 
 export class LinkClient {
     /**
      * @param {object} options
-     * @param {() => {url: string, token: string, target: object, capabilities: object}} options.getHello
+     * @param {() => {url: string, target: object, capabilities: object}} options.getHello
      * @param {(type: string, payload: any) => Promise<any>} options.onRequest
      * @param {(status: string, detail?: string) => void} options.onStatus
      * @param {() => void} [options.onReady]
@@ -60,6 +61,13 @@ export class LinkClient {
         this.start();
     }
 
+    /** Skips the remaining backoff when waiting for the companion (e.g. the tab regained focus). */
+    retryNow() {
+        if (!this.wanted || this.socket || !this.retryTimer) return;
+        this.backoff = MIN_BACKOFF_MS;
+        this.#connect();
+    }
+
     /** Sends an event; silently dropped when not connected (the companion re-reads state on reconnect). */
     emit(type, payload) {
         if (this.ready && this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(event(type, payload)));
@@ -67,11 +75,8 @@ export class LinkClient {
 
     #connect() {
         clearTimeout(this.retryTimer);
+        this.retryTimer = null;
         const hello = this.getHello();
-        if (!hello.token) {
-            this.onStatus(STATUS.STOPPED, '未填写配对令牌');
-            return;
-        }
         this.onStatus(STATUS.CONNECTING, hello.url);
         let socket;
         try {
@@ -86,7 +91,6 @@ export class LinkClient {
         socket.addEventListener('open', () => {
             socket.send(JSON.stringify(request('hello', MSG.HELLO, {
                 protocol: PROTOCOL_VERSION,
-                token: hello.token,
                 target: hello.target,
                 capabilities: hello.capabilities,
             })));
@@ -101,16 +105,21 @@ export class LinkClient {
             if (!this.wanted) return;
             if (TERMINAL_CLOSE_CODES.includes(ev.code)) {
                 const reason = {
-                    [CLOSE.UNAUTHORIZED]: '配对令牌被拒绝',
+                    [CLOSE.UNAUTHORIZED]: '握手被拒绝',
                     [CLOSE.PROTOCOL_MISMATCH]: '协议版本不一致，请更新插件或伴侣程序',
                     [CLOSE.REPLACED]: '同一酒馆在别处建立了新连接',
                 }[ev.code];
                 this.onStatus(STATUS.STOPPED, reason ?? ev.reason);
                 return;
             }
+            if (ev.code === CLOSE.TAVERN_DISABLED) {
+                this.backoff = MAX_BACKOFF_MS;
+                this.onStatus(STATUS.REFUSED, '在伴侣程序中运行 cellar use all 可重新接受');
+            } else {
+                this.onStatus(STATUS.WAITING, `${Math.round(this.backoff / 1000)} 秒后重试`);
+            }
             const delay = this.backoff;
             this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
-            this.onStatus(STATUS.WAITING, `${Math.round(delay / 1000)} 秒后重试`);
             this.retryTimer = setTimeout(() => this.#connect(), delay);
         });
     }

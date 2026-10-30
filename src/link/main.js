@@ -27,9 +27,10 @@ function getSettings() {
     const s = all[SETTINGS_KEY];
     let changed = false;
     const init = (key, value) => { if (s[key] === undefined) { s[key] = value; changed = true; } };
-    init('enabled', false);
+    // Settings from versions that used a pairing token: the token is gone and connecting is on by default now.
+    if ('token' in s) { delete s.token; s.enabled = true; changed = true; }
+    init('enabled', true);
     init('url', DEFAULT_URL);
-    init('token', '');
     init('label', detectHost() === 'tt' ? 'TauriTavern' : 'SillyTavern');
     init('targetId', randomId());
     if (changed) ctx().saveSettingsDebounced();
@@ -40,7 +41,8 @@ const STATUS_TEXT = {
     [STATUS.IDLE]: '未启用',
     [STATUS.CONNECTING]: '正在连接…',
     [STATUS.CONNECTED]: '已连接',
-    [STATUS.WAITING]: '未连接',
+    [STATUS.WAITING]: '等待伴侣程序',
+    [STATUS.REFUSED]: '伴侣程序未接受本酒馆',
     [STATUS.STOPPED]: '已停止',
 };
 
@@ -54,12 +56,10 @@ function renderPanel() {
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
-      <small>连接本地 TavernCellar 伴侣程序，在外部编辑器中编辑角色卡与世界书。</small>
-      <label class="checkbox_label"><input type="checkbox" id="tavern_cellar_enabled"><span>启用连接</span></label>
+      <small>自动连接本机的 TavernCellar 伴侣程序（运行 <code>cellar serve</code>），在外部编辑器中编辑角色卡与世界书。无需令牌。</small>
+      <label class="checkbox_label"><input type="checkbox" id="tavern_cellar_enabled"><span>自动连接</span></label>
       <label for="tavern_cellar_url">伴侣程序地址</label>
       <input id="tavern_cellar_url" class="text_pole" type="text" spellcheck="false">
-      <label for="tavern_cellar_token">配对令牌（运行 <code>cellar token</code> 获取）</label>
-      <input id="tavern_cellar_token" class="text_pole" type="password" autocomplete="off" spellcheck="false">
       <label for="tavern_cellar_label">本酒馆名称</label>
       <input id="tavern_cellar_label" class="text_pole" type="text">
       <div class="tavern-cellar-status-row">
@@ -86,7 +86,6 @@ export function init() {
     const client = new LinkClient({
         getHello: () => ({
             url: settings.url || DEFAULT_URL,
-            token: settings.token,
             target: { id: settings.targetId, host, label: settings.label || host, hostVersion: '' },
             capabilities: hostAdapter.capabilities(),
         }),
@@ -113,7 +112,6 @@ export function init() {
         });
     };
     bindText('#tavern_cellar_url', 'url');
-    bindText('#tavern_cellar_token', 'token');
     bindText('#tavern_cellar_label', 'label');
     $('#tavern_cellar_target_id').text(settings.targetId);
     $('#tavern_cellar_reconnect').on('click', () => {
@@ -127,6 +125,11 @@ export function init() {
 
     if (settings.enabled) client.start();
     else client.stop();
+
+    // Retry right away when the user comes back to the tavern (e.g. after starting `cellar serve`).
+    const retrySoon = () => { if (settings.enabled && document.visibilityState === 'visible') client.retryNow(); };
+    window.addEventListener('focus', retrySoon);
+    document.addEventListener('visibilitychange', retrySoon);
 
     // Exposed for diagnostics from the devtools console.
     globalThis.TavernCellarLink = { client, host: hostAdapter, settings };

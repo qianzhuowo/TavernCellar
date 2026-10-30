@@ -4,14 +4,19 @@
  */
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
+import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import {
-    CLOSE, ERR, HELLO_TIMEOUT_MS, LINK_PATH, MSG, PROTOCOL_VERSION, ProtocolError, REQUEST_TIMEOUT_MS,
-    errorResponse, isAllowedOrigin, okResponse, parseMessage, request,
+    CLOSE, ERR, HELLO_TIMEOUT_MS, LINK_PATH, MSG, PROTOCOL_VERSION, ProtocolError, REQUEST_TIMEOUT_MS, TAVERN_HOSTS,
+    errorResponse, isAllowedOrigin, isLoopbackHost, okResponse, parseMessage, request,
 } from '../../shared/protocol.js';
 import { TargetRegistry } from './targets.js';
 import { SyncEngine } from './sync.js';
 import { watchWorkspace } from './watch.js';
+import { detectTaverns } from './detect.js';
+import { saveConfig } from './config.js';
+import { detectTtDataRoot, resolveLocations } from './taverns/locations.js';
+import { OfflineLink } from './taverns/offline.js';
 
 export const SERVER_NAME = 'TavernCellar';
 export const SERVER_VERSION = '0.1.0';
@@ -23,11 +28,12 @@ function tokenMatches(expected, given) {
     return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** One Cellar Link WebSocket connection. */
+/** One Cellar Link WebSocket connection. Admission is decided by Origin/Host at upgrade time (no pairing token). */
 class LinkConnection {
-    constructor(socket, { token, onReady, onClose, onEvent, log }) {
+    constructor(socket, { origin, isHostEnabled, onReady, onClose, onEvent, log }) {
         this.socket = socket;
-        this.token = token;
+        this.origin = origin;
+        this.isHostEnabled = isHostEnabled;
         this.onReady = onReady;
         this.onClose = onClose;
         this.onEvent = onEvent;
@@ -112,18 +118,18 @@ class LinkConnection {
             this.close(CLOSE.PROTOCOL_MISMATCH, 'protocol mismatch');
             return;
         }
-        if (!tokenMatches(this.token, p.token)) {
-            this.send(errorResponse(msg.id, new ProtocolError(ERR.UNAUTHORIZED, 'Pairing token rejected')));
-            this.close(CLOSE.UNAUTHORIZED, 'unauthorized');
-            return;
-        }
         const t = p.target ?? {};
-        if (typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(t.id) || !['st', 'tt'].includes(t.host)) {
+        if (typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{6,64}$/.test(t.id) || !TAVERN_HOSTS.includes(t.host)) {
             this.send(errorResponse(msg.id, new ProtocolError(ERR.BAD_REQUEST, 'Invalid target descriptor')));
             this.close(CLOSE.UNAUTHORIZED, 'bad target');
             return;
         }
-        this.target = { id: t.id, host: t.host, label: String(t.label ?? t.host).slice(0, 120), hostVersion: String(t.hostVersion ?? '') };
+        if (!this.isHostEnabled(t.host)) {
+            this.send(errorResponse(msg.id, new ProtocolError(ERR.TAVERN_DISABLED, `Connections from ${t.host} are turned off in the companion`)));
+            this.close(CLOSE.TAVERN_DISABLED, 'tavern disabled');
+            return;
+        }
+        this.target = { id: t.id, host: t.host, label: String(t.label ?? t.host).slice(0, 120), hostVersion: String(t.hostVersion ?? ''), origin: this.origin };
         this.send(okResponse(msg.id, { server: { name: SERVER_NAME, version: SERVER_VERSION, protocol: PROTOCOL_VERSION } }));
         try {
             await this.onReady(this, p.capabilities ?? {});
@@ -160,20 +166,92 @@ async function readJsonBody(req, limit = 32 * 1024 * 1024) {
 }
 
 const STATUS_BY_CODE = {
-    [ERR.BAD_REQUEST]: 400, [ERR.UNAUTHORIZED]: 401, [ERR.NOT_FOUND]: 404, [ERR.CONFLICT]: 409,
-    [ERR.NOT_CONNECTED]: 503, [ERR.TIMEOUT]: 504, [ERR.HOST_ERROR]: 502,
+    [ERR.BAD_REQUEST]: 400, [ERR.UNAUTHORIZED]: 401, [ERR.TAVERN_DISABLED]: 403, [ERR.NOT_FOUND]: 404, [ERR.CONFLICT]: 409,
+    [ERR.NOT_CONNECTED]: 503, [ERR.TIMEOUT]: 504, [ERR.HOST_ERROR]: 502, [ERR.TAVERN_RUNNING]: 423,
 };
 
+/** Validates a locations object from the API: { st: [{dir, user?}], tt: [{install?, data}] }. */
+function normalizeLocations(body) {
+    const str = v => (typeof v === 'string' ? v.trim() : '');
+    const list = (value, host) => {
+        if (value === undefined) return [];
+        if (!Array.isArray(value)) throw new ProtocolError(ERR.BAD_REQUEST, `${host} must be an array`);
+        return value;
+    };
+    const st = list(body.st, 'st').map(e => {
+        const dir = str(e?.dir);
+        if (!dir) throw new ProtocolError(ERR.BAD_REQUEST, 'st[].dir is required');
+        const user = str(e?.user);
+        return user ? { dir, user } : { dir };
+    });
+    const tt = list(body.tt, 'tt').map(e => {
+        const data = str(e?.data);
+        if (!data) throw new ProtocolError(ERR.BAD_REQUEST, 'tt[].data is required');
+        return { install: str(e?.install), data };
+    });
+    return { st, tt };
+}
+
 /**
- * @param {{config: {port:number, token:string, allowOrigins:string[]}, workspace: import('./workspace/workspace.js').Workspace, log?: Function, watch?: boolean}} options
+ * @param {{config: {port:number, token:string, allowOrigins:string[], taverns:{st:boolean, tt:boolean}, stPorts?:number[], stDir?:string|null}, workspace: import('./workspace/workspace.js').Workspace, log?: Function, watch?: boolean, persistConfig?: (config: object) => Promise<void>}} options
  */
-export async function startServer({ config, workspace, log = console.log, watch = true }) {
+export async function startServer({ config, workspace, log = console.log, watch = true, persistConfig = saveConfig }) {
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
+    let port = config.port;
+
+    const connectedTargets = () => [...wss.clients].map(ws => ws.cellarLink?.target).filter(Boolean);
+
+    /** Rebuilds offline links from config.locations (only taverns that are accepted and have a Cellar Link target id). */
+    async function refreshOffline() {
+        const locations = await resolveLocations(config.locations);
+        const seen = new Set();
+        const links = [];
+        for (const loc of locations) {
+            if (loc.error || !loc.targetId || !config.taverns[loc.host] || seen.has(loc.targetId)) continue;
+            seen.add(loc.targetId);
+            links.push(new OfflineLink(loc, { backupDir: () => join(workspace.root, '.cellar', 'backups') }));
+        }
+        targets.setOffline(links);
+        return locations;
+    }
+
+    async function setLocations(body) {
+        config.locations = normalizeLocations(body);
+        await persistConfig(config);
+        const locations = await refreshOffline();
+        log(`locations: ${locations.map(l => `${l.key}=${l.error ? `error(${l.error})` : l.userDir}`).join(', ') || 'none'}`);
+        return { locations: config.locations, resolved: locations };
+    }
+
+    async function setTaverns(body) {
+        const next = { ...config.taverns };
+        for (const host of TAVERN_HOSTS) {
+            if (body[host] === undefined) continue;
+            if (typeof body[host] !== 'boolean') throw new ProtocolError(ERR.BAD_REQUEST, `${host} must be true or false`);
+            next[host] = body[host];
+        }
+        config.taverns = next;
+        await persistConfig(config);
+        await refreshOffline();
+        for (const ws of wss.clients) {
+            const link = ws.cellarLink;
+            if (link?.target && !next[link.target.host]) link.close(CLOSE.TAVERN_DISABLED, 'tavern disabled');
+        }
+        log(`taverns: st=${next.st ? 'on' : 'off'} tt=${next.tt ? 'on' : 'off'}`);
+        return { taverns: next };
+    }
 
     const routes = {
-        'GET /api/status': () => engine.status(),
+        'GET /api/status': async () => { await refreshOffline(); return { ...await engine.status(), taverns: config.taverns }; },
+        'GET /api/detect': async () => {
+            await refreshOffline();
+            return detectTaverns({ config, connected: connectedTargets(), offline: targets.listOffline() });
+        },
+        'POST /api/taverns': b => setTaverns(b),
+        'GET /api/taverns/locations': async () => ({ locations: config.locations, resolved: await resolveLocations(config.locations), detectedTtDataRoot: await detectTtDataRoot() }),
+        'POST /api/taverns/locations': b => setLocations(b),
         'POST /api/catalog': b => engine.catalog(b.target, b),
         'POST /api/checkout': b => engine.checkout(b.target, b),
         'POST /api/sync': b => engine.sync(b.path, b),
@@ -187,7 +265,9 @@ export async function startServer({ config, workspace, log = console.log, watch 
             res.end(JSON.stringify(body));
         };
         try {
-            // Control API is for local non-browser clients only (CLI, editor extension); no CORS by design.
+            if (!isLoopbackHost(req.headers.host, port)) throw new ProtocolError(ERR.UNAUTHORIZED, 'Unexpected Host header');
+            // Control API is for local non-browser clients only (CLI, Studio main process); no CORS by design.
+            // The bearer token is read from the local config file by those clients; it is never shown to users.
             if (req.headers.origin) throw new ProtocolError(ERR.UNAUTHORIZED, 'Browser origins may not use the control API');
             const auth = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
             if (!tokenMatches(config.token, auth)) throw new ProtocolError(ERR.UNAUTHORIZED, 'Missing or wrong token');
@@ -204,20 +284,22 @@ export async function startServer({ config, workspace, log = console.log, watch 
 
     server.on('upgrade', (req, socket, head) => {
         const path = new URL(req.url, 'http://127.0.0.1').pathname;
-        if (path !== LINK_PATH || !isAllowedOrigin(req.headers.origin, config.allowOrigins)) {
-            log(`rejected upgrade: path=${path} origin=${req.headers.origin ?? '-'}`);
+        const origin = req.headers.origin;
+        if (path !== LINK_PATH || !isLoopbackHost(req.headers.host, port) || !isAllowedOrigin(origin, config.allowOrigins)) {
+            log(`rejected upgrade: path=${path} host=${req.headers.host ?? '-'} origin=${origin ?? '-'}`);
             socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
             socket.destroy();
             return;
         }
         wss.handleUpgrade(req, socket, head, ws => {
-            new LinkConnection(ws, {
-                token: config.token,
+            ws.cellarLink = new LinkConnection(ws, {
+                origin,
+                isHostEnabled: host => config.taverns[host] === true,
                 log,
                 onReady: async (link, capabilities) => {
                     const previous = targets.add(link.target, link);
                     if (previous) previous.link.close(CLOSE.REPLACED, 'replaced by a newer connection');
-                    log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id}`);
+                    log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id} origin=${origin}`);
                     await engine.onTargetConnected(link.target, capabilities, link);
                 },
                 onClose: link => {
@@ -236,6 +318,8 @@ export async function startServer({ config, workspace, log = console.log, watch 
         server.once('error', reject);
         server.listen(config.port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
     });
+    port = server.address().port;
+    await refreshOffline();
     const stopWatching = watch ? watchWorkspace(workspace, path => engine.onFilesChanged(path), log) : () => {};
     log(`TavernCellar listening on 127.0.0.1:${server.address().port}, workspace ${workspace.root}`);
 

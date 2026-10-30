@@ -11,7 +11,7 @@
 │   host.js        宿主适配：目录、读取、写入、刷新、事件        │
 │   main.js        设置面板、生命周期                           │
 └───────────────┬──────────────────────────────────────────────┘
-                │ ws://127.0.0.1:<port>/link   （配对令牌 + Origin 校验）
+                │ ws://127.0.0.1:<port>/link   （Origin + Host 校验，无令牌）
 ┌───────────────▼──────────── 伴侣程序（Node，companion/）───────┐
 │ server.js     HTTP + WS 服务；/link 给插件，/api/* 给 CLI 与以后的编辑器 │
 │ targets.js    已连接的酒馆（目标）注册表，按 targetId 管理       │
@@ -69,9 +69,10 @@ CLI → `POST /api/checkout` → 伴侣程序向插件发 `item.get` → 解码�
 ## 5. 安全
 
 - 只监听 `127.0.0.1`。
-- 插件连接必须在握手中提供配对令牌；令牌由伴侣程序首次启动时生成，保存在用户目录 `~/.tavern-cellar/config.json`。
-- 校验 WebSocket 的 Origin：允许 `http(s)://localhost|127.0.0.1|[::1]:*`、`http(s)://tauri.localhost`、`tauri://localhost`，以及配置中额外列出的来源。
-- HTTP 控制接口要求 `Authorization: Bearer <令牌>`，并且不提供 CORS 响应头，浏览器网页无法跨域调用。
+- **插件连接不使用令牌，靠来源准入**：浏览器发起 WebSocket 时必定携带真实的 Origin 头，网页无法伪造。伴侣程序只接受来自 `http(s)://localhost|127.0.0.1|[::1]:*`、`http(s)://tauri.localhost`、`tauri://localhost` 以及配置 `allowOrigins` 中额外列出的来源；没有 Origin 的连接（非浏览器）一律拒绝。互联网网页因此无法连接。
+- 校验 Host 头必须是 `127.0.0.1:<port>` / `localhost:<port>` / `[::1]:<port>`，防止 DNS 重绑定（外部域名解析到 127.0.0.1）。
+- 剩余风险：本机其他网页服务提供的页面同样是回环来源，也能连接。本机程序本就能直接读写用户文件，令牌对此并无额外保护。对策：`cellar status` / `cellar detect` 列出每个已连接酒馆的来源；`cellar use st|tt|all`（配置 `taverns`）可关闭某类酒馆的连接，被关闭的连接以 `4403` 断开。
+- HTTP 控制接口（CLI、Studio 主进程）要求 `Authorization: Bearer <内部令牌>`、拒绝任何带 Origin 的请求、校验 Host，且不提供 CORS。内部令牌存在 `~/.tavern-cellar/config.json`，由客户端自动读取，用户不需要接触。
 - 伴侣程序只读写工作区目录内的文件；协议中不存在执行命令或访问任意路径的操作。
 
 ## 6. 依赖

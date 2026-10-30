@@ -67,11 +67,13 @@ export class SyncEngine {
             targetId = matches[0];
         } else {
             const connected = bound.filter(id => this.targets.tryGet(id));
-            if (connected.length !== 1) {
-                throw new ProtocolError(connected.length ? ERR.BAD_REQUEST : ERR.NOT_CONNECTED,
-                    connected.length ? `Item ${item.path} is bound to several connected taverns; specify a target` : `No bound tavern of ${item.path} is connected`);
+            const live = connected.filter(id => this.targets.tryGetLive(id));
+            const candidates = live.length === 1 ? live : connected;
+            if (candidates.length !== 1) {
+                throw new ProtocolError(candidates.length ? ERR.BAD_REQUEST : ERR.NOT_CONNECTED,
+                    candidates.length ? `Item ${item.path} is bound to several available taverns; specify a target` : `No bound tavern of ${item.path} is connected or configured for offline access`);
             }
-            targetId = connected[0];
+            targetId = candidates[0];
         }
         const conn = this.targets.tryGet(targetId);
         if (!conn) throw new ProtocolError(ERR.NOT_CONNECTED, `Target ${targetId} is not connected`);
@@ -89,7 +91,7 @@ export class SyncEngine {
     }
 
     async pushWatchList(targetId) {
-        const conn = this.targets.tryGet(targetId);
+        const conn = this.targets.tryGetLive(targetId);
         if (conn) await conn.link.request(MSG.WATCH_SET, { items: this.ws.watchList(targetId) });
     }
 
@@ -201,7 +203,7 @@ export class SyncEngine {
         await this.withLock(item.path, async () => {
             const state = this.ws.getSyncState(item.path, targetId) ?? {};
             if (hash === state.base) return; // echo of our own write
-            const conn = this.targets.tryGet(targetId);
+            const conn = this.targets.tryGetLive(targetId);
             if (!conn) return;
             const local = await this.encodeItem(item).catch(() => null);
             const remote = await conn.link.request(MSG.ITEM_GET, { kind, id: binding.id });
@@ -237,7 +239,8 @@ export class SyncEngine {
             for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
                 const state = this.ws.getSyncState(path, targetId) ?? {};
                 if (!binding.autoSync || local.hash === state.base || state.conflict) continue;
-                const conn = this.targets.tryGet(targetId);
+                // Auto sync only over a live link: offline writes go to the tavern's files and stay an explicit action.
+                const conn = this.targets.tryGetLive(targetId);
                 if (!conn) continue;
                 try {
                     await this.#syncLocked(item, targetId, binding, conn.link, false);
@@ -283,13 +286,15 @@ export class SyncEngine {
                 else if (error) status = 'invalid';
                 else if (localHash !== state.base) status = 'local-changes';
                 else if (state.tavern && state.tavern !== state.base) status = 'tavern-changes';
-                return { target: targetId, id: binding.id, autoSync: binding.autoSync, connected: Boolean(this.targets.tryGet(targetId)), status };
+                const live = Boolean(this.targets.tryGetLive(targetId));
+                return { target: targetId, id: binding.id, autoSync: binding.autoSync, connected: live, offline: !live && Boolean(this.targets.tryGet(targetId)), status };
             });
             items.push({ path: item.path, kind: item.kind, error, bindings });
         }
         return {
             workspace: this.ws.root,
             targets: this.targets.list(),
+            offlineTargets: this.targets.listOffline(),
             items,
         };
     }

@@ -5,8 +5,12 @@ node_modules/
 dist/
 build/
 out/
+release/
 *.tgz
 *.vsix
+*.exe
+*.zip
+*.blockmap
 
 # Test output, coverage, local scratch (live-test scripts, isolated CELLAR_HOME, test workspaces)
 .tmp/
@@ -14,12 +18,14 @@ tmp/
 coverage/
 .nyc_output/
 test-results/
+playwright-report/
 *.lcov
 
 # Runtime state that must never be committed
 .env
 .env.*
 .tavern-cellar/
+.cellar/
 
 # Logs
 *.log

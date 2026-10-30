@@ -21,6 +21,7 @@
 .tavern-cellar-dot[data-status="connected"] { background: #3fb950; }
 .tavern-cellar-dot[data-status="connecting"],
 .tavern-cellar-dot[data-status="waiting"] { background: #d29922; }
+.tavern-cellar-dot[data-status="refused"] { background: #8b949e; }
 .tavern-cellar-dot[data-status="stopped"] { background: #f85149; }
 
 .tavern-cellar-status-row {

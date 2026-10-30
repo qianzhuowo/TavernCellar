@@ -14,11 +14,11 @@
 ```bash
 cd companion
 npm install
-node src/cli.js init <工作区目录>   # 创建工作区并生成配对令牌
-node src/cli.js serve               # 只监听 127.0.0.1:7349
+node src/cli.js init <工作区目录>   # 创建工作区
+node src/cli.js serve               # 只监听 127.0.0.1:7349，启动时显示检测到的酒馆
 ```
 
-在酒馆的扩展设置里打开 **Cellar Link**，填入 `cellar token` 显示的令牌后即可连接。之后：
+酒馆里装好 **Cellar Link** 插件后会自动连接伴侣程序，不需要令牌。`cellar detect` 查看本机的 SillyTavern / TauriTavern 及插件安装情况；`cellar use st|tt|all` 选择接受哪个酒馆的连接。之后：
 
 ```bash
 node src/cli.js catalog character      # 列出角色（只取摘要）

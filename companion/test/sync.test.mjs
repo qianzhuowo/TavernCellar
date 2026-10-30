@@ -9,25 +9,26 @@ import { MSG, PROTOCOL_VERSION, event, okResponse, errorResponse, ProtocolError,
 import { Workspace } from '../src/workspace/workspace.js';
 import { startServer } from '../src/server.js';
 
-const TOKEN = 'test-token-0123456789abcdef';
+const TOKEN = 'test-token-0123456789abcdef'; // internal control-API secret; the Link itself has no token
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Minimal stand-in for Cellar Link backed by an in-memory store. */
 class FakeTavern {
-    constructor(port, { token = TOKEN, targetId = 'fake-target-1' } = {}) {
+    constructor(port, { targetId = 'fake-target-1', host = 'st', origin = 'http://127.0.0.1:8000', headers } = {}) {
         this.store = {
             character: new Map([['Alice.png', { name: 'Alice', data: { name: 'Alice', description: 'orig', alternate_greetings: [], extensions: {} } }]]),
             lorebook: new Map([['Book', { entries: { 0: { uid: 0, key: ['k'], comment: 'c', content: 'body' } } }]]),
         };
         this.watch = [];
         this.puts = 0;
-        this.ws = new WebSocket(`ws://127.0.0.1:${port}/link`, { origin: 'http://127.0.0.1:8000' });
+        this.ws = new WebSocket(`ws://127.0.0.1:${port}/link`, { origin, headers });
         this.ready = new Promise((resolve, reject) => {
             this.ws.on('open', () => this.ws.send(JSON.stringify(request('h1', MSG.HELLO, {
-                protocol: PROTOCOL_VERSION, token,
-                target: { id: targetId, host: 'st', label: 'Fake ST', hostVersion: 'test' },
+                protocol: PROTOCOL_VERSION,
+                target: { id: targetId, host, label: `Fake ${host}`, hostVersion: 'test' },
                 capabilities: { worldInfoEntryTemplate: { key: [], content: '', comment: '', disable: false } },
             }))));
+            this.ws.on('error', reject);
             this.ws.on('close', code => reject(Object.assign(new Error('closed'), { code })));
             this.ws.on('message', async raw => {
                 const msg = JSON.parse(String(raw));
@@ -73,9 +74,9 @@ class FakeTavern {
 }
 
 let dir, server, ws, tavern;
-const api = async (method, path, body) => {
+const api = async (method, path, body, headers = {}) => {
     const res = await fetch(`http://127.0.0.1:${server.port}${path}`, {
-        method, headers: { Authorization: `Bearer ${TOKEN}` }, body: body && JSON.stringify(body),
+        method, headers: { Authorization: `Bearer ${TOKEN}`, ...headers }, body: body && JSON.stringify(body),
     });
     return res.json();
 };
@@ -88,7 +89,10 @@ const until = async (fn, ms = 3000) => {
 before(async () => {
     dir = await mkdtemp(join(tmpdir(), 'cellar-test-'));
     ws = await Workspace.init(dir);
-    server = await startServer({ config: { port: 0, token: TOKEN, allowOrigins: [] }, workspace: ws, log: () => {} });
+    server = await startServer({
+        config: { port: 0, token: TOKEN, allowOrigins: [], taverns: { st: true, tt: true }, stPorts: [] },
+        workspace: ws, log: () => {}, watch: true, persistConfig: async () => {},
+    });
     tavern = new FakeTavern(server.port);
     await tavern.ready;
 });
@@ -99,15 +103,62 @@ after(async () => {
     await rm(dir, { recursive: true, force: true });
 });
 
-test('wrong token and foreign origin are rejected', async () => {
-    const bad = new FakeTavern(server.port, { token: 'nope-nope-nope-nope', targetId: 'other-target' });
-    await assert.rejects(bad.ready, err => err.message === 'unauthorized' || err.code === 4401);
-    const foreign = new WebSocket(`ws://127.0.0.1:${server.port}/link`, { origin: 'https://evil.example' });
-    await assert.rejects(new Promise((res, rej) => { foreign.on('open', res); foreign.on('error', rej); }));
+/** Opens a raw Link socket and resolves 'open' or rejects with the HTTP status of a refused upgrade. */
+const upgrade = (opts, path = '/link') => new Promise((resolve, reject) => {
+    const sock = new WebSocket(`ws://127.0.0.1:${server.port}${path}`, opts);
+    sock.on('open', () => { sock.close(); resolve('open'); });
+    sock.on('unexpected-response', (_req, res) => reject(Object.assign(new Error('refused'), { status: res.statusCode })));
+    sock.on('error', reject);
+});
+
+test('link admission: tavern origins only, no token needed', async () => {
+    const refused = err => err.status === 403;
+    await assert.rejects(upgrade({}), refused, 'no Origin (non-browser client)');
+    await assert.rejects(upgrade({ origin: 'https://evil.example' }), refused, 'foreign website');
+    await assert.rejects(upgrade({ origin: 'http://127.0.0.1:8000', headers: { Host: `evil.example:${server.port}` } }), refused, 'DNS rebinding Host');
+    await assert.rejects(upgrade({ origin: 'http://127.0.0.1:8000' }, '/other'), refused, 'wrong path');
+    assert.equal(await upgrade({ origin: 'http://localhost:8000' }), 'open');
+    assert.equal(await upgrade({ origin: 'http://tauri.localhost' }), 'open');
+
+    const tt = new FakeTavern(server.port, { targetId: 'fake-tt-1', host: 'tt', origin: 'http://tauri.localhost' });
+    await tt.ready;
+    const status = await api('GET', '/api/status');
+    assert.deepEqual(status.result.targets.map(t => t.host).sort(), ['st', 'tt']);
+    tt.close();
+    await until(async () => (await api('GET', '/api/status')).result.targets.length === 1);
+});
+
+test('taverns can be turned off and on; disabled hosts are refused and dropped', async () => {
+    const tt = new FakeTavern(server.port, { targetId: 'fake-tt-2', host: 'tt', origin: 'http://tauri.localhost' });
+    await tt.ready;
+    const closed = new Promise(resolve => tt.ws.on('close', resolve));
+    const off = await api('POST', '/api/taverns', { tt: false });
+    assert.deepEqual(off.result.taverns, { st: true, tt: false });
+    assert.equal(await closed, 4403, 'existing tt link is closed with TAVERN_DISABLED');
+
+    const again = new FakeTavern(server.port, { targetId: 'fake-tt-3', host: 'tt', origin: 'http://tauri.localhost' });
+    await assert.rejects(again.ready, err => err.message === 'tavern_disabled' || err.code === 4403);
+    assert.equal((await api('POST', '/api/taverns', { tt: 'yes' })).error.code, 'bad_request');
+    assert.deepEqual((await api('POST', '/api/taverns', { tt: true })).result.taverns, { st: true, tt: true });
+    await until(async () => (await api('GET', '/api/status')).result.targets.length === 1);
+    assert.deepEqual((await api('GET', '/api/status')).result.taverns, { st: true, tt: true });
+});
+
+test('control API: internal token, no browser origins, loopback Host only', async () => {
     const noAuth = await fetch(`http://127.0.0.1:${server.port}/api/status`);
     assert.equal(noAuth.status, 401);
     const browser = await fetch(`http://127.0.0.1:${server.port}/api/status`, { headers: { Authorization: `Bearer ${TOKEN}`, Origin: 'http://127.0.0.1:8000' } });
     assert.equal(browser.status, 401);
+    const { request: httpRequest } = await import('node:http');
+    const rebound = await new Promise((resolve, reject) => {
+        httpRequest({ host: '127.0.0.1', port: server.port, path: '/api/status', headers: { Host: 'evil.example', Authorization: `Bearer ${TOKEN}` } }, res => { res.resume(); resolve(res.statusCode); })
+            .on('error', reject).end();
+    });
+    assert.equal(rebound, 401);
+    const detect = await api('GET', '/api/detect');
+    assert.equal(detect.ok, true);
+    assert.deepEqual(detect.result.st.otherConnections.map(t => t.id), ['fake-target-1']);
+    assert.equal(detect.result.st.otherConnections[0].origin, 'http://127.0.0.1:8000');
 });
 
 test('catalog and checkout write workspace files and watch list', async () => {

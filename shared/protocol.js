@@ -31,17 +31,24 @@ export const ERR = Object.freeze({
     HOST_ERROR: 'host_error',
     TIMEOUT: 'timeout',
     NOT_CONNECTED: 'not_connected',
+    TAVERN_DISABLED: 'tavern_disabled',
+    /** Offline write refused: the tavern is (or may be) running, so its own cache could overwrite the file. */
+    TAVERN_RUNNING: 'tavern_running',
 });
 
 export const CLOSE = Object.freeze({
     PROTOCOL_MISMATCH: 4400,
     UNAUTHORIZED: 4401,
+    TAVERN_DISABLED: 4403,
     HELLO_TIMEOUT: 4408,
     REPLACED: 4409,
 });
 
 /** Close codes after which Cellar Link must not reconnect automatically. */
 export const TERMINAL_CLOSE_CODES = Object.freeze([CLOSE.PROTOCOL_MISMATCH, CLOSE.UNAUTHORIZED, CLOSE.REPLACED]);
+
+/** Host types a Cellar Link can identify as. */
+export const TAVERN_HOSTS = Object.freeze(['st', 'tt']);
 
 export class ProtocolError extends Error {
     /**
@@ -126,7 +133,8 @@ export function assertItemRef(payload) {
 
 /**
  * Origins allowed to open the Link WebSocket (in addition to user-configured ones).
- * Loopback pages (ST) and TauriTavern WebView origins.
+ * Loopback pages (ST) and TauriTavern WebView origins. Browsers always send a truthful Origin on
+ * WebSocket upgrades, so this is what keeps arbitrary websites out; there is no pairing token.
  */
 export const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
     /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/,
@@ -134,8 +142,18 @@ export const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
     /^tauri:\/\/localhost$/,
 ]);
 
+/** A Link upgrade must come from a browser page (Origin present) whose origin is allowed. */
 export function isAllowedOrigin(origin, extra = []) {
-    if (!origin) return true; // non-browser clients; the token still gates access
+    if (!origin) return false;
     if (DEFAULT_ALLOWED_ORIGINS.some(re => re.test(origin))) return true;
     return extra.includes(origin);
+}
+
+/**
+ * Rejects requests whose Host header is not the companion's own loopback address
+ * (defends against DNS rebinding, where a website's hostname resolves to 127.0.0.1).
+ */
+export function isLoopbackHost(host, port) {
+    if (typeof host !== 'string') return false;
+    return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(host.toLowerCase());
 }
