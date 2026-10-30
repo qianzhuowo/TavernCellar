@@ -23,6 +23,7 @@ $shots = @(
   @('library-offline-dark', 'theme=dark&tv=tt', 'library'),
   @('library-preview-dark', 'theme=dark', 'library/preview'),
   @('sync-dark', 'theme=dark', 'sync'),
+  @('sync-offline-wait-dark', 'theme=dark&ttoff=wait', 'sync'),
   @('settings-dark', 'theme=dark', 'settings'),
   @('settings-taverns-dark', 'theme=dark&sec=conn', 'settings'),
   @('history-dark', 'theme=dark', 'history'),

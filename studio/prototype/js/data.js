@@ -195,20 +195,21 @@
      only while that tavern is NOT running, after backing up the original file in the workspace.
      offlineReady = folder valid + Cellar Link has run once there (identifies the same tavern).
      An entry's id equals its sync-target id in `taverns` when it has one; entries without `dir` have only
-     connected via Cellar Link so far (compact row with 「设置目录…」). `found` = counts read from the folder. */
+     connected via Cellar Link so far (compact row with 「设置目录…」). `found` = counts read from the folder.
+   whenOff (酒馆未运行时): 'wait' = 只改工作区，酒馆启动后再同步 · 'write' = 直接写入数据目录（先备份）. */
   const locations = {
     st: { accept: true, instances: [
       { id: 'st', name: '我的 SillyTavern', dir: 'D:\\SillyTavern', user: 'default-user', users: ['default-user', 'alice'],
         dataDir: 'D:\\SillyTavern\\data\\default-user', port: 8000, version: '1.15.0', origin: 'http://127.0.0.1:8000',
-        running: true, plugin: true, connected: true, offlineReady: true, found: { books: 8, chars: 186 } },
+        running: true, plugin: true, connected: true, offlineReady: true, whenOff: 'wait', found: { books: 8, chars: 186 } },
       { id: 'st-test', name: 'SillyTavern（测试）', dir: 'E:\\ST-test', user: 'default-user', users: ['default-user'],
         dataDir: 'E:\\ST-test\\data\\default-user', port: 8001, version: '1.14.2',
-        running: false, plugin: false, connected: false, offlineReady: false },
+        running: false, plugin: false, connected: false, offlineReady: false, whenOff: 'wait' },
       { id: 'st-8002', name: 'SillyTavern（:8002）', origin: 'http://127.0.0.1:8002', port: 8002, version: '1.15.0',
         running: false, plugin: true, connected: false, lastSeen: '3 天前' }
     ] },
     tt: { accept: true, id: 'tt', install: 'D:\\TauriTavern', dataDir: 'D:\\TauriTavern\\data', version: '2.4.0',
-      origin: 'http://tauri.localhost', running: false, plugin: true, connected: false, offlineReady: true, found: { books: 5, chars: 64 } }
+      origin: 'http://tauri.localhost', running: false, plugin: true, connected: false, offlineReady: true, whenOff: 'write', found: { books: 5, chars: 64 } }
   };
 
   window.DATA = {

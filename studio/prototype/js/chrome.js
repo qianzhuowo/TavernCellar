@@ -127,7 +127,7 @@
     if (!it) return '';
     const rows = D.taverns.map((t) => {
       const st = it.status[t.id];
-      const sub = '<div class="faint" style="font-size:11px" title="' + Detect.connTip(t.id) + '">' + Detect.connLabel(t.id) + '</div>';
+      const sub = '<div class="faint" style="font-size:11px" title="' + Detect.connTip(t.id) + '">' + Detect.offLine(t.id) + '</div>';
       return '<div class="insp-tv"><div class="tv-name"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span><div><div>' + t.name + '</div>' + sub + '</div></div>' +
         Detect.badge(st, t.id) +
         '<div class="tv-ops">' + UI.toggle(it.auto[t.id], '随时同步', st === 'unbound' || Detect.closed(t.id) ? 'disabled' : '', 'sync') +

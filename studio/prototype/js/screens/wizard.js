@@ -78,7 +78,7 @@
 
   App.register('wizard', {
     fullscreen: true, render: () => { if (/step=(\d)/.test(location.search)) W.step = +RegExp.$1; return render(); }, mount,
-    onSeg(key, v) { if (key === 'wz-tab') { W.tab = v; redraw(); } },
+    onSeg(key, v) { if (key === 'wz-tab') { W.tab = v; redraw(); } if (key.startsWith('off:')) { Detect.setOff(W.det, key.slice(4), v); redraw(); } },
     actions: {
       'wz-ws'(el) { W.ws = el.dataset.id; redraw(); },
       'wz-next'() { W.step++; if (W.step === 2) { W.det = freshDetect(); W.pending = false; } redraw(); },

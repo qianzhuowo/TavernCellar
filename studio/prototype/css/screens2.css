@@ -109,7 +109,14 @@
 .dt-note .btn { flex: none; align-self: center; }
 .st.is-off { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent); }
 .legend-off { font-size: var(--fs-xs); align-self: center; }
+.dt-off { display: flex; align-items: center; flex-wrap: wrap; gap: 6px var(--sp-3); font-size: var(--fs-sm); }
+.dt-off-label { color: var(--text-2); }
+.dt-off .seg button { font-size: var(--fs-xs); }
+.dt-off.dis .seg { opacity: .45; pointer-events: none; }
+.dt-off-hint { flex-basis: 100%; font-size: var(--fs-xs); line-height: 1.5; }
+.cell-hint { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-xs); color: var(--text-3, var(--text-2)); }
 .wz-card.wide { width: min(880px, 100%); }
+.wz-card.wide .wz-body { max-height: calc(100vh - 280px); overflow-y: auto; } /* keep the footer buttons on screen */
 .offline-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; height: 22px; padding: 0 8px; vertical-align: 3px;
   border-radius: 11px; border: 1px solid var(--st-remote); color: var(--st-remote); background: var(--st-remote-bg);
   font-size: 11.5px; font-weight: 500; }

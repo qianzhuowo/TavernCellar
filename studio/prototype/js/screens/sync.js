@@ -8,7 +8,8 @@
 
   function cell(it, t) {
     const st = Detect.mode(t.id) === 'closed' ? 'closed' : it.status[t.id];
-    const main = Detect.badge(it.status[t.id], t.id);
+    const main = Detect.badge(it.status[t.id], t.id) +
+      (Detect.offline(t.id) && Detect.whenOff(t.id) === 'wait' && st === 'local' ? '<span class="cell-hint" title="' + Detect.WAIT_HINT + '">' + icon('clock', 'sm') + '待同步</span>' : '');
     let ops = '';
     if (st === 'unbound') ops = '<button class="btn sm" data-act="fake" data-msg="已绑定到 ' + t.name + '"' + Detect.pullAttr(t.id) + '>' + icon('link', 'sm') + '绑定</button>';
     else {
@@ -34,6 +35,17 @@
     }).join('');
   }
 
+  /* TauriTavern offline banner — wording follows its 「酒馆未运行时」 choice; the demo switch flips that same setting */
+  function offBanner() {
+    const w = Detect.whenOff('tt');
+    const text = w === 'wait' ? '等酒馆启动再同步：修改先留在工作区，酒馆启动后自动同步开了随时同步的项。'
+      : '不开酒馆也同步：同步会直接写入数据目录，写入前先备份。';
+    return '<div class="proto-switch faint">原型演示：TauriTavern 未运行时 ' +
+      UI.seg([['write', '不开酒馆也同步'], ['wait', '等酒馆启动再同步']], w, 'data-key="demo-off"') + '</div>' +
+      '<div class="banner" style="margin-bottom:16px">' + icon(w === 'wait' ? 'clock' : 'info') + '<div class="grow"><b>TauriTavern 离线</b><span class="muted"> · ' + text + '</span></div>' +
+      '<button class="btn sm ghost" data-act="goto-detect">更改</button></div>';
+  }
+
   function render() {
     const head = D.taverns.map((t) => '<th scope="col"><div class="tv-head"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span><div><div>' + t.name +
       '</div><div class="faint" title="' + Detect.connTip(t.id) + '">' + t.short + ' · ' + Detect.connLabel(t.id) + ' · ' +
@@ -46,14 +58,14 @@
       '<div class="btn-group"><button class="btn primary" data-act="fake" data-msg="已同步 1 项到 我的 SillyTavern">' + icon('upload', 'sm') + '同步全部本地修改到</button>' +
       '<button class="btn primary" style="border-left-color:rgba(255,255,255,.25)">我的 SillyTavern' + icon('chevDown', 'sm') + '</button></div></div></div>' +
       '<div class="legend">' + legend + '</div>' +
-      (Detect.offline('tt') ? '<div class="banner" style="margin-bottom:16px">' : '<div class="banner" style="display:none">') + icon('info') + '<div class="grow"><b>TauriTavern 离线</b><span class="muted"> · 酒馆未运行，状态读取自数据目录，可直接取回；写回前会先备份原文件。启动酒馆后会自动改用 Cellar Link。</span></div>' +
-      '<button class="btn sm" data-act="goto-detect">' + icon('refresh', 'sm') + '检测酒馆</button></div>' +
+      (Detect.offline('tt') ? offBanner() : '') +
       '<div class="matrix-wrap card"><table class="matrix"><thead><tr><th scope="col" class="item-col">资料项</th>' + head + '</tr></thead><tbody id="mx-body">' + rowsHtml() + '</tbody></table>' +
       '<div class="matrix-foot faint">' + icon('clock', 'sm') + '正则与预设将在阶段 4 加入同步矩阵</div></div></div>';
   }
 
   App.register('sync', {
     render,
+    onSeg(key, v) { if (key === 'demo-off') { Detect.setOff(D.locations, 'tt', v); App.render(); } },
     mount() {
       document.querySelector('[data-only]').addEventListener('change', (e) => { onlyIssues = e.target.checked; document.getElementById('mx-body').innerHTML = rowsHtml(); });
     },

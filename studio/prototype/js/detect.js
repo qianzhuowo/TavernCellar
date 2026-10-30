@@ -7,6 +7,20 @@
   const PLUGIN_HINT = '在酒馆的扩展 → 安装扩展中填入仓库地址';
   const ONCE_HINT = '需在该酒馆中启用过一次 Cellar Link（用于识别同一酒馆）';
   const CLOSED_HINT = '已在设置中关闭此酒馆';
+  const WAIT_HINT = '酒馆未运行，启动后再同步';
+  /* 酒馆未运行时 — per-tavern choice; demo: ?ttoff=wait starts TauriTavern in 'wait' */
+  const OFF = { wait: ['等酒馆启动再同步', '只改工作区，不动酒馆文件；酒馆启动后，开了随时同步的项会自动同步。', '等启动再同步'],
+    write: ['不开酒馆也同步', '直接写入酒馆数据目录，写入前先备份原文件；仅在酒馆未运行时进行。', '不开酒馆也同步'] };
+  if (/[?&]ttoff=wait/.test(location.search)) window.DATA.locations.tt.whenOff = 'wait';
+
+  /* segmented control 「酒馆未运行时」; disabled when the tavern can't be used offline */
+  function offCtl(l, accept) {
+    const ok = accept && l.offlineReady;
+    let seg = UI.seg([['wait', OFF.wait[0]], ['write', OFF.write[0]]], l.whenOff || 'wait', 'data-key="off:' + l.id + '"');
+    if (!ok) seg = seg.replace(/<button /g, '<button disabled ');
+    const hint = !accept ? CLOSED_HINT : l.offlineReady ? OFF[l.whenOff || 'wait'][1] : '离线不可用：' + ONCE_HINT;
+    return '<div class="dt-off' + (ok ? '' : ' dis') + '"><span class="dt-off-label">酒馆未运行时</span>' + seg + '<div class="dt-off-hint faint">' + hint + '</div></div>';
+  }
 
   const pill = (tone, ic, text, title) => '<span class="dt-pill ' + tone + '"' + (title ? ' title="' + E(title) + '"' : '') + '>' +
     (tone === 'wait' ? '<span class="dot wait"></span>' : icon(ic, 'sm')) + text + '</span>';
@@ -62,14 +76,14 @@
     const valid = l.found ? '已找到 ' + l.found.books + ' 本世界书 · ' + l.found.chars + ' 个角色' : '';
     return '<div class="dt-inst">' + h + '<div class="dt-fields">' + pathField('安装目录', l.dir, '', valid) + user + '</div>' +
       '<div class="dt-derived faint">数据目录 <span class="mono">' + E(l.dataDir) + '</span> · 端口 ' + l.port +
-      (l.plugin ? '' : '<span class="dt-warn"> · ' + icon('alert', 'sm') + '未安装 Cellar Link：' + PLUGIN_HINT + '</span>') + '</div></div>';
+      (l.plugin ? '' : '<span class="dt-warn"> · ' + icon('alert', 'sm') + '未安装 Cellar Link：' + PLUGIN_HINT + '</span>') + '</div>' + offCtl(l, accept) + '</div>';
   }
 
   function ttBody(l, accept) {
     const valid = l.found ? '已找到 ' + l.found.books + ' 本世界书 · ' + l.found.chars + ' 个角色' : '';
     return '<div class="dt-inst">' + head(l, accept, 'TauriTavern') +
       '<div class="dt-fields two">' + pathField('安装目录', l.install) +
-      pathField('数据目录', l.dataDir, '<button class="btn sm ghost" data-act="fake" data-msg="已从 TauriTavern 上次运行记录识别数据目录">' + icon('search', 'sm') + '自动识别</button>', valid) + '</div></div>';
+      pathField('数据目录', l.dataDir, '<button class="btn sm ghost" data-act="fake" data-msg="已从 TauriTavern 上次运行记录识别数据目录">' + icon('search', 'sm') + '自动识别</button>', valid) + '</div>' + offCtl(l, accept) + '</div>';
   }
 
   /* opts.open: array of expanded ST instance ids (wizard); omitted = all expanded */
@@ -88,7 +102,7 @@
   function list(locs, opts) {
     return '<div class="dt-list">' + card('st', locs.st, opts) + card('tt', locs.tt, opts) +
       '<div class="dt-note faint">' + icon('info', 'sm') + '<div class="grow">关闭「接受连接」= Studio 不再连接、也不再读取该酒馆。<br>' +
-      '未运行的酒馆可离线浏览、取出与取回；写回仅在酒馆未运行时进行，并先备份原文件。' + ONCE_HINT + '。</div>' +
+      '未运行的酒馆也能离线浏览和取出；是否写入酒馆文件，由各酒馆的「酒馆未运行时」决定。' + ONCE_HINT + '。</div>' +
       (opts && opts.foot ? opts.foot : '') + '</div></div>';
   }
 
@@ -123,7 +137,7 @@
   function writeAttr(tid) {
     switch (mode(tid)) {
       case 'online': return '';
-      case 'offline': return ' title="将直接写入数据目录（会先备份）"';
+      case 'offline': return whenOff(tid) === 'wait' ? dis(WAIT_HINT) : ' title="将直接写入数据目录（会先备份）"';
       case 'closed': return dis(CLOSED_HINT);
       case 'running': return dis('酒馆正在运行，请在酒馆中启用 Cellar Link 同步');
       default: return dis('酒馆未运行，且未设置可用的数据目录');
@@ -143,6 +157,14 @@
   const CONN_TIP = { online: 'Cellar Link 已连接', offline: '酒馆未运行 · 直接读写数据目录', running: '酒馆运行中但 Cellar Link 未连接', closed: CLOSED_HINT, none: '未连接，且未设置数据目录' };
   const connLabel = (tid) => CONN[mode(tid)];
   const connTip = (tid) => CONN_TIP[mode(tid)];
+  const whenOff = (tid) => (locOf(tid) || {}).whenOff || 'wait';
+  /* muted line for the inspector, e.g. 「离线 · 不开酒馆也同步」 */
+  const offLine = (tid) => mode(tid) === 'offline' ? '离线 · ' + OFF[whenOff(tid)][2] : connLabel(tid);
+  /* set 酒馆未运行时 on a location inside `locs` (DATA.locations or the wizard's copy) */
+  function setOff(locs, id, v) {
+    const l = locs.tt.id === id ? locs.tt : locs.st.instances.find((i) => i.id === id);
+    if (l) l.whenOff = v;
+  }
 
-  window.Detect = { card, list, locOf, closed, mode, offline, badge, writeAttr, pullAttr, connLabel, connTip, META, CLOSED_HINT };
+  window.Detect = { card, list, locOf, closed, mode, offline, badge, writeAttr, pullAttr, connLabel, connTip, whenOff, offLine, setOff, META, CLOSED_HINT, WAIT_HINT };
 })();

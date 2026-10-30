@@ -49,6 +49,10 @@
       if (key === 'theme') { App.setTheme(v === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : v); }
       if (key === 'density') { App.state.density = v; App.persist.set('cs.density', v); App.applyPrefs(); }
       if (key === 'font') { App.state.font = v; App.persist.set('cs.font', v); App.applyPrefs(); }
+      if (key.startsWith('off:')) {
+        Detect.setOff(D.locations, key.slice(4), v);
+        const t = document.getElementById('editor').scrollTop; App.render(); document.getElementById('editor').scrollTop = t;
+      }
     },
     actions: {
       'set-redetect'() { UI.toast('已重新检测：SillyTavern 1 个运行中，TauriTavern 未运行（可离线使用）'); },
