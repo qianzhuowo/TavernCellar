@@ -46,7 +46,8 @@ export class SyncEngine {
     }
 
     async writeItem(item, data) {
-        await this.ws.writeItemFiles(item.path, codecFor(item.kind).decode(data));
+        const codec = codecFor(item.kind);
+        await this.ws.writeItemFiles(item.path, codec.decode(data), codec.owns);
         const { hash } = await this.encodeItem(item);
         return hash;
     }

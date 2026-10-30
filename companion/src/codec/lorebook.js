@@ -12,6 +12,11 @@ const CODEC_VERSION = 1;
 const ENTRY_FILE_RE = /^entries\/[^/]+\.md$/;
 const YAML_OPTIONS = { schema: yaml.JSON_SCHEMA, lineWidth: -1, noRefs: true };
 
+/** True for files the lorebook codec reads or writes (see CODECS.owns). */
+export function ownsLorebookFile(rel) {
+    return rel === BOOK_FILE || rel === META_FILE || ENTRY_FILE_RE.test(rel);
+}
+
 export function serializeEntry(frontMatter, body) {
     return `---\n${yaml.dump(frontMatter, YAML_OPTIONS)}---\n${body}`;
 }

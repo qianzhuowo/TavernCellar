@@ -18,6 +18,8 @@
 
 `<名称>` 取自头像文件名（去掉 `.png`）或世界书名称，替换 Windows 非法字符；重名时追加 `-2`、`-3`。
 
+**自己的文件可以放在资料项文件夹里。** 伴侣程序只管理下面第 3、4 节列出的文件（角色：`card.json`、`cellar-item.json`、各正文字段 `.md`、`alternate_greetings/NN.md`；世界书：`book.json`、`cellar-item.json`、`entries/*.md`）。从酒馆取回时，它只会删除这些文件中不再需要的那些；`调研.md`、`notes/` 之类的其他文件不会进卡，也不会被删除。注意 `entries/` 下的 `.md` 和 `alternate_greetings/` 下的数字文件名属于卡内容，笔记不要用这些位置。
+
 ## 2. cellar.json
 
 ```jsonc

@@ -158,10 +158,12 @@ export class Workspace {
     }
 
     /**
-     * Makes the item folder contain exactly `files`: writes changed files, deletes files not listed.
-     * Unchanged files are not rewritten, so editors don't see spurious modifications.
+     * Writes `files` into the item folder (changed files only, so editors don't see spurious modifications) and
+     * deletes files that are no longer produced. Only files for which `owns(rel)` is true are deleted; everything
+     * else in the folder (the user's notes, drafts, research) is left alone.
      */
-    async writeItemFiles(path, files) {
+    async writeItemFiles(path, files, owns) {
+        if (typeof owns !== 'function') throw new Error('writeItemFiles needs the codec ownership test');
         const dir = this.resolveInside(path);
         const current = await this.readItemFiles(path);
         for (const [rel, content] of Object.entries(files)) {
@@ -171,7 +173,7 @@ export class Workspace {
             await atomicWrite(abs, content);
         }
         for (const rel of Object.keys(current)) {
-            if (!Object.prototype.hasOwnProperty.call(files, rel)) await rm(this.resolveInside(`${path}/${rel}`), { force: true });
+            if (!Object.prototype.hasOwnProperty.call(files, rel) && owns(rel)) await rm(this.resolveInside(`${path}/${rel}`), { force: true });
         }
         await pruneEmptyDirs(dir);
     }

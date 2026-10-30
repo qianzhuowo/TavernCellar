@@ -37,6 +37,12 @@ const V1_MIRRORS = Object.freeze([
 
 const GREETINGS_PATH = 'data.alternate_greetings';
 const GREETING_FILE_RE = /^alternate_greetings\/(\d+)\.md$/;
+const TEXT_FIELD_FILES = new Set(TEXT_FIELDS.map(([file]) => file));
+
+/** True for files the character codec reads or writes (see CODECS.owns). */
+export function ownsCharacterFile(rel) {
+    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel);
+}
 
 /**
  * @param {object} card canonical card JSON
