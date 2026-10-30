@@ -88,6 +88,57 @@ export class SyncEngine {
             await this.ws.saveTemplate(ENTRY_TEMPLATE, capabilities.worldInfoEntryTemplate);
         }
         await link.request(MSG.WATCH_SET, { items: this.ws.watchList(target.id) });
+        // Edits made while this tavern was offline (mode 'wait'): push the auto-sync ones now, without holding up the handshake.
+        this.pushPendingAutoSync(target.id).catch(error => this.log(`catch-up sync for ${target.id} failed: ${error.message}`));
+    }
+
+    /**
+     * Pushes auto-sync items with local changes to one target (or every reachable target) over whatever link may write:
+     * a live link, or an offline link in mode 'write'. Conflicts are recorded as usual, never overwritten.
+     */
+    async pushPendingAutoSync(onlyTargetId) {
+        const results = [];
+        for (const item of [...this.ws.manifest.items]) {
+            for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
+                if (!binding.autoSync || (onlyTargetId && targetId !== onlyTargetId)) continue;
+                const conn = this.#writableConn(targetId);
+                if (!conn) continue;
+                const result = await this.withLock(item.path, async () => {
+                    const state = this.ws.getSyncState(item.path, targetId) ?? {};
+                    if (state.conflict) return null;
+                    const local = await this.encodeItem(item).catch(() => null);
+                    if (!local || local.hash === state.base) return null;
+                    try {
+                        return await this.#syncLocked(item, targetId, binding, conn.link, false);
+                    } catch (error) {
+                        this.log(`pending sync of ${item.path} -> ${targetId} failed: ${error.message}`);
+                        return { path: item.path, target: targetId, result: 'failed', error: error.message };
+                    }
+                });
+                if (result) results.push(result);
+            }
+        }
+        return results;
+    }
+
+    /** Called after offline modes change: a tavern switched to 'write' while closed gets its pending auto-sync items now. */
+    async flushPending() {
+        return this.pushPendingAutoSync();
+    }
+
+    /** Live link, or an offline link whose tavern allows writing while closed; null otherwise. */
+    #writableConn(targetId) {
+        const live = this.targets.tryGetLive(targetId);
+        if (live) return live;
+        return this.targets.offlineMode(targetId) === 'write' ? this.targets.tryGet(targetId) : null;
+    }
+
+    /** Offline writes follow the tavern's offline mode; 'wait' keeps the tavern's files untouched until it starts. */
+    #assertCanWrite(targetId) {
+        if (this.targets.offlineMode(targetId) === 'wait') {
+            throw new ProtocolError(ERR.WAITING_FOR_TAVERN,
+                `${targetId} is not running and set to sync after it starts; start the tavern, or switch it to write while closed`);
+        }
     }
 
     async pushWatchList(targetId) {
@@ -137,6 +188,7 @@ export class SyncEngine {
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
         const local = await this.encodeItem(item);
         if (local.hash === state.base && !force) return { path: item.path, target: targetId, result: 'up-to-date', hash: local.hash };
+        this.#assertCanWrite(targetId);
         if (state.conflict && !force) {
             throw new ProtocolError(ERR.CONFLICT, `${item.path} has an unresolved conflict with ${targetId}; pull --force or sync --force`);
         }
@@ -239,8 +291,8 @@ export class SyncEngine {
             for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
                 const state = this.ws.getSyncState(path, targetId) ?? {};
                 if (!binding.autoSync || local.hash === state.base || state.conflict) continue;
-                // Auto sync only over a live link: offline writes go to the tavern's files and stay an explicit action.
-                const conn = this.targets.tryGetLive(targetId);
+                // Live link, or the tavern's files when it is closed and set to write offline; 'wait' pushes on connect.
+                const conn = this.#writableConn(targetId);
                 if (!conn) continue;
                 try {
                     await this.#syncLocked(item, targetId, binding, conn.link, false);
@@ -301,9 +353,13 @@ export class SyncEngine {
                 else if (localChanged && tavernChanged && tavernHash !== localHash) status = 'both-changed';
                 else if (localChanged && tavernHash !== localHash) status = 'local-changes';
                 else if (tavernChanged && tavernHash !== localHash) status = 'tavern-changes';
+                const offlineSync = this.targets.offlineMode(targetId);
                 return {
                     target: targetId, id: binding.id, autoSync: binding.autoSync,
                     connected: Boolean(liveConn), offline: !liveConn && Boolean(conn), status,
+                    ...(offlineSync ? { offlineSync } : {}),
+                    // Local edits held back until the tavern starts (mode 'wait').
+                    ...(offlineSync === 'wait' && (status === 'local-changes' || status === 'both-changed') ? { waiting: true } : {}),
                     ...(tavernError ? { tavernError } : {}),
                 };
             }));

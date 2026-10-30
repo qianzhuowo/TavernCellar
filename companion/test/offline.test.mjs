@@ -12,7 +12,7 @@ import { resolveLocations } from '../src/taverns/locations.js';
 import { startServer } from '../src/server.js';
 
 const TARGET = 'offline-target-1';
-let root, dataRoot, worldFile, ws, engine, targets, running = false;
+let root, dataRoot, worldFile, ws, engine, targets, setMode, running = false;
 
 const book = content => ({ entries: { 0: { uid: 0, key: ['k'], comment: 'c', content } } });
 const writeWorld = data => writeFile(worldFile, JSON.stringify(data, null, 4));
@@ -28,12 +28,14 @@ before(async () => {
     worldFile = join(user, 'worlds', 'Book.json');
     await writeWorld(book('one'));
 
-    const [loc] = await resolveLocations({ st: [], tt: [{ install: '', data: dataRoot }] });
+    const [loc] = await resolveLocations({ st: [], tt: [{ install: '', data: dataRoot, offlineSync: 'write' }] });
     assert.equal(loc.error, null);
     assert.equal(loc.targetId, TARGET);
+    assert.equal(loc.offlineSync, 'write');
     ws = await Workspace.init(join(root, 'ws'));
     targets = new TargetRegistry();
-    targets.setOffline([new OfflineLink(loc, { backupDir: () => join(ws.root, '.cellar', 'backups'), isRunning: async () => running })]);
+    setMode = mode => targets.setOffline([new OfflineLink({ ...loc, offlineSync: mode }, { backupDir: () => join(ws.root, '.cellar', 'backups'), isRunning: async () => running })]);
+    setMode('write');
     engine = new SyncEngine({ workspace: ws, targets });
 });
 
@@ -69,6 +71,28 @@ test('offline: local edit shows as local-changes; sync writes the folder with a 
     assert.equal(JSON.parse(await readFile(worldFile, 'utf8')).entries[0].content.trim(), 'edited locally');
     assert.equal((await readdir(join(ws.root, '.cellar', 'backups', TARGET, 'lorebook'))).length, 1);
     assert.equal((await statusOf()).status, 'in-sync');
+});
+
+test('offline mode wait: edits stay local; switching to write pushes auto-sync items', async () => {
+    setMode('wait');
+    await engine.setAutoSync('lorebooks/Book', { enabled: true });
+    const entryDir = join(ws.root, 'lorebooks', 'Book', 'entries');
+    const [entry] = (await readdir(entryDir)).filter(n => n.endsWith('.md'));
+    const file = join(entryDir, entry);
+    await writeFile(file, (await readFile(file, 'utf8')).replace('edited locally', 'edited locally!'));
+
+    const b = await statusOf();
+    assert.deepEqual([b.status, b.offlineSync, b.waiting], ['local-changes', 'wait', true]);
+    await assert.rejects(engine.sync('lorebooks/Book'), e => e.code === ERR.WAITING_FOR_TAVERN);
+    assert.deepEqual(await engine.flushPending(), []); // nothing may be written while waiting
+    assert.equal(JSON.parse(await readFile(worldFile, 'utf8')).entries[0].content.trim(), 'edited locally');
+
+    setMode('write');
+    const [pushed] = await engine.flushPending();
+    assert.equal(pushed.result, 'synced');
+    assert.equal(JSON.parse(await readFile(worldFile, 'utf8')).entries[0].content.trim(), 'edited locally!');
+    assert.equal((await statusOf()).waiting, undefined);
+    await engine.setAutoSync('lorebooks/Book', { enabled: false });
 });
 
 test('offline: both sides changed shows both-changed and sync refuses', async () => {

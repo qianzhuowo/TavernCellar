@@ -18,7 +18,7 @@ import { SyncEngine } from './sync.js';
 import { watchWorkspace } from './watch.js';
 import { detectTaverns } from './detect.js';
 import { saveConfig } from './config.js';
-import { detectTtDataRoot, resolveLocations } from './taverns/locations.js';
+import { OFFLINE_SYNC_MODES, detectTtDataRoot, offlineSyncMode, resolveLocations } from './taverns/locations.js';
 import { OfflineLink } from './taverns/offline.js';
 
 export const SERVER_NAME = 'TavernCellar';
@@ -227,10 +227,10 @@ async function readJsonBody(req, limit = 32 * 1024 * 1024) {
 
 const STATUS_BY_CODE = {
     [ERR.BAD_REQUEST]: 400, [ERR.UNAUTHORIZED]: 401, [ERR.TAVERN_DISABLED]: 403, [ERR.NOT_FOUND]: 404, [ERR.CONFLICT]: 409,
-    [ERR.NOT_CONNECTED]: 503, [ERR.TIMEOUT]: 504, [ERR.HOST_ERROR]: 502, [ERR.TAVERN_RUNNING]: 423,
+    [ERR.NOT_CONNECTED]: 503, [ERR.TIMEOUT]: 504, [ERR.HOST_ERROR]: 502, [ERR.TAVERN_RUNNING]: 423, [ERR.WAITING_FOR_TAVERN]: 423,
 };
 
-/** Validates a locations object from the API: { st: [{dir, user?}], tt: [{install?, data}] }. */
+/** Validates a locations object from the API: { st: [{dir, user?, offlineSync?}], tt: [{install?, data, offlineSync?}] }. */
 function normalizeLocations(body) {
     const str = v => (typeof v === 'string' ? v.trim() : '');
     const list = (value, host) => {
@@ -238,16 +238,21 @@ function normalizeLocations(body) {
         if (!Array.isArray(value)) throw new ProtocolError(ERR.BAD_REQUEST, `${host} must be an array`);
         return value;
     };
+    const mode = e => {
+        if (e?.offlineSync === undefined) return {};
+        if (!OFFLINE_SYNC_MODES.includes(e.offlineSync)) throw new ProtocolError(ERR.BAD_REQUEST, `offlineSync must be one of ${OFFLINE_SYNC_MODES.join(', ')}`);
+        return e.offlineSync === 'write' ? { offlineSync: 'write' } : {}; // 'wait' is the default and not stored
+    };
     const st = list(body.st, 'st').map(e => {
         const dir = str(e?.dir);
         if (!dir) throw new ProtocolError(ERR.BAD_REQUEST, 'st[].dir is required');
         const user = str(e?.user);
-        return user ? { dir, user } : { dir };
+        return { ...(user ? { dir, user } : { dir }), ...mode(e) };
     });
     const tt = list(body.tt, 'tt').map(e => {
         const data = str(e?.data);
         if (!data) throw new ProtocolError(ERR.BAD_REQUEST, 'tt[].data is required');
-        return { install: str(e?.install), data };
+        return { install: str(e?.install), data, ...mode(e) };
     });
     return { st, tt };
 }
@@ -285,6 +290,19 @@ export async function startServer({ config, workspace, log = console.log, watch 
         return { locations: config.locations, resolved: locations };
     }
 
+    /** body: { key: 'st:0' | 'tt:0', mode: 'wait' | 'write' } */
+    async function setOfflineSync({ key, mode } = {}) {
+        const [host, index] = typeof key === 'string' ? key.split(':') : [];
+        const entry = TAVERN_HOSTS.includes(host) ? config.locations[host]?.[Number(index)] : undefined;
+        if (!entry || !/^\d+$/.test(index ?? '')) throw new ProtocolError(ERR.NOT_FOUND, `No tavern location ${key}`);
+        const locations = structuredClone(config.locations);
+        locations[host][Number(index)] = { ...entry, offlineSync: mode };
+        const result = await setLocations(locations); // validates mode
+        await engine.flushPending(); // switching to 'write' while the tavern is closed writes pending auto-sync items now
+        log(`offline sync ${key}: ${offlineSyncMode(config.locations[host][Number(index)])}`);
+        return result;
+    }
+
     async function setTaverns(body) {
         const next = { ...config.taverns };
         for (const host of TAVERN_HOSTS) {
@@ -312,6 +330,7 @@ export async function startServer({ config, workspace, log = console.log, watch 
         'POST /api/taverns': b => setTaverns(b),
         'GET /api/taverns/locations': async () => ({ locations: config.locations, resolved: await resolveLocations(config.locations), detectedTtDataRoot: await detectTtDataRoot() }),
         'POST /api/taverns/locations': b => setLocations(b),
+        'POST /api/taverns/offline-sync': b => setOfflineSync(b),
         'POST /api/catalog': b => engine.catalog(b.target, b),
         'POST /api/checkout': b => engine.checkout(b.target, b),
         'POST /api/sync': b => engine.sync(b.path, b),

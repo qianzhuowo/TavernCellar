@@ -5,6 +5,9 @@
  */
 import { ERR, ProtocolError } from '../../shared/protocol.js';
 
+/** Offline links carry their resolved location; anything without an explicit 'write' waits. */
+const offlineModeOf = link => (link?.location?.offlineSync === 'write' ? 'write' : 'wait');
+
 export class TargetRegistry {
     constructor() {
         /** @type {Map<string, {target: object, link: {request: Function, close: Function}}>} */
@@ -34,9 +37,17 @@ export class TargetRegistry {
         return [...this.byId.values()].map(({ target }) => target);
     }
 
-    /** Targets reachable only through their data folder right now. */
+    /** Targets reachable only through their data folder right now, with their offline mode. */
     listOffline() {
-        return [...this.offlineById.values()].filter(({ target }) => !this.byId.has(target.id)).map(({ target }) => target);
+        return [...this.offlineById.values()].filter(({ target }) => !this.byId.has(target.id))
+            .map(({ target, link }) => ({ ...target, offlineSync: offlineModeOf(link) }));
+    }
+
+    /** 'wait' | 'write' for a target that is offline right now; null when it is live or unknown. */
+    offlineMode(targetId) {
+        if (this.byId.has(targetId)) return null;
+        const entry = this.offlineById.get(targetId);
+        return entry ? offlineModeOf(entry.link) : null;
     }
 
     #available() {

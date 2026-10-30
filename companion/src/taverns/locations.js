@@ -146,7 +146,7 @@ async function probeHttp(port) {
 
 /** @returns {Promise<TavernLocation>} */
 async function resolveSt(entry, index) {
-    const loc = { key: `st:${index}`, host: 'st', installDir: entry.dir, dataRoot: null, userDir: null, user: entry.user || DEFAULT_USER, users: [], port: null, plugin: null, targetId: null, label: '', error: null };
+    const loc = { key: `st:${index}`, host: 'st', installDir: entry.dir, dataRoot: null, userDir: null, user: entry.user || DEFAULT_USER, users: [], port: null, plugin: null, targetId: null, label: '', offlineSync: offlineSyncMode(entry), error: null };
     if (!entry.dir || !await isDir(entry.dir)) return { ...loc, error: '安装目录不存在' };
     if (!await exists(join(entry.dir, 'server.js'))) return { ...loc, error: '不是 SillyTavern 安装目录（缺少 server.js）' };
     let cfg;
@@ -166,7 +166,7 @@ async function resolveSt(entry, index) {
 
 /** @returns {Promise<TavernLocation>} */
 async function resolveTt(entry, index) {
-    const loc = { key: `tt:${index}`, host: 'tt', installDir: entry.install || '', dataRoot: entry.data || null, userDir: null, user: DEFAULT_USER, users: [DEFAULT_USER], port: null, plugin: null, targetId: null, label: '', error: null };
+    const loc = { key: `tt:${index}`, host: 'tt', installDir: entry.install || '', dataRoot: entry.data || null, userDir: null, user: DEFAULT_USER, users: [DEFAULT_USER], port: null, plugin: null, targetId: null, label: '', offlineSync: offlineSyncMode(entry), error: null };
     if (!loc.dataRoot) return { ...loc, error: '未设置数据目录' };
     if (!await isDir(join(loc.dataRoot, DEFAULT_USER, 'characters'))) return { ...loc, error: '数据目录中没有 default-user/characters' };
     loc.userDir = join(loc.dataRoot, DEFAULT_USER);
@@ -179,6 +179,16 @@ async function resolveTt(entry, index) {
 }
 
 /** @returns {Promise<TavernLocation[]>} */
+/**
+ * What sync does while this tavern is not running:
+ *  'wait'  (default) edits stay in the workspace; auto-sync items are pushed when Cellar Link connects;
+ *  'write' write straight into the tavern's data folder (backup first), including auto-sync.
+ */
+export const OFFLINE_SYNC_MODES = ['wait', 'write'];
+export function offlineSyncMode(entry) {
+    return entry?.offlineSync === 'write' ? 'write' : 'wait';
+}
+
 export async function resolveLocations(locations) {
     return Promise.all([
         ...(locations?.st ?? []).map(resolveSt),

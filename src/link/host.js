@@ -90,6 +90,8 @@ async function readLorebookFromDisk(name) {
 }
 
 async function readLorebook(name) {
+    // A book created outside this page (another tab, file copy, offline write-back) is missing until the list refreshes.
+    if (!world_names?.includes(name)) await ctx().updateWorldInfoList();
     if (!world_names?.includes(name)) throw new ProtocolError(ERR.NOT_FOUND, `Lorebook ${name} not found`);
     const data = await ctx().loadWorldInfo(name); // cache returns a clone and includes pending editor changes
     if (!isPlainObject(data)) throw new ProtocolError(ERR.NOT_FOUND, `Lorebook ${name} not found`);
@@ -147,15 +149,17 @@ export class Host {
         }
     }
 
-    catalog({ kind, query, offset = 0, limit = 50 }) {
+    async catalog({ kind, query, offset = 0, limit = 50 }) {
         assertKind(kind);
+        const start = Math.max(0, Number(offset) || 0);
+        // Browsing starts at page one: reload the list so items added outside this page show up; later pages reuse it.
+        if (start === 0) await (kind === 'character' ? ctx().getCharacters() : ctx().updateWorldInfoList());
         let items = kind === 'character' ? listCharacters() : listLorebooks();
         if (typeof query === 'string' && query.trim()) {
             const q = query.trim().toLowerCase();
             items = items.filter(item => item.name.toLowerCase().includes(q) || item.id.toLowerCase().includes(q));
         }
         items.sort((a, b) => a.name.localeCompare(b.name));
-        const start = Math.max(0, Number(offset) || 0);
         const count = Math.min(500, Math.max(1, Number(limit) || 50));
         return { total: items.length, items: items.slice(start, start + count) };
     }

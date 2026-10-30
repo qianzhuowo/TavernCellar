@@ -24,7 +24,9 @@ const USAGE = `TavernCellar 伴侣程序
                                         添加 SillyTavern 实例（用户默认 default-user）
   cellar tavern add tt [--data 数据目录] [--install 安装目录]
                                         添加 TauriTavern（不填 --data 则自动识别）
-  cellar tavern remove <st:0|tt:0>      移除一个酒馆目录
+    cellar tavern remove <st:0|tt:0>      移除一个酒馆目录
+    cellar tavern offline <st:0|tt:0> <wait|write>
+                                          酒馆未运行时：wait = 等酒馆启动再同步（默认），write = 不开酒馆也同步（写入数据目录，先备份）
                                         设置目录后，酒馆未连接时也能浏览/取出/拉取；酒馆未运行时可离线写回（先备份）
   cellar status                         查看已连接的酒馆与工作区各项状态
   cellar catalog <character|lorebook> [搜索词] [--target ID] [--offset N] [--limit N]
@@ -112,7 +114,7 @@ function formatDetection(d, serverRunning) {
 
 function formatLocations(config, resolved) {
     if (!resolved.length) return '尚未设置酒馆目录。用 cellar tavern add st|tt 添加。';
-    return resolved.map(l => `[${l.key}] ${l.host === 'st' ? `SillyTavern ${l.installDir}（用户 ${l.user}）` : `TauriTavern 数据 ${l.dataRoot}${l.installDir ? `，安装 ${l.installDir}` : ''}`}\n    ${l.error ? `不可用：${l.error}` : `数据 ${l.userDir}  ${l.targetId ? `target ${l.targetId}` : '尚未启用过 Cellar Link'}`}`).join('\n');
+    return resolved.map(l => `[${l.key}] ${l.host === 'st' ? `SillyTavern ${l.installDir}（用户 ${l.user}）` : `TauriTavern 数据 ${l.dataRoot}${l.installDir ? `，安装 ${l.installDir}` : ''}`}\n    ${l.error ? `不可用：${l.error}` : `数据 ${l.userDir}  ${l.targetId ? `target ${l.targetId}` : '尚未启用过 Cellar Link'}`}\n    酒馆未运行时：${l.offlineSync === 'write' ? '不开酒馆也同步（write）' : '等酒馆启动再同步（wait）'}`).join('\n');
 }
 
 /** Applies a locations change through the running server, or directly to the config file. */
@@ -268,8 +270,25 @@ async function main() {
                 const [h, index] = host.split(':');
                 if (!locations[h][Number(index)]) throw new Error(`没有 ${host}`);
                 locations[h].splice(Number(index), 1);
+            } else if (sub === 'offline' && /^(st|tt):\d+$/.test(host ?? '') && ['wait', 'write'].includes(dir)) {
+                const [h, index] = host.split(':');
+                if (!locations[h][Number(index)]) throw new Error(`没有 ${host}`);
+                if (dir === 'write') locations[h][Number(index)].offlineSync = 'write';
+                else delete locations[h][Number(index)].offlineSync;
+                let resolved;
+                try {
+                    resolved = (await api(config, 'POST', '/api/taverns/offline-sync', { key: host, mode: dir })).resolved;
+                } catch (error) {
+                    if (!(error instanceof NotRunningError)) throw error;
+                    config.locations = locations;
+                    await saveConfig(config);
+                    resolved = await resolveLocations(locations);
+                }
+                config.locations = locations;
+                console.log(formatLocations(config, resolved));
+                return;
             } else {
-                throw new Error('用法: cellar tavern list | add st <安装目录> [--user 用户] | add tt [--data 目录] [--install 目录] | remove <st:N|tt:N>');
+                throw new Error('用法: cellar tavern list | add st <安装目录> [--user 用户] | add tt [--data 目录] [--install 目录] | remove <st:N|tt:N> | offline <st:N|tt:N> <wait|write>');
             }
             config.locations = locations;
             console.log(formatLocations(config, await updateLocations(config, locations)));

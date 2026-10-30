@@ -34,6 +34,8 @@ export const ERR = Object.freeze({
     TAVERN_DISABLED: 'tavern_disabled',
     /** Offline write refused: the tavern is (or may be) running, so its own cache could overwrite the file. */
     TAVERN_RUNNING: 'tavern_running',
+    /** The tavern is not running and its offline mode is "wait until it starts". */
+    WAITING_FOR_TAVERN: 'waiting_for_tavern',
 });
 
 export const CLOSE = Object.freeze({
