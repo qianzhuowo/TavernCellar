@@ -1,0 +1,20 @@
+﻿{
+    "name": "cellar-studio",
+    "productName": "Cellar Studio",
+    "version": "0.1.0",
+    "description": "Cellar Studio: desktop editor for TavernCellar workspaces (bundles the companion).",
+    "private": true,
+    "license": "AGPL-3.0-only",
+    "type": "module",
+    "main": "main.cjs",
+    "scripts": {
+        "start": "node scripts/start.mjs",
+        "icon": "node scripts/make-icon.mjs",
+        "stage": "node scripts/stage.mjs",
+        "dist": "node scripts/stage.mjs && electron-builder --config electron-builder.yml --win"
+    },
+    "devDependencies": {
+        "electron": "^33.2.1",
+        "electron-builder": "^25.1.8"
+    }
+}

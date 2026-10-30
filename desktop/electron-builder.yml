@@ -1,0 +1,28 @@
+appId: io.github.qianzhuowo.taverncellar
+productName: Cellar Studio
+copyright: TavernCellar contributors · AGPL-3.0-only
+directories:
+  app: .stage
+  output: release
+  buildResources: assets
+# .stage already holds exactly what ships (see scripts/stage.mjs); keep its node_modules as copied.
+npmRebuild: false
+asar: true
+files:
+  - "**/*"
+win:
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Cellar Studio
+  artifactName: CellarStudio-Setup-${version}.${ext}
+portable:
+  artifactName: CellarStudio-Portable-${version}.${ext}
