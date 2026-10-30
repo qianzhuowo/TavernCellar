@@ -47,6 +47,18 @@ test('merge: the same slot changed differently is reported alone and keeps the w
     assert.equal(slotLabel('data.description'), '角色描述');
 });
 
+test('merge: a top-level V1 copy changes together with its data field and is not a second conflict', () => {
+    const base = { name: 'A', description: 'd0', personality: 'p0', data: { name: 'A', description: 'd0', personality: 'p0' } };
+    const both = (d, desc, pers) => { d.description = d.data.description = desc; if (pers) d.personality = d.data.personality = pers; };
+    const local = edit(base, d => both(d, 'L'));
+    const remote = edit(base, d => both(d, 'R', 'pR'));
+    const { data, conflicts } = merge3('character', base, local, remote);
+    assert.deepEqual(conflicts, ['data.description']);
+    assert.deepEqual([data.description, data.data.description, data.personality, data.data.personality], ['L', 'L', 'pR', 'pR']);
+    const odd = edit(base, d => { d.description = 'only top'; });
+    assert.deepEqual(assemble('character', slotsOf('character', odd)), odd, 'a copy that differs stays verbatim');
+});
+
 test('merge: the same change on both sides is no conflict', () => {
     const base = book();
     const both = edit(base, d => { d.entries[0].content = 'same'; });

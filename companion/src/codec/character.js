@@ -27,7 +27,7 @@ export const TEXT_FIELDS = Object.freeze([
 ]);
 
 /** Top-level fields that mirror V2 data fields (V1 legacy, plus copies TauriTavern keeps): [top-level key, card path]. */
-const V1_MIRRORS = Object.freeze([
+export const V1_MIRRORS = Object.freeze([
     ['description', 'data.description'],
     ['personality', 'data.personality'],
     ['scenario', 'data.scenario'],

@@ -9,7 +9,15 @@
  * assemble(kind, slotsOf(kind, x)) deep-equals x for every x.
  */
 import { stableStringify } from '../../../shared/hash.js';
-import { isPlainObject } from './object-path.js';
+import { getPath, isPlainObject } from './object-path.js';
+import { V1_MIRRORS } from './character.js';
+
+/**
+ * Top-level V1 copies equal to their data field are one change with it, not a second slot: they become a marker
+ * that assembly fills from the merged data field. A copy that really differs stays its own slot.
+ */
+const MIRROR_PATHS = new Map(V1_MIRRORS);
+const MIRROR = '$mirror';
 
 const omit = (obj, ...keys) => Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
 
@@ -40,7 +48,12 @@ const objectList = v => Array.isArray(v) && v.every(isPlainObject);
 function characterSlots(card) {
     const m = new Map();
     for (const [k, v] of Object.entries(card)) {
-        if (k !== 'data' || !isPlainObject(v)) { m.set(`top.${k}`, v); continue; }
+        if (k !== 'data' || !isPlainObject(v)) {
+            const path = MIRROR_PATHS.get(k);
+            const mirrored = path && getPath(card, path);
+            m.set(`top.${k}`, path && mirrored !== undefined && stableStringify(mirrored) === stableStringify(v) ? { [MIRROR]: path } : v);
+            continue;
+        }
         m.set('data.$', true);
         for (const [dk, dv] of Object.entries(v)) {
             if (dk === 'alternate_greetings' && Array.isArray(dv)) {
@@ -80,6 +93,12 @@ function assembleCharacter(m) {
         else if (slot === 'helper.$rest') {
             ext().tavern_helper = { ...v, scripts: takeList(m, 'script'), ...(m.has('helper.variables') ? { variables: m.get('helper.variables') } : {}) };
         } else if (slot === 'book.$meta') data().character_book = { ...v, entries: takeList(m, 'book') };
+    }
+    for (const [k, v] of Object.entries(card)) {
+        if (!isPlainObject(v) || typeof v[MIRROR] !== 'string' || Object.keys(v).length !== 1) continue;
+        const value = getPath(card, v[MIRROR]);
+        if (value === undefined) delete card[k];
+        else card[k] = structuredClone(value);
     }
     return card;
 }
