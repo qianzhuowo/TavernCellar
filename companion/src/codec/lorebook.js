@@ -6,9 +6,14 @@ import yaml from 'js-yaml';
 import { deepClone, isPlainObject } from './object-path.js';
 import { needsRaw, normalizeText, safeSegment } from './text.js';
 import { META_FILE, parseJsonFile } from './character.js';
+import { stableStringify } from '../../../shared/hash.js';
 
 export const BOOK_FILE = 'book.json';
-const CODEC_VERSION = 1;
+/** 2: front matter omits fields equal to the entry template snapshot stored in meta.template. */
+export const LOREBOOK_CODEC_VERSION = 2;
+const CODEC_VERSION = LOREBOOK_CODEC_VERSION;
+/** Always written to front matter, even when equal to the template (identity and what users look for first). */
+const ALWAYS_SHOWN = new Set(['uid', 'key', 'comment', 'content']);
 const ENTRY_FILE_RE = /^entries\/[^/]+\.md$/;
 const YAML_OPTIONS = { schema: yaml.JSON_SCHEMA, lineWidth: -1, noRefs: true };
 
@@ -55,14 +60,16 @@ function entryFileName(key, entry, used) {
 
 /**
  * @param {object} book
+ * @param {{template?: object|null}} [options] entry template snapshot: fields equal to it are left out of front matter
  * @returns {Record<string,string>}
  */
-export function decodeLorebook(book) {
+export function decodeLorebook(book, { template = null } = {}) {
     if (!isPlainObject(book)) throw new Error('Lorebook must be an object');
     const rest = deepClone(book);
     const entries = rest.entries;
     delete rest.entries;
-    const meta = { kind: 'lorebook', codec: CODEC_VERSION, hasEntries: entries !== undefined, order: [], keys: {}, raw: [], noContent: [], opaque: {} };
+    const tpl = isPlainObject(template) ? deepClone(template) : null;
+    const meta = { kind: 'lorebook', codec: CODEC_VERSION, hasEntries: entries !== undefined, order: [], keys: {}, raw: [], noContent: [], opaque: {}, template: tpl, absent: {} };
     const files = {};
     const used = new Set();
 
@@ -85,6 +92,15 @@ export function decodeLorebook(book) {
             } else {
                 meta.noContent.push(key); // missing or non-string content stays in front matter
             }
+            if (tpl) {
+                const absent = [];
+                for (const field of Object.keys(tpl)) {
+                    if (ALWAYS_SHOWN.has(field)) continue;
+                    if (!Object.prototype.hasOwnProperty.call(entry, field)) absent.push(field);
+                    else if (stableStringify(entry[field]) === stableStringify(tpl[field])) delete frontMatter[field];
+                }
+                if (absent.length) meta.absent[key] = absent;
+            }
             const file = entryFileName(key, entry, used);
             if (String(entry.uid) !== key) meta.keys[file] = key;
             meta.order.push(key);
@@ -99,7 +115,8 @@ export function decodeLorebook(book) {
 
 /**
  * @param {Record<string,string>} files
- * @param {{entryTemplate?: object}} [options] defaults for newly created entries (tavern's newWorldInfoEntryTemplate)
+ * @param {{entryTemplate?: object}} [options] the tavern's current entry template; used for new entries only when
+ *   the item has no template snapshot (meta.template)
  * @returns {object}
  */
 export function encodeLorebook(files, { entryTemplate } = {}) {
@@ -109,6 +126,17 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
     const raw = new Set(meta.raw ?? []);
     const noContent = new Set(meta.noContent ?? []);
     const keyByFile = meta.keys ?? {};
+    const snapshot = isPlainObject(meta.template) ? meta.template : null;
+    /** Template fields an existing entry inherits (those it had and that were equal to the template). */
+    const defaultsFor = key => {
+        if (!snapshot) return {};
+        const absent = new Set(meta.absent?.[key] ?? []);
+        const out = {};
+        for (const [field, value] of Object.entries(snapshot)) {
+            if (field !== 'content' && !absent.has(field)) out[field] = deepClone(value);
+        }
+        return out;
+    };
 
     if (meta.opaque && Object.prototype.hasOwnProperty.call(meta.opaque, '$entries')) {
         book.entries = meta.opaque.$entries;
@@ -137,11 +165,11 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
         if (key === null) {
             isNew = true;
             const uid = ++maxUid;
-            entry = { ...deepClone(entryTemplate ?? {}), ...frontMatter, uid };
+            entry = { ...deepClone(snapshot ?? entryTemplate ?? {}), ...frontMatter, uid };
             key = String(uid);
             newKeys.push(key);
         } else {
-            entry = frontMatter;
+            entry = { ...defaultsFor(key), ...frontMatter };
         }
         if (byKey.has(key) || Object.prototype.hasOwnProperty.call(meta.opaque ?? {}, key)) {
             throw new Error(`${name}: duplicate entry uid ${key}`);

@@ -48,9 +48,24 @@ export class SyncEngine {
 
     async writeItem(item, data) {
         const codec = codecFor(item.kind);
-        await this.ws.writeItemFiles(item.path, codec.decode(data), codec.owns);
+        await this.ws.writeItemFiles(item.path, codec.decode(data, await this.decodeOptions(item)), codec.owns);
         const { hash } = await this.encodeItem(item);
         return hash;
+    }
+
+    /**
+     * Lorebooks: the entry template snapshot to lay out against. An item keeps the snapshot taken at its first
+     * checkout (so a tavern upgrade that changes defaults cannot shift its files); new items take the tavern's
+     * current template.
+     */
+    async decodeOptions(item) {
+        if (item.kind !== 'lorebook') return undefined;
+        const files = await this.ws.readItemFiles(item.path).catch(() => ({}));
+        try {
+            const meta = JSON.parse(files['cellar-item.json'] ?? 'null');
+            if (meta && Object.prototype.hasOwnProperty.call(meta, 'template')) return { template: meta.template };
+        } catch { /* unreadable meta: fall through to the tavern template */ }
+        return { template: (await this.ws.loadTemplate(ENTRY_TEMPLATE)) ?? null };
     }
 
     /**

@@ -1,5 +1,5 @@
 import { CHARACTER_CODEC_VERSION, decodeCharacter, encodeCharacter, ownsCharacterFile } from './character.js';
-import { decodeLorebook, encodeLorebook, ownsLorebookFile } from './lorebook.js';
+import { decodeLorebook, encodeLorebook, LOREBOOK_CODEC_VERSION, ownsLorebookFile } from './lorebook.js';
 
 /**
  * Per-kind codec registry. `folder` is the workspace top-level directory; `nameOf` derives the item folder name.
@@ -20,10 +20,10 @@ export const CODECS = Object.freeze({
     lorebook: {
         folder: 'lorebooks',
         nameOf: id => id,
-        decode: data => decodeLorebook(data),
+        decode: (data, options) => decodeLorebook(data, options),
         encode: (files, options) => encodeLorebook(files, options),
         owns: rel => ownsLorebookFile(rel),
-        version: 1,
+        version: LOREBOOK_CODEC_VERSION,
     },
 });
 
