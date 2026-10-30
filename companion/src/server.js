@@ -3,7 +3,7 @@
  * Listens on 127.0.0.1 only. See docs/protocol.md.
  */
 import { createServer } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
@@ -18,6 +18,7 @@ import { SyncEngine } from './sync.js';
 import { watchWorkspace } from './watch.js';
 import { detectTaverns } from './detect.js';
 import { saveConfig } from './config.js';
+import { Workspace } from './workspace/workspace.js';
 import { OFFLINE_SYNC_MODES, detectTtDataRoot, offlineSyncMode, resolveLocations } from './taverns/locations.js';
 import { OfflineLink } from './taverns/offline.js';
 
@@ -40,7 +41,7 @@ const MIME = {
 };
 
 /** Static, read-only files for the Studio page. Returns false when the path is not a Studio path. */
-async function serveStudio(req, res, pathname, studioDir) {
+async function serveStudio(req, res, pathname, studioDir, extraHeaders = {}) {
     if (pathname === '/' || pathname === '/studio') {
         res.writeHead(302, { Location: STUDIO_PATH });
         res.end();
@@ -68,6 +69,7 @@ async function serveStudio(req, res, pathname, studioDir) {
     try {
         const body = await readFile(file);
         res.writeHead(200, {
+            ...extraHeaders,
             'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
             'Cache-Control': 'no-cache',
             'X-Content-Type-Options': 'nosniff',
@@ -87,6 +89,20 @@ function tokenMatches(expected, given) {
     const b = Buffer.from(given);
     return a.length === b.length && timingSafeEqual(a, b);
 }
+
+const SESSION_COOKIE = 'cellar_session';
+export const EVENTS_PATH = '/studio/events';
+
+function readCookie(req, name) {
+    for (const part of String(req.headers.cookie ?? '').split(';')) {
+        const [k, ...v] = part.trim().split('=');
+        if (k === name) return v.join('=');
+    }
+    return undefined;
+}
+
+const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false };
+const UI_RULES = { theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false] };
 
 /** One Cellar Link WebSocket connection. Admission is decided by Origin/Host at upgrade time (no pairing token). */
 class LinkConnection {
@@ -260,11 +276,26 @@ function normalizeLocations(body) {
 /**
  * @param {{config: {port:number, token:string, allowOrigins:string[], taverns:{st:boolean, tt:boolean}, stPorts?:number[], stDir?:string|null}, workspace: import('./workspace/workspace.js').Workspace, log?: Function, watch?: boolean, persistConfig?: (config: object) => Promise<void>}} options
  */
-export async function startServer({ config, workspace, log = console.log, watch = true, persistConfig = saveConfig, studioDir = defaultStudioDir() }) {
+export async function startServer({ config, workspace, log: baseLog = console.log, watch = true, persistConfig = saveConfig, studioDir = defaultStudioDir() }) {
+    /** Studio event stream clients (Server-Sent Events). */
+    const eventClients = new Set();
+    const emit = (event, data) => {
+        const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+        for (const res of eventClients) res.write(frame);
+    };
+    // Every log line is shown in Studio and hints that status may have changed (Studio debounces and refetches).
+    const log = line => {
+        baseLog(line);
+        emit('log', { at: new Date().toISOString(), line: String(line) });
+        emit('status', { reason: 'log' });
+    };
+    /** Per-run secret handed to the Studio page as an HttpOnly cookie; users never see a token. */
+    const sessionId = randomBytes(24).toString('hex');
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
     let port = config.port;
+    let stopWatching = () => {};
 
     const connectedTargets = () => [...wss.clients].map(ws => ws.cellarLink?.target).filter(Boolean);
 
@@ -321,7 +352,71 @@ export async function startServer({ config, workspace, log = console.log, watch 
         return { taverns: next };
     }
 
+    function settings() {
+        return { port, workspace: workspace.root, ui: { ...UI_DEFAULTS, ...config.ui } };
+    }
+
+    async function setSettings(body) {
+        const ui = { ...UI_DEFAULTS, ...config.ui };
+        for (const [key, value] of Object.entries(body?.ui ?? {})) {
+            if (!UI_RULES[key]?.includes(value)) throw new ProtocolError(ERR.BAD_REQUEST, `ui.${key} must be one of ${(UI_RULES[key] ?? []).join(', ') || '(unknown setting)'}`);
+            ui[key] = value;
+        }
+        config.ui = ui;
+        await persistConfig(config);
+        return settings();
+    }
+
+    /** Switches the workspace in place (creating it when the folder is empty); taverns stay connected. */
+    async function switchWorkspace({ dir } = {}) {
+        if (typeof dir !== 'string' || !dir.trim()) throw new ProtocolError(ERR.BAD_REQUEST, 'dir is required');
+        let next;
+        try {
+            next = await Workspace.init(resolve(dir.trim()));
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `Cannot use ${dir} as a workspace: ${error.message}`);
+        }
+        stopWatching();
+        workspace = next;
+        engine.ws = next;
+        engine.local.clear();
+        stopWatching = startWatching();
+        config.workspace = next.root;
+        await persistConfig(config);
+        for (const { id } of targets.list()) await engine.pushWatchList(id).catch(() => {});
+        log(`workspace switched to ${next.root}`);
+        return { workspace: next.root };
+    }
+
+    /** Control API access: CLI / desktop main process with the internal token (no Origin), or the Studio page (same origin + session cookie). */
+    function authorize(req) {
+        const origin = req.headers.origin;
+        const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+        if (!origin && bearer !== undefined) {
+            if (tokenMatches(config.token, bearer)) return;
+            throw new ProtocolError(ERR.UNAUTHORIZED, 'Missing or wrong token');
+        }
+        if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) {
+            throw new ProtocolError(ERR.UNAUTHORIZED, 'Browser origins may not use the control API');
+        }
+        const site = req.headers['sec-fetch-site'];
+        if (site && site !== 'same-origin') throw new ProtocolError(ERR.UNAUTHORIZED, 'Cross-site request');
+        if (!tokenMatches(sessionId, readCookie(req, SESSION_COOKIE))) throw new ProtocolError(ERR.UNAUTHORIZED, 'Missing or wrong token');
+    }
+
+    function openEventStream(req, res) {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Content-Type-Options': 'nosniff' });
+        res.write(`retry: 2000\nevent: hello\ndata: ${JSON.stringify({ version: SERVER_VERSION })}\n\n`);
+        eventClients.add(res);
+        const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+        req.on('close', () => { clearInterval(ping); eventClients.delete(res); });
+    }
+
     const routes = {
+        'GET /api/settings': () => settings(),
+        'PUT /api/settings': b => setSettings(b),
+        'POST /api/workspace': b => switchWorkspace(b),
+        'GET /api/items': async () => { await refreshOffline(); return { items: (await engine.status()).items }; },
         'GET /api/status': async () => { await refreshOffline(); return { ...await engine.status(), taverns: config.taverns }; },
         'GET /api/detect': async () => {
             await refreshOffline();
@@ -346,18 +441,23 @@ export async function startServer({ config, workspace, log = console.log, watch 
         try {
             if (!isLoopbackHost(req.headers.host, port)) throw new ProtocolError(ERR.UNAUTHORIZED, 'Unexpected Host header');
             const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
-            // Studio page: static files only, no data and no token; everything it shows comes through the API later.
-            if (await serveStudio(req, res, pathname, studioDir)) return;
-            // Control API is for local non-browser clients only (CLI, Studio main process); no CORS by design.
-            // The bearer token is read from the local config file by those clients; it is never shown to users.
-            if (req.headers.origin) throw new ProtocolError(ERR.UNAUTHORIZED, 'Browser origins may not use the control API');
-            const auth = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
-            if (!tokenMatches(config.token, auth)) throw new ProtocolError(ERR.UNAUTHORIZED, 'Missing or wrong token');
-            const path = new URL(req.url, 'http://127.0.0.1').pathname;
+            if (pathname === EVENTS_PATH) {
+                authorize(req);
+                openEventStream(req, res);
+                return;
+            }
+            // Studio page: static files only; it receives the session cookie, everything it shows comes through the API.
+            const cookie = `${SESSION_COOKIE}=${sessionId}; HttpOnly; SameSite=Strict; Path=/`;
+            if (await serveStudio(req, res, pathname, studioDir, { 'Set-Cookie': cookie })) return;
+            // Control API: no CORS by design. See authorize().
+            authorize(req);
+            const path = pathname;
             const handler = routes[`${req.method} ${path}`];
             if (!handler) throw new ProtocolError(ERR.NOT_FOUND, `No route ${req.method} ${path}`);
-            const body = req.method === 'POST' ? await readJsonBody(req) : {};
-            send(200, { ok: true, result: await handler(body) });
+            const body = req.method === 'POST' || req.method === 'PUT' ? await readJsonBody(req) : {};
+            const result = await handler(body);
+            send(200, { ok: true, result });
+            if (req.method !== 'GET') emit('status', { reason: path });
         } catch (error) {
             const code = error instanceof ProtocolError ? error.code : ERR.HOST_ERROR;
             send(STATUS_BY_CODE[code] ?? 500, { ok: false, error: { code, message: error.message, details: error.details } });
@@ -382,15 +482,20 @@ export async function startServer({ config, workspace, log = console.log, watch 
                     const previous = targets.add(link.target, link);
                     if (previous) previous.link.close(CLOSE.REPLACED, 'replaced by a newer connection');
                     log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id} origin=${origin}`);
+                    emit('target', { connected: true, target: link.target });
                     await engine.onTargetConnected(link.target, capabilities, link);
                 },
                 onClose: link => {
                     if (!link.target) return;
                     targets.remove(link.target.id, link);
                     log(`tavern disconnected: ${link.target.label}`);
+                    emit('target', { connected: false, target: link.target });
                 },
                 onEvent: async (link, msg) => {
-                    if (msg.type === MSG.ITEM_CHANGED) await engine.onItemChanged(link.target.id, msg.payload ?? {});
+                    if (msg.type === MSG.ITEM_CHANGED) {
+                        await engine.onItemChanged(link.target.id, msg.payload ?? {});
+                        emit('status', { reason: 'tavern-changed', target: link.target.id });
+                    }
                 },
             });
         });
@@ -402,15 +507,20 @@ export async function startServer({ config, workspace, log = console.log, watch 
     });
     port = server.address().port;
     await refreshOffline();
-    const stopWatching = watch ? watchWorkspace(workspace, path => engine.onFilesChanged(path), log) : () => {};
+    const startWatching = () => (watch ? watchWorkspace(workspace, path => engine.onFilesChanged(path).finally(() => emit('status', { reason: 'files', path })), log) : () => {});
+    stopWatching = startWatching();
     log(`TavernCellar listening on 127.0.0.1:${server.address().port}, workspace ${workspace.root}`);
 
     return {
         engine,
         targets,
         port: server.address().port,
+        /** Session cookie value (tests / desktop shell). */
+        sessionId,
         async close() {
             stopWatching();
+            for (const res of eventClients) res.end();
+            eventClients.clear();
             for (const client of wss.clients) client.terminate();
             await new Promise(resolve => server.close(() => resolve()));
         },
