@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cellar Studio · 界面原型</title>
+  <script>
+    /* apply theme before first paint (no flash) */
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      try { t = t || localStorage.getItem('cs.theme'); } catch (e) {}
+      document.documentElement.dataset.theme = t || 'dark';
+    })();
+  </script>
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/editor.css">
+  <link rel="stylesheet" href="css/lorebook.css">
+  <link rel="stylesheet" href="css/screens.css">
+  <link rel="stylesheet" href="css/screens2.css">
+</head>
+<body>
+  <div id="app" class="app" aria-live="polite"></div>
+
+  <script src="js/icons.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/detect.js"></script>
+  <script src="js/chrome.js"></script>
+  <script src="js/screens/wizard.js"></script>
+  <script src="js/screens/library.js"></script>
+  <script src="js/screens/character.js"></script>
+  <script src="js/screens/lorebook.js"></script>
+  <script src="js/screens/lorebook-detail.js"></script>
+  <script src="js/screens/sync.js"></script>
+  <script src="js/screens/conflict.js"></script>
+  <script src="js/screens/settings.js"></script>
+  <script src="js/screens/history.js"></script>
+  <script src="js/actions.js"></script>
+</body>
+</html>

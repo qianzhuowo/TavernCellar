@@ -1,0 +1,158 @@
+/* =========================================================
+   Cellar Studio prototype — theme variables
+   Dark theme ("wine cellar") is default; light = parchment.
+   ========================================================= */
+
+:root {
+  /* ---- spacing scale (4px base) ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* ---- radii ---- */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-pill: 999px;
+
+  /* ---- type ---- */
+  --font-ui: "Microsoft YaHei UI", "Segoe UI", "PingFang SC", system-ui, sans-serif;
+  --font-sans: "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --font-serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "SimSun", "Georgia", serif;
+  --font-mono: "Cascadia Mono", "Consolas", "JetBrains Mono", ui-monospace, monospace;
+  --font-body: var(--font-sans);           /* editor body font (switchable) */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+  --fs-editor: 15px;
+  --lh-editor: 1.75;
+
+  /* ---- density (comfortable default) ---- */
+  --row-h: 40px;
+  --ctl-h: 32px;
+  --pad-field: var(--sp-4);
+  --gap-section: var(--sp-6);
+
+  /* ---- chrome sizes ---- */
+  --titlebar-h: 40px;
+  --statusbar-h: 26px;
+  --activity-w: 52px;
+  --side-w: 264px;
+  --inspector-w: 296px;
+  --tabs-h: 38px;
+  --editor-maxw: 860px;
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-2: 0 8px 24px rgba(0,0,0,.35), 0 2px 6px rgba(0,0,0,.25);
+  --ease: cubic-bezier(.2,.7,.3,1);
+}
+
+[data-density="compact"] {
+  --row-h: 32px;
+  --ctl-h: 28px;
+  --pad-field: var(--sp-3);
+  --gap-section: var(--sp-4);
+  --fs-editor: 14px;
+  --lh-editor: 1.6;
+}
+
+/* ---------------- Dark (default) ---------------- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-0: #110f0b;        /* title bar / activity bar */
+  --bg-1: #17140f;        /* app base */
+  --bg-2: #1d1914;        /* panels */
+  --bg-3: #241f19;        /* raised: cards, inputs */
+  --bg-4: #2d2720;        /* hover */
+  --bg-input: #1a1712;
+  --line: #342d25;
+  --line-strong: #4a4035;
+  --text: #ece3d4;
+  --text-2: #bfb2a0;
+  --text-3: #8a7d6c;
+  --text-inv: #fff8ee;
+
+  --accent: #a3344d;          /* 酒红 */
+  --accent-hover: #b83e59;
+  --accent-soft: rgba(184, 62, 89, .16);
+  --accent-line: rgba(184, 62, 89, .55);
+  --accent-text: #e48a9d;
+
+  --st-synced: #8fa75a;       /* 橄榄绿 */
+  --st-local: #e0a542;        /* 琥珀 */
+  --st-remote: #6c9fd6;       /* 蓝 */
+  --st-conflict: #e0583f;     /* 砖红 */
+  --st-off: #7d7266;          /* 灰 */
+  --st-synced-bg: rgba(143,167,90,.14);
+  --st-local-bg: rgba(224,165,66,.14);
+  --st-remote-bg: rgba(108,159,214,.14);
+  --st-conflict-bg: rgba(224,88,63,.15);
+  --st-off-bg: rgba(125,114,102,.14);
+
+  --lamp-const: #5b8fe0;      /* 🔵 永久 */
+  --lamp-key: #6fb35a;        /* 🟢 关键词 */
+  --lamp-vec: #b07ad8;        /* 🔗 向量化 */
+
+  --diff-add: rgba(143,167,90,.24);
+  --diff-del: rgba(224,88,63,.24);
+  --focus: 0 0 0 2px var(--bg-1), 0 0 0 4px rgba(228,138,157,.7);
+  --scroll-thumb: #3b3229;
+}
+
+/* ---------------- Light (parchment) ---------------- */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-0: #e9dfcb;
+  --bg-1: #f6f0e3;
+  --bg-2: #efe7d6;
+  --bg-3: #fbf7ef;
+  --bg-4: #e6dbc6;
+  --bg-input: #fffcf6;
+  --line: #ddd0b8;
+  --line-strong: #c7b696;
+  --text: #2f2418;
+  --text-2: #5e4d39;
+  --text-3: #8c7a62;
+  --text-inv: #fffaf2;
+
+  --accent: #8a2238;
+  --accent-hover: #9e2a43;
+  --accent-soft: rgba(138, 34, 56, .10);
+  --accent-line: rgba(138, 34, 56, .45);
+  --accent-text: #8a2238;
+
+  --st-synced: #5f7a2c;
+  --st-local: #a86b0c;
+  --st-remote: #2f6aa8;
+  --st-conflict: #b8361f;
+  --st-off: #8b7f71;
+  --st-synced-bg: rgba(95,122,44,.12);
+  --st-local-bg: rgba(168,107,12,.12);
+  --st-remote-bg: rgba(47,106,168,.11);
+  --st-conflict-bg: rgba(184,54,31,.11);
+  --st-off-bg: rgba(139,127,113,.12);
+
+  --lamp-const: #2e67c2;
+  --lamp-key: #3f8a2c;
+  --lamp-vec: #8645b5;
+
+  --diff-add: rgba(95,122,44,.22);
+  --diff-del: rgba(184,54,31,.18);
+  --focus: 0 0 0 2px var(--bg-1), 0 0 0 4px rgba(138,34,56,.55);
+  --scroll-thumb: #cdbd9f;
+  --shadow-1: 0 1px 2px rgba(80,60,30,.10);
+  --shadow-2: 0 10px 28px rgba(80,60,30,.18), 0 2px 6px rgba(80,60,30,.10);
+}
+
+[data-font="serif"] { --font-body: var(--font-serif); }
+[data-font="mono"]  { --font-body: var(--font-mono); }
