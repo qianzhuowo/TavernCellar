@@ -44,3 +44,22 @@ export function deepClone(value) {
 }
 
 export { isPlainObject };
+
+/**
+ * Paths where two JSON values differ ("data.description", "data.alternate_greetings.2"), at most `limit` of them.
+ * Used to explain why workspace files do not round-trip exactly.
+ */
+export function diffPaths(a, b, limit = 20) {
+    const out = [];
+    const walk = (x, y, path) => {
+        if (out.length >= limit) return;
+        const bothObjects = x && y && typeof x === 'object' && typeof y === 'object' && Array.isArray(x) === Array.isArray(y);
+        if (!bothObjects) {
+            if (JSON.stringify(x) !== JSON.stringify(y)) out.push(path || '(root)');
+            return;
+        }
+        for (const key of new Set([...Object.keys(x), ...Object.keys(y)])) walk(x[key], y[key], path ? `${path}.${key}` : key);
+    };
+    walk(a, b, '');
+    return out;
+}

@@ -11,6 +11,7 @@
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
+import { diffPaths } from './codec/object-path.js';
 
 const ENTRY_TEMPLATE = 'worldinfo-entry';
 
@@ -173,7 +174,12 @@ export class SyncEngine {
             await this.ws.saveManifest();
             await this.ws.saveState();
             await this.pushWatchList(target.id);
-            const warnings = written === remote.hash ? [] : ['Workspace files do not round-trip to the tavern data exactly'];
+            const warnings = [];
+            if (written !== remote.hash) {
+                const paths = diffPaths(remote.data, (await this.encodeItem(item)).data);
+                warnings.push(`Workspace files do not round-trip to the tavern data exactly; differing fields: ${paths.join(', ') || '(key order only)'}`);
+                this.log(`round-trip differences in ${path}: ${paths.join(', ') || '(key order only)'}`);
+            }
             this.log(`checked out ${kind} "${id}" -> ${path}`);
             return { path, target: target.id, hash: remote.hash, warnings };
         });

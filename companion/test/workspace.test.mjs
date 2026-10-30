@@ -5,6 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Workspace } from '../src/workspace/workspace.js';
 import { CODECS } from '../src/codec/index.js';
+import { diffPaths } from '../src/codec/object-path.js';
+
+test('diffPaths lists differing fields, capped', () => {
+    const a = { data: { description: 'x', alternate_greetings: ['a', 'b'], extensions: { k: 1 } }, spec: 'v3' };
+    const b = { data: { description: 'y', alternate_greetings: ['a'], extensions: { k: 1, extra: true } }, spec: 'v3' };
+    assert.deepEqual(diffPaths(a, b), ['data.description', 'data.alternate_greetings.1', 'data.extensions.extra']);
+    assert.deepEqual(diffPaths(a, structuredClone(a)), []);
+    assert.equal(diffPaths({ a: 1, b: 2, c: 3 }, {}, 2).length, 2);
+});
 
 const exists = p => stat(p).then(() => true, () => false);
 
