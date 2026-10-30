@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cellar Studio desktop shell (Electron main process).
  * Runs the companion in-process (startServer) and shows the Studio UI it serves at /studio/.
  * The UI talks to the companion over HTTP + SSE only; IPC is limited to three native helpers (see preload.cjs).

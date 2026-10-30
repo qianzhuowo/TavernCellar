@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Builds desktop/.stage/: the app folder electron-builder packages.
  * Keeps the repository layout (desktop/, companion/src/, shared/, studio/dist/) so relative imports and
  * the companion's defaultStudioDir() work unchanged inside the packaged app.
