@@ -7,11 +7,6 @@
 
   function render() {
     const s = App.state;
-    const taverns = D.taverns.map((t) => '<div class="known-tv"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span>' +
-      '<input class="input" value="' + E(t.name) + '" style="max-width:200px"><span class="badge">' + t.short + '</span>' +
-      '<span class="mono kt-origin">' + E(t.origin) + '</span>' +
-      '<span class="faint">' + (t.connected ? '已连接 · ' + t.type + ' ' + t.version : '未连接 · 最后在线 ' + t.lastSeen) + '</span><span style="flex:1"></span>' +
-      '<button class="btn sm ghost danger" data-act="fake" data-msg="已移除 ' + E(t.name) + '">' + icon('trash', 'sm') + '移除</button></div>').join('');
     return '<div class="page settings"><div class="page-head"><div><h2>设置</h2><p class="muted">设置保存在本机，不会写入工作区。</p></div></div>' +
       sec('ws', 'folder', '工作区',
         row('当前路径', null, '<div class="path-box mono" style="flex:1">' + E(D.workspace.path) + '</div>') +
@@ -20,8 +15,7 @@
         row('端口', '伴侣程序只监听本机', '<div class="path-box mono" title="只读">127.0.0.1:' + D.port + '</div>') +
         '<div class="set-sub"><div class="set-sub-h">本机酒馆<span style="flex:1"></span>' +
           '<button class="btn sm" data-act="set-redetect">' + icon('refresh', 'sm') + '重新检测</button></div>' +
-          Detect.list(D.locations) + '</div>' +
-        '<div class="set-sub"><div class="set-sub-h">已知酒馆</div>' + taverns +
+          Detect.list(D.locations) +
           '<div class="set-note faint">' + icon('info', 'sm') + '无需令牌：只有本机酒馆页面能连接伴侣程序。</div></div>') +
       sec('editor', 'type', '编辑器',
         row('主题', null, UI.seg([['dark', icon('moon', 'sm') + '深色'], ['light', icon('sun', 'sm') + '浅色'], ['system', '跟随系统']], s.theme, 'data-key="theme"')) +
@@ -61,8 +55,8 @@
       'dt-accept'(el) {
         const d = D.locations[el.dataset.type];
         d.accept = el.checked;
-        UI.toast(Detect.META[el.dataset.type].name + (d.accept ? ' 的连接已接受' : ' 的连接将被拒绝'));
-        const ed = document.getElementById('editor'), t = ed.scrollTop; ed.innerHTML = render(); ed.scrollTop = t;
+        UI.toast(Detect.META[el.dataset.type].name + (d.accept ? ' 已开启' : ' 已关闭：Studio 不再连接或读取它'));
+        const t = document.getElementById('editor').scrollTop; App.render(); document.getElementById('editor').scrollTop = t;
       },
       'set-jump'(el) {
         document.querySelectorAll('.side .tree-item').forEach((x) => x.classList.toggle('on', x === el));

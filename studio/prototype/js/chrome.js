@@ -74,8 +74,8 @@
 
   /* ---------- title bar ---------- */
   function renderTitle() {
-    const conns = D.taverns.map((t) => '<span class="conn"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span>' +
-      t.short + '<span class="conn-label"> ' + (t.connected ? '已连接' : '未连接') + '</span></span>').join('');
+    const conns = D.taverns.map((t) => '<span class="conn" title="' + Detect.connTip(t.id) + '"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span>' +
+      t.short + '<span class="conn-label"> ' + Detect.connLabel(t.id) + '</span></span>').join('');
     const dark = App.state.theme === 'dark';
     return '<header class="titlebar"><div class="brand"><span class="brand-mark">' + icon('wine') + '</span>TavernCellar</div>' +
       '<span class="sep">·</span><span class="ws-name">' + icon('folder', 'sm') + UI.esc(D.workspace.name) + '</span>' +
@@ -103,7 +103,7 @@
   /* ---------- side panel: workspace tree ---------- */
   function treeItem(it) {
     const on = App.route.arg === it.id;
-    const badges = D.taverns.map((t) => UI.stBadge(it.status[t.id], { iconOnly: true })).join('');
+    const badges = D.taverns.map((t) => Detect.badge(it.status[t.id], t.id, { iconOnly: true })).join('');
     return '<div class="tree-item' + (on ? ' on' : '') + '" data-act="go" data-href="#' + (it.kind === 'character' ? 'character/' : 'lorebook/') + it.id + '" tabindex="0">' +
       UI.avatar(it.name[0], it.hue, 20, '5px') + '<span class="name">' + UI.esc(it.name) + '</span><span class="badges">' + badges + '</span></div>';
   }
@@ -127,10 +127,10 @@
     if (!it) return '';
     const rows = D.taverns.map((t) => {
       const st = it.status[t.id];
-      const last = it.last && it.last[t.id] ? '<div class="faint" style="font-size:11px">上次已知：' + UI.STATUS[it.last[t.id]].label + '</div>' : '';
-      return '<div class="insp-tv"><div class="tv-name"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span><div><div>' + t.name + '</div>' + last + '</div></div>' +
-        UI.stBadge(st) +
-        '<div class="tv-ops">' + UI.toggle(it.auto[t.id], '随时同步', st === 'unbound' ? 'disabled' : '', 'sync') +
+      const sub = '<div class="faint" style="font-size:11px" title="' + Detect.connTip(t.id) + '">' + Detect.connLabel(t.id) + '</div>';
+      return '<div class="insp-tv"><div class="tv-name"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span><div><div>' + t.name + '</div>' + sub + '</div></div>' +
+        Detect.badge(st, t.id) +
+        '<div class="tv-ops">' + UI.toggle(it.auto[t.id], '随时同步', st === 'unbound' || Detect.closed(t.id) ? 'disabled' : '', 'sync') +
         '<button class="btn sm"' + (st === 'unbound' ? ' disabled' : Detect.writeAttr(t.id)) + ' data-act="fake-sync" data-tv="' + t.id + '">' + icon('upload', 'sm') + '同步</button></div></div>';
     }).join('');
     return '<div class="panel-head">检查栏<span class="spacer"></span><button class="icon-btn" data-act="toggle-inspector" title="收起">' + icon('chevRight', 'sm') + '</button></div>' +
@@ -146,8 +146,8 @@
 
   /* ---------- status bar ---------- */
   function renderStatus() {
-    const conns = D.taverns.map((t) => '<span class="si" data-act="go" data-href="#sync"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span>' +
-      t.short + ' ' + (t.connected ? '已连接' : '未连接') + '</span>').join('<span class="div"></span>');
+    const conns = D.taverns.map((t) => '<span class="si" data-act="go" data-href="#sync" title="' + t.name + ' · ' + Detect.connTip(t.id) + '"><span class="dot ' + (t.connected ? 'on' : 'off') + '"></span>' +
+      t.short + ' ' + Detect.connLabel(t.id) + '</span>').join('<span class="div"></span>');
     const dirty = D.items.filter((i) => Object.values(i.status).some((s) => ['local', 'remote', 'conflict'].includes(s))).length;
     const conf = D.items.filter((i) => Object.values(i.status).includes('conflict')).length;
     return '<footer class="statusbar">' + conns + '<span class="div"></span>' +

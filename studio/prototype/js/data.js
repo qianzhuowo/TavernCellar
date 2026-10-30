@@ -5,17 +5,18 @@
     { id: 'tt', short: 'tt', name: 'TauriTavern', type: 'TauriTavern', version: '2.4.0', connected: false, origin: 'http://tauri.localhost', lastSeen: '昨天 22:41' }
   ];
 
-  /* status: synced | local | remote | conflict | unbound | offline */
+  /* status: synced | local | remote | conflict | unbound | closed. Offline taverns still have a REAL status
+     (computed from their data folder); the offline marker is added at render time (Detect.badge). */
   const items = [
     { id: 'eirin', kind: 'character', name: '艾琳·霜语', path: 'characters/艾琳·霜语/', hue: 205,
-      status: { st: 'conflict', tt: 'offline' }, last: { tt: 'synced' }, auto: { st: false, tt: true },
+      status: { st: 'conflict', tt: 'synced' }, auto: { st: false, tt: true },
       modified: '2 分钟前', size: '18.4 KB' },
     { id: 'frost', kind: 'lorebook', name: '霜语大陆设定', path: 'worlds/霜语大陆设定/', hue: 30,
-      status: { st: 'local', tt: 'offline' }, last: { tt: 'local' }, auto: { st: false, tt: false },
+      status: { st: 'local', tt: 'local' }, auto: { st: false, tt: false },
       modified: '刚刚', size: '64.0 KB',
       warning: { text: '酒馆保留了已删除的字段', paths: ['entries.12.extensions.cssStyle', 'entries.27.automationId'] } },
     { id: 'moheng', kind: 'character', name: '墨衡', path: 'characters/墨衡/', hue: 150,
-      status: { st: 'remote', tt: 'unbound' }, auto: { st: true, tt: false },
+      status: { st: 'remote', tt: 'remote' }, auto: { st: true, tt: false },
       modified: '昨天 19:02', size: '9.7 KB' }
   ];
 
@@ -192,18 +193,22 @@
      Links are admitted by browser Origin (no pairing). With a valid folder the companion can read the
      tavern directly while it is not running (library / checkout / pull); writing back offline happens
      only while that tavern is NOT running, after backing up the original file in the workspace.
-     offlineReady = folder valid + Cellar Link has run once there (identifies the same tavern). */
+     offlineReady = folder valid + Cellar Link has run once there (identifies the same tavern).
+     An entry's id equals its sync-target id in `taverns` when it has one; entries without `dir` have only
+     connected via Cellar Link so far (compact row with 「设置目录…」). `found` = counts read from the folder. */
   const locations = {
     st: { accept: true, instances: [
-      { id: 'st1', tavern: 'st', name: '我的 SillyTavern', dir: 'D:\\SillyTavern', user: 'default-user', users: ['default-user', 'alice'],
+      { id: 'st', name: '我的 SillyTavern', dir: 'D:\\SillyTavern', user: 'default-user', users: ['default-user', 'alice'],
         dataDir: 'D:\\SillyTavern\\data\\default-user', port: 8000, version: '1.15.0', origin: 'http://127.0.0.1:8000',
-        running: true, plugin: true, connected: true, offlineReady: true, found: { books: 238, chars: 210 } },
-      { id: 'st2', tavern: null, name: 'SillyTavern（测试）', dir: 'E:\\ST-test', user: 'default-user', users: ['default-user'],
+        running: true, plugin: true, connected: true, offlineReady: true, found: { books: 8, chars: 186 } },
+      { id: 'st-test', name: 'SillyTavern（测试）', dir: 'E:\\ST-test', user: 'default-user', users: ['default-user'],
         dataDir: 'E:\\ST-test\\data\\default-user', port: 8001, version: '1.14.2',
-        running: false, plugin: false, connected: false, offlineReady: false }
+        running: false, plugin: false, connected: false, offlineReady: false },
+      { id: 'st-8002', name: 'SillyTavern（:8002）', origin: 'http://127.0.0.1:8002', port: 8002, version: '1.15.0',
+        running: false, plugin: true, connected: false, lastSeen: '3 天前' }
     ] },
-    tt: { accept: true, tavern: 'tt', install: 'D:\\TauriTavern', dataDir: 'D:\\TauriTavern\\data', version: '2.4.0',
-      origin: 'http://tauri.localhost', running: false, plugin: true, connected: false, offlineReady: true }
+    tt: { accept: true, id: 'tt', install: 'D:\\TauriTavern', dataDir: 'D:\\TauriTavern\\data', version: '2.4.0',
+      origin: 'http://tauri.localhost', running: false, plugin: true, connected: false, offlineReady: true, found: { books: 5, chars: 64 } }
   };
 
   window.DATA = {

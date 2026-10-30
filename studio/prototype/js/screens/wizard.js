@@ -1,14 +1,16 @@
 /* #wizard — first-run wizard, 3 steps (§4.1). Full screen, no chrome. */
 (function () {
   const D = window.DATA;
-  const W = { step: 0, tab: 'st', ws: 'default', timer: null, det: null, pending: false };
+  const W = { step: 0, tab: 'st', ws: 'default', timer: null, det: null, pending: false, open: [] };
   const STEPS = ['选择工作区', '安装 Cellar Link', '连接酒馆'];
 
   /* wizard starts with nothing connected; the SillyTavern link arrives after ~3s (visual only) */
   function freshDetect() {
     const d = JSON.parse(JSON.stringify(D.locations));
+    d.st.instances = d.st.instances.filter((i) => i.dir); /* first run: only folders found on disk */
     d.st.instances.forEach((i) => { i.connected = false; });
     d.tt.connected = false;
+    W.open = [d.st.instances[0].id]; /* only the first instance starts expanded */
     return d;
   }
 
@@ -38,8 +40,7 @@
   function step2() {
     if (!W.det) W.det = freshDetect();
     return '<h1>连接酒馆</h1><p class="muted">打开酒馆页面后，Cellar Link 会自动连接。告诉伴侣程序酒馆装在哪里，酒馆没运行时也能浏览和取出。这一步可以跳过。</p>' +
-      Detect.list(W.det) +
-      '<div class="wz-detect-foot"><button class="btn sm" data-act="wz-redetect">' + icon('refresh', 'sm') + '重新检测</button></div>';
+      Detect.list(W.det, { open: W.open, foot: '<button class="btn sm" data-act="wz-redetect">' + icon('refresh', 'sm') + '重新检测</button>' });
   }
 
   function render() {
@@ -84,6 +85,11 @@
       'wz-prev'() { clearTimeout(W.timer); W.pending = false; W.step--; redraw(); },
       'wz-later'() { clearTimeout(W.timer); App.go('#library'); },
       'wz-done'() { clearTimeout(W.timer); App.go('#library'); },
+      'dt-expand'(el) {
+        const id = el.dataset.id;
+        W.open = W.open.includes(id) ? W.open.filter((x) => x !== id) : W.open.concat(id);
+        redraw();
+      },
       'dt-accept'(el) {
         const d = W.det[el.dataset.type];
         d.accept = el.checked;

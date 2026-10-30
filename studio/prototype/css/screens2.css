@@ -63,9 +63,6 @@
 .set-ctl { flex: 1; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
 .set-sub { border-top: 1px solid var(--line); padding: var(--sp-3) 0; }
 .set-sub-h { display: flex; align-items: center; font-size: var(--fs-sm); color: var(--text-2); font-weight: 600; margin-bottom: var(--sp-2); }
-.known-tv { display: flex; align-items: center; gap: var(--sp-3); padding: 6px 0; font-size: var(--fs-sm); }
-.known-tv .input { height: 30px; }
-.kt-origin { font-size: 12px; color: var(--text-2); }
 .set-note { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); margin-top: var(--sp-2); }
 
 /* ---------- local tavern cards: paths + per-instance status (wizard + settings) ---------- */
@@ -104,7 +101,14 @@
 .dt-add { align-self: flex-start; margin: 0 var(--sp-4) 10px; }
 .dt-note { display: flex; gap: 6px; font-size: var(--fs-xs); line-height: 1.6; }
 .dt-note svg { flex: none; margin-top: 3px; }
-.wz-detect-foot { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); }
+.dt-pill.dim { opacity: .45; }
+.dt-chev { width: 22px; height: 22px; margin-left: -6px; }
+.dt-inst.collapsed { padding-bottom: 10px; }
+.dt-inst.link-only { gap: 4px; }
+.dt-inst.link-only .dt-inst-head > .faint:not(.mono) { font-size: var(--fs-xs); }
+.dt-note .btn { flex: none; align-self: center; }
+.st.is-off { box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent); }
+.legend-off { font-size: var(--fs-xs); align-self: center; }
 .wz-card.wide { width: min(880px, 100%); }
 .offline-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; height: 22px; padding: 0 8px; vertical-align: 3px;
   border-radius: 11px; border: 1px solid var(--st-remote); color: var(--st-remote); background: var(--st-remote-bg);

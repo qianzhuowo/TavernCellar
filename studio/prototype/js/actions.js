@@ -35,6 +35,9 @@
   A['fake-sync'] = (el) => UI.toast(el && el.dataset.tv && Detect.offline(el.dataset.tv)
     ? '已备份原文件并写入 ' + App.tavern(el.dataset.tv).name + ' 的数据目录'
     : '已同步到 ' + (el && el.dataset.tv ? App.tavern(el.dataset.tv).name : '我的 SillyTavern'));
+  A['fake-pull'] = (el) => UI.toast(Detect.mode(el.dataset.tv) === 'online'
+    ? '已从 ' + App.tavern(el.dataset.tv).name + ' 取回'
+    : '已从 ' + App.tavern(el.dataset.tv).name + ' 数据目录取回', 'download');
   A.expand = (el) => {
     const f = el.closest('.field');
     const on = !f.classList.contains('expanded');

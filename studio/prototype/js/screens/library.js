@@ -28,11 +28,11 @@
   }
 
   function body() {
-    if (L.type === 'book') return '<div class="book-list card">' + D.catalogBooks.filter((b) => !L.q || b.name.includes(L.q)).map(bookRow).join('') + '</div>';
+    if (L.type === 'book') return '<div class="book-list card">' + D.catalogBooks.slice(0, Detect.locOf(L.tv).found.books).filter((b) => !L.q || b.name.includes(L.q)).map(bookRow).join('') + '</div>';
     const list = chars();
     if (!list.length) return '<div class="empty">' + icon('search') + '<h3>没有找到角色</h3><p>换个关键字，或清除标签筛选</p><button class="btn sm" data-act="lib-clear">清除筛选</button></div>';
     return '<div class="cat-grid">' + list.map(card).join('') + '</div>' +
-      '<div class="load-more faint"><span class="dot wait"></span>滚动到底自动加载下一页 · 已显示 ' + list.length + ' / 186</div>';
+      '<div class="load-more faint"><span class="dot wait"></span>滚动到底自动加载下一页 · 已显示 ' + list.length + ' / ' + Detect.locOf(L.tv).found.chars + '</div>';
   }
 
   function drawer() {
@@ -52,17 +52,20 @@
   function side() {
     const tags = [...new Set(D.catalogChars.flatMap((c) => c.tags))];
     return '<div class="panel-head">资料库</div><div class="panel-body side-filters">' +
-      '<div class="field compact"><label>酒馆</label><select class="select" id="lib-tv">' + D.taverns.map((t) =>
-        '<option value="' + t.id + '"' + (t.id === L.tv ? ' selected' : '') + '>' + (t.connected ? '● ' : '○ ') + E(t.name) + (t.connected ? '' : '（离线）') + '</option>').join('') + '</select></div>' +
+      '<div class="field compact"><label>酒馆</label><select class="select" id="lib-tv">' + D.taverns.map((t) => {
+        const m = Detect.mode(t.id), tail = m === 'closed' ? '（已关闭）' : m === 'online' ? '' : '（离线）';
+        return '<option value="' + t.id + '"' + (t.id === L.tv ? ' selected' : '') + (m === 'closed' ? ' disabled' : '') + '>' + (m === 'online' ? '● ' : '○ ') + E(t.name) + tail + '</option>';
+      }).join('') + '</select></div>' +
       '<div class="field compact"><label>类型</label>' + UI.seg([['char', icon('user', 'sm') + '角色'], ['book', icon('book', 'sm') + '世界书']], L.type, 'data-key="type"') + '</div>' +
       '<div class="field compact"><label>标签</label><div class="tag-cloud">' + tags.map((t) => '<button class="chip' + (L.tag === t ? ' tag' : '') + '" data-act="lib-tag" data-t="' + t + '">' + t + '</button>').join('') + '</div></div>' +
       '<div class="side-note faint">' + icon('info', 'sm') + '<span>资料库只读浏览酒馆里的内容；取出后才会出现在工作区。</span></div></div>';
   }
 
   function render() {
-    const t = App.tavern(L.tv), l = Detect.locOf(L.tv);
+    if (Detect.closed(L.tv)) L.tv = D.taverns.find((x) => !Detect.closed(x.id)).id;
+    const t = App.tavern(L.tv), l = Detect.locOf(L.tv), n = l.found;
     const off = !t.connected ? '<span class="offline-badge" title="' + E(l ? l.dataDir : '') + '">' + icon('folder', 'sm') + '离线 · 直接读取数据目录</span>' : '';
-    return '<div class="page lib"><div class="page-head"><div><h2>资料库' + off + '</h2><p class="muted">' + E(t.name) + ' · 186 个角色 · 8 本世界书' +
+    return '<div class="page lib"><div class="page-head"><div><h2>资料库' + off + '</h2><p class="muted">' + E(t.name) + ' · ' + n.chars + ' 个角色 · ' + n.books + ' 本世界书' +
       (t.connected ? '' : ' · <span class="mono" style="font-size:12px">' + E(l.dataDir) + '</span>') + '</p></div>' +
       '<div class="page-actions">' + UI.seg([['char', '角色'], ['book', '世界书']], L.type, 'data-key="type"') +
       '<div class="search" style="width:240px">' + icon('search', 'sm') + '<input class="input" id="lib-q" placeholder="搜索名称" value="' + E(L.q) + '"></div>' +

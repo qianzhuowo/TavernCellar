@@ -151,7 +151,7 @@ kbd {
 .st.local    { color: var(--st-local);    background: var(--st-local-bg); }
 .st.remote   { color: var(--st-remote);   background: var(--st-remote-bg); }
 .st.conflict { color: var(--st-conflict); background: var(--st-conflict-bg); }
-.st.unbound, .st.offline { color: var(--st-off); background: var(--st-off-bg); }
+.st.unbound, .st.closed { color: var(--st-off); background: var(--st-off-bg); }
 .st.icon-only { width: 20px; height: 20px; padding: 0; justify-content: center; }
 .st.icon-only svg { width: 12px; height: 12px; }
 

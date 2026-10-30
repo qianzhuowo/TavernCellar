@@ -8,15 +8,16 @@
     remote:   { label: '酒馆有修改', icon: 'arrowDown' },
     conflict: { label: '冲突', icon: 'alert' },
     unbound:  { label: '未绑定', icon: 'minus' },
-    offline:  { label: '离线（酒馆未运行）', icon: 'circle' }
+    closed:   { label: '已关闭', icon: 'minus' }
   };
-  const ORDER = ['conflict', 'remote', 'local', 'synced', 'offline', 'unbound'];
+  const ORDER = ['conflict', 'remote', 'local', 'synced', 'unbound', 'closed'];
 
+  /* opts: iconOnly, label, title, cls (e.g. 'is-off' = offline marker styling) */
   function stBadge(st, opts) {
     opts = opts || {};
-    const s = STATUS[st];
-    if (opts.iconOnly) return '<span class="st icon-only ' + st + '" title="' + s.label + '">' + icon(s.icon) + '</span>';
-    return '<span class="st ' + st + '">' + icon(s.icon) + (opts.label || s.label) + '</span>';
+    const s = STATUS[st], cls = 'st ' + st + (opts.cls ? ' ' + opts.cls : '');
+    if (opts.iconOnly) return '<span class="' + cls + ' icon-only" title="' + (opts.title || opts.label || s.label) + '">' + icon(s.icon) + '</span>';
+    return '<span class="' + cls + '"' + (opts.title ? ' title="' + opts.title + '"' : '') + '>' + icon(s.icon) + (opts.label || s.label) + '</span>';
   }
   /* worst status across taverns — used for tab color bars */
   function worst(item) {

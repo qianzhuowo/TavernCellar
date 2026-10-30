@@ -30,7 +30,7 @@
 .item-kind { font-size: var(--fs-xs); display: flex; align-items: center; gap: 4px; margin-top: 3px; font-weight: 400; }
 .cell { min-width: 240px; }
 .cell.conflict { background: var(--st-conflict-bg); }
-.cell.offline, .cell.unbound { background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--st-off) 7%, transparent) 8px 9px); }
+.cell.is-off, .cell.closed, .cell.unbound { background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--st-off) 7%, transparent) 8px 9px); }
 .cell-main { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .cell-sub { font-size: var(--fs-xs); color: var(--text-3); }
 .cell-ops { display: flex; align-items: center; gap: 4px; margin-top: var(--sp-3); }
