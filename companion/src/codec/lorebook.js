@@ -2,11 +2,13 @@
  * Lorebook (world info) <-> workspace files. See docs/workspace-format.md §4.
  * Input/output is the object returned by /api/worldinfo/get.
  */
-import yaml from 'js-yaml';
 import { deepClone, isPlainObject } from './object-path.js';
 import { needsRaw, normalizeText, safeSegment } from './text.js';
 import { META_FILE, parseJsonFile } from './character.js';
 import { stableStringify } from '../../../shared/hash.js';
+import { parseEntry, serializeEntry } from './front-matter.js';
+
+export { parseEntry, serializeEntry };
 
 export const BOOK_FILE = 'book.json';
 /** 2: front matter omits fields equal to the entry template snapshot stored in meta.template. */
@@ -15,35 +17,12 @@ const CODEC_VERSION = LOREBOOK_CODEC_VERSION;
 /** Always written to front matter, even when equal to the template (identity and what users look for first). */
 const ALWAYS_SHOWN = new Set(['uid', 'key', 'comment', 'content']);
 const ENTRY_FILE_RE = /^entries\/[^/]+\.md$/;
-const YAML_OPTIONS = { schema: yaml.JSON_SCHEMA, lineWidth: -1, noRefs: true };
 
 /** True for files the lorebook codec reads or writes (see CODECS.owns). */
 export function ownsLorebookFile(rel) {
     return rel === BOOK_FILE || rel === META_FILE || ENTRY_FILE_RE.test(rel);
 }
 
-export function serializeEntry(frontMatter, body) {
-    return `---\n${yaml.dump(frontMatter, YAML_OPTIONS)}---\n${body}`;
-}
-
-/**
- * @param {string} text
- * @returns {{frontMatter: object, body: string}}
- */
-export function parseEntry(text, fileName = 'entry') {
-    const source = text.replace(/^\uFEFF/, '');
-    const match = /^---\r?\n(?:([\s\S]*?)\r?\n)?---(?:\r?\n|$)/.exec(source);
-    if (!match) return { frontMatter: {}, body: source };
-    let frontMatter;
-    try {
-        frontMatter = match[1]?.trim() ? yaml.load(match[1], { schema: yaml.JSON_SCHEMA }) : {};
-    } catch (error) {
-        throw new Error(`${fileName}: invalid YAML front matter (${error.message})`);
-    }
-    if (frontMatter === null || frontMatter === undefined) frontMatter = {};
-    if (!isPlainObject(frontMatter)) throw new Error(`${fileName}: front matter must be a mapping`);
-    return { frontMatter, body: source.slice(match[0].length) };
-}
 
 function entryFileName(key, entry, used) {
     const idPart = Number.isInteger(entry.uid) && entry.uid >= 0 ? String(entry.uid).padStart(4, '0') : safeSegment(key, 20);

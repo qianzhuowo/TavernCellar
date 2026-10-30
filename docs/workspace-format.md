@@ -81,8 +81,10 @@ characters/Alice/
 - 小白X（`xiaobaix-*`）、MVU 变量组等其他扩展字段暂留在 `card.json`。
 - **选择性拆出**：`cellar.json` 中资料项的 `layout.exclude` 列出留在 `card.json` 里、不单独拆出的部分：`fields`（正文字段 `.md`）、`greetings`、`regex`、`scripts`、`variables`。可在取出时指定（`POST /api/checkout` 的 `exclude`），也可之后修改（`POST /api/layout { path, exclude }`）。修改只重排文件，内容哈希不变；若会变则拒绝并恢复原布局。
 - **框架识别**：取出结果和状态中的 `frameworks` 列出卡依赖的脚本框架（酒馆助手、MVU、小白X）及依据，用于提示“这张卡需要在酒馆中安装哪些插件”。
+- **内嵌世界书**（`data.character_book`）：每个条目拆成 `character_book/NNNN-<comment>.md`（YAML 头为除 `content` 外的字段，正文为 `content`），编号决定顺序；书的其他字段留在 `card.json`。条目形态无法识别时整本留在 `card.json`。可用 `layout.exclude` 的 `character_book` 保留在 `card.json`。格式版本 3。
+- **连同绑定世界书取出**：取出角色时传 `withWorld: true`，会把 `data.extensions.world` 指向的世界书一起取出；该书若已从同一酒馆取出则直接引用，不重复取出。关联不单独保存：状态中的 `world: { name, path }` 每次从卡的内容推导，`path` 为 null 表示绑定的书不在工作区。
 
-格式版本：元数据 `codec` 为 2。伴侣程序启动时，把旧版本（`codec: 1`，正则和脚本还在 `card.json` 里）的资料项自动重新拆分；内容不变，哈希和同步状态不受影响。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
+格式版本：元数据 `codec` 为 3。伴侣程序启动时，把旧版本（`codec: 1`，正则和脚本还在 `card.json` 里）的资料项自动重新拆分；内容不变，哈希和同步状态不受影响。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
 
 ## 4. 世界书
 

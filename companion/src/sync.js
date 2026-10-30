@@ -13,6 +13,12 @@ import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
+
+/** Name of the lorebook a character is bound to (data.extensions.world), if any. */
+function linkedWorldName(card) {
+    const name = card?.data?.extensions?.world;
+    return typeof name === 'string' && name.trim() ? name : undefined;
+}
 import { diffPaths } from './codec/object-path.js';
 
 const ENTRY_TEMPLATE = 'worldinfo-entry';
@@ -229,7 +235,26 @@ export class SyncEngine {
         return { target: target.id, total: result.total, items };
     }
 
-    async checkout(targetSpec, { kind, id, exclude }) {
+    /**
+     * Checks out one item. For characters, `withWorld` also checks out the lorebook named in
+     * data.extensions.world (or reuses it when it is already checked out from the same tavern, so a book shared by
+     * several cards exists once). The link itself is not stored: status derives it from the card each time.
+     */
+    async checkout(targetSpec, { kind, id, exclude, withWorld = false }) {
+        const result = await this.checkoutOne(targetSpec, { kind, id, exclude });
+        if (kind !== 'character' || !withWorld || !result.worldName) return result;
+        const name = result.worldName;
+        const existing = this.ws.findBinding(result.target, 'lorebook', name);
+        if (existing) return { ...result, world: { name, path: existing.item.path, checkedOut: false } };
+        try {
+            const book = await this.checkoutOne(result.target, { kind: 'lorebook', id: name });
+            return { ...result, world: { name, path: book.path, checkedOut: true }, warnings: [...result.warnings, ...book.warnings] };
+        } catch (error) {
+            return { ...result, warnings: [...result.warnings, `绑定的世界书「${name}」未能取出：${error.message}`] };
+        }
+    }
+
+    async checkoutOne(targetSpec, { kind, id, exclude }) {
         const { target, link } = this.targets.resolve(targetSpec);
         const existing = this.ws.findBinding(target.id, kind, id);
         if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `${kind} "${id}" is already checked out at ${existing.item.path}`);
@@ -253,7 +278,8 @@ export class SyncEngine {
                 this.log(`round-trip differences in ${path}: ${paths.join(', ') || '(key order only)'}`);
             }
             this.log(`checked out ${kind} "${id}" -> ${path}`);
-            return { path, target: target.id, hash: remote.hash, warnings, frameworks: kind === 'character' ? detectFrameworks(remote.data) : [] };
+            const worldName = kind === 'character' ? linkedWorldName(remote.data) : undefined;
+            return { path, target: target.id, hash: remote.hash, warnings, frameworks: kind === 'character' ? detectFrameworks(remote.data) : [], ...(worldName ? { worldName } : {}) };
         });
     }
 
@@ -405,11 +431,19 @@ export class SyncEngine {
         for (const item of this.ws.manifest.items) {
             let localHash = null;
             let frameworks;
+            let world;
             let error;
             try {
                 const local = await this.encodeItem(item);
                 localHash = local.hash;
-                if (item.kind === 'character') frameworks = detectFrameworks(local.data);
+                if (item.kind === 'character') {
+                    frameworks = detectFrameworks(local.data);
+                    const name = linkedWorldName(local.data);
+                    if (name) {
+                        const targetId = Object.keys(item.bindings ?? {})[0];
+                        world = { name, path: (targetId && this.ws.findBinding(targetId, 'lorebook', name)?.item.path) ?? null };
+                    }
+                }
             } catch (e) {
                 error = e.message;
             }
@@ -445,7 +479,7 @@ export class SyncEngine {
                     ...(tavernError ? { tavernError } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}) });
+            items.push({ path: item.path, kind: item.kind, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(world ? { world } : {}) });
         }
         return {
             workspace: this.ws.root,

@@ -5,11 +5,12 @@
 import { deepClone, getPath, hasPath, setPath, unsetPath } from './object-path.js';
 import { needsRaw, normalizeText } from './text.js';
 import { joinParts, ownsPartFile, splitParts } from './character-parts.js';
+import { joinBook, ownsBookFile, splitBook } from './character-book.js';
 
 export const META_FILE = 'cellar-item.json';
 export const CARD_FILE = 'card.json';
-/** 2: regex scripts, Tavern Helper scripts and variables split into their own files. */
-export const CHARACTER_CODEC_VERSION = 2;
+/** 2: regex / Tavern Helper scripts / variables in their own files. 3: embedded character book entries too. */
+export const CHARACTER_CODEC_VERSION = 3;
 const CODEC_VERSION = CHARACTER_CODEC_VERSION;
 
 /** Long text fields split into their own files: [file, card path]. */
@@ -44,11 +45,11 @@ const TEXT_FIELD_FILES = new Set(TEXT_FIELDS.map(([file]) => file));
 
 /** True for files the character codec reads or writes (see CODECS.owns). */
 export function ownsCharacterFile(rel) {
-    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel);
+    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel) || ownsBookFile(rel);
 }
 
 /** Parts of a character card that can be kept inside card.json instead of their own files (item layout `exclude`). */
-export const CHARACTER_PARTS = Object.freeze(['fields', 'greetings', 'regex', 'scripts', 'variables']);
+export const CHARACTER_PARTS = Object.freeze(['fields', 'greetings', 'regex', 'scripts', 'variables', 'character_book']);
 
 /**
  * @param {object} card canonical card JSON
@@ -91,6 +92,7 @@ export function decodeCharacter(card, { exclude = [] } = {}) {
     }
 
     splitParts(rest, files, meta, skip);
+    if (!skip.has('character_book')) splitBook(rest, files, meta);
 
     files[CARD_FILE] = JSON.stringify(rest, null, 2) + '\n';
     files[META_FILE] = JSON.stringify(meta, null, 2) + '\n';
@@ -122,6 +124,7 @@ export function encodeCharacter(files) {
     }
 
     joinParts(card, files, meta);
+    joinBook(card, files, meta);
 
     for (const top of meta.mirrors ?? []) {
         const path = V1_MIRRORS.find(([key]) => key === top)?.[1];
