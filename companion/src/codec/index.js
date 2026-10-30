@@ -12,7 +12,7 @@ export const CODECS = Object.freeze({
     character: {
         folder: 'characters',
         nameOf: id => id.replace(/\.png$/i, ''),
-        decode: data => decodeCharacter(data),
+        decode: (data, options) => decodeCharacter(data, options),
         encode: (files) => encodeCharacter(files),
         owns: rel => ownsCharacterFile(rel),
         version: CHARACTER_CODEC_VERSION,

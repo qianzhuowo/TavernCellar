@@ -92,11 +92,12 @@ function readHelper(card) {
 
 /**
  * Moves regex scripts, Tavern Helper scripts and variables out of `rest` (the card being decoded) into `files`.
- * Records what it did in `meta` (`meta.raw`, `meta.emptyArrays`, `meta.helper`).
+ * Records what it did in `meta` (`meta.raw`, `meta.emptyArrays`, `meta.helper`). Parts named in `exclude`
+ * ('regex', 'scripts', 'variables') stay in card.json.
  */
-export function splitParts(rest, files, meta) {
+export function splitParts(rest, files, meta, exclude = new Set()) {
     const regex = getPath(rest, REGEX_PATH);
-    if (hasPath(rest, REGEX_PATH) && Array.isArray(regex) && splitList(regex, REGEX_SPEC, files, meta)) {
+    if (!exclude.has('regex') && hasPath(rest, REGEX_PATH) && Array.isArray(regex) && splitList(regex, REGEX_SPEC, files, meta)) {
         if (regex.length === 0) meta.emptyArrays.push(REGEX_PATH);
         unsetPath(rest, REGEX_PATH);
     }
@@ -106,11 +107,11 @@ export function splitParts(rest, files, meta) {
     const { form, helper } = found;
     const info = { form };
     const remaining = { ...helper };
-    if (Array.isArray(helper.scripts) && splitList(helper.scripts, SCRIPT_SPEC, files, meta)) {
+    if (!exclude.has('scripts') && Array.isArray(helper.scripts) && splitList(helper.scripts, SCRIPT_SPEC, files, meta)) {
         info.scripts = true;
         delete remaining.scripts;
     }
-    if (form !== 'legacy' && isPlainObject(helper.variables)) {
+    if (!exclude.has('variables') && form !== 'legacy' && isPlainObject(helper.variables)) {
         files[VARIABLES_FILE] = json(helper.variables);
         info.variables = true;
         delete remaining.variables;

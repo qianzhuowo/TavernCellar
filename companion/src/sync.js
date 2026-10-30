@@ -11,6 +11,8 @@
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
+import { CHARACTER_PARTS } from './codec/character.js';
+import { detectFrameworks } from './codec/frameworks.js';
 import { diffPaths } from './codec/object-path.js';
 
 const ENTRY_TEMPLATE = 'worldinfo-entry';
@@ -59,6 +61,7 @@ export class SyncEngine {
      * current template.
      */
     async decodeOptions(item) {
+        if (item.kind === 'character') return { exclude: item.layout?.exclude ?? [] };
         if (item.kind !== 'lorebook') return undefined;
         const files = await this.ws.readItemFiles(item.path).catch(() => ({}));
         try {
@@ -73,6 +76,32 @@ export class SyncEngine {
      * encoded from the old files and decoded into the current layout, so hashes and sync state stay valid.
      * Items whose files cannot be encoded right now (user mid-edit) are left alone and retried next start.
      */
+    /**
+     * Changes which parts of a character are kept in card.json (`exclude`, see CHARACTER_PARTS) and re-lays out its
+     * files. Only the layout changes: the content hash must stay the same, otherwise nothing is saved.
+     */
+    async setLayout(path, { exclude = [] } = {}) {
+        const item = this.requireItem(path);
+        if (item.kind !== 'character') throw new ProtocolError(ERR.BAD_REQUEST, 'Only characters have a configurable layout');
+        const unknown = exclude.filter(p => !CHARACTER_PARTS.includes(p));
+        if (unknown.length) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown parts: ${unknown.join(', ')}`);
+        return this.withLock(path, async () => {
+            const before = await this.encodeItem(item);
+            const previous = item.layout;
+            item.layout = exclude.length ? { exclude: [...new Set(exclude)] } : undefined;
+            if (!item.layout) delete item.layout;
+            const hash = await this.writeItem(item, before.data);
+            if (hash !== before.hash) {
+                item.layout = previous;
+                await this.writeItem(item, before.data);
+                throw new ProtocolError(ERR.HOST_ERROR, 'Re-layout would change the content; layout not changed');
+            }
+            await this.ws.saveManifest();
+            this.log(`layout of ${path}: ${exclude.length ? `keeping ${exclude.join(', ')} in card.json` : 'everything split'}`);
+            return { path, layout: item.layout ?? { exclude: [] } };
+        });
+    }
+
     async upgradeLayouts() {
         for (const item of this.ws.manifest.items) {
             await this.withLock(item.path, async () => {
@@ -200,13 +229,16 @@ export class SyncEngine {
         return { target: target.id, total: result.total, items };
     }
 
-    async checkout(targetSpec, { kind, id }) {
+    async checkout(targetSpec, { kind, id, exclude }) {
         const { target, link } = this.targets.resolve(targetSpec);
         const existing = this.ws.findBinding(target.id, kind, id);
         if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `${kind} "${id}" is already checked out at ${existing.item.path}`);
+        if (exclude !== undefined && (kind !== 'character' || !Array.isArray(exclude) || exclude.some(p => !CHARACTER_PARTS.includes(p)))) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `exclude must list character parts: ${CHARACTER_PARTS.join(', ')}`);
+        }
         const remote = await link.request(MSG.ITEM_GET, { kind, id });
         const path = this.ws.allocateItemPath(kind, id);
-        const item = { path, kind, bindings: { [target.id]: { id, autoSync: false } } };
+        const item = { path, kind, bindings: { [target.id]: { id, autoSync: false } }, ...(exclude?.length ? { layout: { exclude } } : {}) };
         return this.withLock(path, async () => {
             this.ws.manifest.items.push(item);
             const written = await this.writeItem(item, remote.data);
@@ -221,7 +253,7 @@ export class SyncEngine {
                 this.log(`round-trip differences in ${path}: ${paths.join(', ') || '(key order only)'}`);
             }
             this.log(`checked out ${kind} "${id}" -> ${path}`);
-            return { path, target: target.id, hash: remote.hash, warnings };
+            return { path, target: target.id, hash: remote.hash, warnings, frameworks: kind === 'character' ? detectFrameworks(remote.data) : [] };
         });
     }
 
@@ -372,9 +404,12 @@ export class SyncEngine {
         const items = [];
         for (const item of this.ws.manifest.items) {
             let localHash = null;
+            let frameworks;
             let error;
             try {
-                localHash = (await this.encodeItem(item)).hash;
+                const local = await this.encodeItem(item);
+                localHash = local.hash;
+                if (item.kind === 'character') frameworks = detectFrameworks(local.data);
             } catch (e) {
                 error = e.message;
             }
@@ -410,7 +445,7 @@ export class SyncEngine {
                     ...(tavernError ? { tavernError } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, error, bindings });
+            items.push({ path: item.path, kind: item.kind, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}) });
         }
         return {
             workspace: this.ws.root,

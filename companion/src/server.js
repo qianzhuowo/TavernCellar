@@ -451,6 +451,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/sync': b => engine.sync(b.path, b),
         'POST /api/pull': b => engine.pull(b.path, b),
         'POST /api/auto-sync': b => engine.setAutoSync(b.path, b),
+        'POST /api/layout': b => engine.setLayout(b.path, b),
     };
 
     const server = createServer(async (req, res) => {

@@ -79,6 +79,8 @@ characters/Alice/
 - 酒馆助手有三种存储形态：对象 `tavern_helper: { scripts, variables }`、键值对数组 `tavern_helper: [["scripts", …], ["variables", …]]`、旧版 `TavernHelper_scripts: […]`。取出时记录形态（元数据 `helper`），写回时按原形态还原；`tavern_helper` 中的其他键留在 `card.json`。
 - 无法识别的形态（例如数组中有非对象元素、脚本 content 不是字符串）整段原样留在 `card.json`，不拆分。
 - 小白X（`xiaobaix-*`）、MVU 变量组等其他扩展字段暂留在 `card.json`。
+- **选择性拆出**：`cellar.json` 中资料项的 `layout.exclude` 列出留在 `card.json` 里、不单独拆出的部分：`fields`（正文字段 `.md`）、`greetings`、`regex`、`scripts`、`variables`。可在取出时指定（`POST /api/checkout` 的 `exclude`），也可之后修改（`POST /api/layout { path, exclude }`）。修改只重排文件，内容哈希不变；若会变则拒绝并恢复原布局。
+- **框架识别**：取出结果和状态中的 `frameworks` 列出卡依赖的脚本框架（酒馆助手、MVU、小白X）及依据，用于提示“这张卡需要在酒馆中安装哪些插件”。
 
 格式版本：元数据 `codec` 为 2。伴侣程序启动时，把旧版本（`codec: 1`，正则和脚本还在 `card.json` 里）的资料项自动重新拆分；内容不变，哈希和同步状态不受影响。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
 

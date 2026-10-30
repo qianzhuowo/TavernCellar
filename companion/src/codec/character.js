@@ -47,12 +47,17 @@ export function ownsCharacterFile(rel) {
     return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel);
 }
 
+/** Parts of a character card that can be kept inside card.json instead of their own files (item layout `exclude`). */
+export const CHARACTER_PARTS = Object.freeze(['fields', 'greetings', 'regex', 'scripts', 'variables']);
+
 /**
  * @param {object} card canonical card JSON
+ * @param {{exclude?: string[]}} [options] parts to keep in card.json (see CHARACTER_PARTS)
  * @returns {Record<string,string>} files keyed by item-relative path ("/" separated)
  */
-export function decodeCharacter(card) {
+export function decodeCharacter(card, { exclude = [] } = {}) {
     if (!card || typeof card !== 'object' || Array.isArray(card)) throw new Error('Character card must be an object');
+    const skip = new Set(exclude);
     const rest = deepClone(card);
     const meta = { kind: 'character', codec: CODEC_VERSION, mirrors: [], raw: [], emptyArrays: [] };
     const files = {};
@@ -65,6 +70,7 @@ export function decodeCharacter(card) {
     }
 
     for (const [file, path] of TEXT_FIELDS) {
+        if (skip.has('fields')) break;
         const value = getPath(rest, path);
         if (hasPath(rest, path) && typeof value === 'string') {
             files[file] = value;
@@ -74,7 +80,7 @@ export function decodeCharacter(card) {
     }
 
     const greetings = getPath(rest, GREETINGS_PATH);
-    if (hasPath(rest, GREETINGS_PATH) && Array.isArray(greetings) && greetings.every(g => typeof g === 'string')) {
+    if (!skip.has('greetings') && hasPath(rest, GREETINGS_PATH) && Array.isArray(greetings) && greetings.every(g => typeof g === 'string')) {
         if (greetings.length === 0) meta.emptyArrays.push(GREETINGS_PATH);
         const width = Math.max(2, String(greetings.length).length);
         greetings.forEach((text, i) => {
@@ -84,7 +90,7 @@ export function decodeCharacter(card) {
         unsetPath(rest, GREETINGS_PATH);
     }
 
-    splitParts(rest, files, meta);
+    splitParts(rest, files, meta, skip);
 
     files[CARD_FILE] = JSON.stringify(rest, null, 2) + '\n';
     files[META_FILE] = JSON.stringify(meta, null, 2) + '\n';
