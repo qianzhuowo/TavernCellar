@@ -49,22 +49,61 @@ export function setGroup(e, g) {
 /** ST inclusion groups (comma separated `group`). @param {any} e @returns {string[]} */
 export const inclusionGroups = (e) => String(e.group ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-export const SORTS = [
-  { value: 'custom', label: '自定义' },
-  { value: 'order', label: '顺序' },
-  { value: 'depth', label: '深度' },
-  { value: 'title', label: '名称' },
-  { value: 'uid', label: 'uid' },
-  { value: 'trigger', label: '触发 %' }
-];
+/** Whether entry group `g` is `path` or inside it. @param {string} g @param {string} path */
+export const inGroup = (g, path) => g === path || g.startsWith(path + '/');
 
-/** Comparators; `idx` is the entry's position in the book (ST custom order falls back to it). */
-export const SORT_FN = {
-  /** @param {any} a @param {any} b */
-  custom: (a, b) => (a.e.displayIndex ?? Infinity) - (b.e.displayIndex ?? Infinity) || a.idx - b.idx,
-  order: (a, b) => (b.e.order ?? 0) - (a.e.order ?? 0) || a.e.uid - b.e.uid,
-  depth: (a, b) => (b.e.depth ?? 0) - (a.e.depth ?? 0) || (b.e.order ?? 0) - (a.e.order ?? 0) || a.e.uid - b.e.uid,
-  title: (a, b) => String(a.e.comment ?? '').localeCompare(String(b.e.comment ?? ''), 'zh') || a.e.uid - b.e.uid,
-  uid: (a, b) => a.e.uid - b.e.uid,
-  trigger: (a, b) => (b.e.probability ?? 100) - (a.e.probability ?? 100) || a.e.uid - b.e.uid
-};
+/** Default depth ST gives @D entries (world_info depth default). */
+export const DEFAULT_DEPTH = 4;
+
+/** Sets the insert position; entries moved to @D without a depth get the default depth. @param {any} e @param {number} pos */
+export function setPosition(e, pos) {
+  e.position = pos;
+  if (pos === 4 && typeof e.depth !== 'number') e.depth = DEFAULT_DEPTH;
+}
+
+/** ST's world-info sort options (index.html #world_info_sort_order, minus the search-only rule). */
+export const SORTS = [
+  { value: 'priority', label: '优先级' },
+  { value: 'custom', label: '自定义' },
+  { value: 'title-asc', label: '标题 A-Z' },
+  { value: 'title-desc', label: '标题 Z-A' },
+  { value: 'len-asc', label: '字数 ↗' },
+  { value: 'len-desc', label: '字数 ↘' },
+  { value: 'depth-asc', label: '深度 ↗' },
+  { value: 'depth-desc', label: '深度 ↘' },
+  { value: 'order-asc', label: '顺序 ↗' },
+  { value: 'order-desc', label: '顺序 ↘' },
+  { value: 'uid-asc', label: 'UID ↗' },
+  { value: 'uid-desc', label: 'UID ↘' },
+  { value: 'prob-asc', label: '触发% ↗' },
+  { value: 'prob-desc', label: '触发% ↘' }
+];
+export const isSort = (/** @type {string} */ v) => SORTS.some((s) => s.value === v);
+
+/** ST fills a missing displayIndex with the uid when it loads a book. @param {any} e */
+export const displayIndexOf = (e) => (typeof e.displayIndex === 'number' ? e.displayIndex : Number(e.uid) || 0);
+
+const FIELD = { title: 'comment', len: 'content', depth: 'depth', order: 'order', uid: 'uid', prob: 'probability' };
+
+/** Primary comparator of a sort rule, as in ST sortWorldInfoEntries. @param {string} rule */
+function primary(rule) {
+  if (rule === 'custom') return (/** @type {any} */ a, /** @type {any} */ b) => displayIndexOf(a) - displayIndexOf(b);
+  if (rule === 'priority') {
+    const rank = (/** @type {any} */ e) => (e.disable ? 2 : e.constant ? 0 : 1);
+    return (/** @type {any} */ a, /** @type {any} */ b) => rank(a) - rank(b);
+  }
+  const [name, dir] = rule.split('-');
+  const field = FIELD[name];
+  const sign = dir === 'asc' ? 1 : -1;
+  return (/** @type {any} */ a, /** @type {any} */ b) => {
+    const x = a[field], y = b[field];
+    if (typeof x === 'string' && typeof y === 'string') return sign * (name === 'len' ? x.length - y.length : x.localeCompare(y));
+    return sign * ((Number(x) || 0) - (Number(y) || 0));
+  };
+}
+
+/** Sorts entries in place like ST: primary rule, then order descending, then uid ascending. @param {any[]} list @param {string} rule */
+export function sortEntries(list, rule) {
+  const p = primary(isSort(rule) ? rule : 'order-desc');
+  return list.sort((a, b) => p(a, b) || (Number(b.order) || 0) - (Number(a.order) || 0) || (Number(a.uid) || 0) - (Number(b.uid) || 0));
+}

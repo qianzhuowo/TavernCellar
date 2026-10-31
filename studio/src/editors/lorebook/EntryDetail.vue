@@ -6,13 +6,13 @@ import Icon from '../../components/Icon.vue';
 import Seg from '../../components/Seg.vue';
 import Toggle from '../../components/Toggle.vue';
 import ChipInput from './ChipInput.vue';
-import { POS, lampOf, groupOf, setGroup } from './entry.js';
+import { POS, lampOf, groupOf } from './entry.js';
 
 const props = defineProps({
   entry: { type: Object, required: true },
   groups: { type: Array, default: () => [] }
 });
-const emit = defineEmits(['change', 'duplicate', 'delete']);
+const emit = defineEmits(['change', 'duplicate', 'delete', 'move']);
 
 const LAMPS = [{ value: 'const', label: '永久' }, { value: 'key', label: '关键词' }, { value: 'vec', label: '向量化' }];
 const LOGIC = [[0, '与任意'], [3, '与所有'], [2, '非所有'], [1, '非任何']];
@@ -65,10 +65,9 @@ const filter = computed(() => e.value.characterFilter ?? { isExclude: false, nam
 function setFilter(patch) { set('characterFilter', { ...filter.value, ...patch }); }
 
 const group = computed(() => groupOf(e.value));
-/** @param {Event} ev */
+/** Group changes go through the editor: joining a group may also change the insert position (same group, same position). @param {Event} ev */
 function changeGroup(ev) {
-  setGroup(e.value, val(ev));
-  emit('change');
+  emit('move', val(ev));
 }
 // ST stores delayUntilRecursion as false/true or a recursion level.
 const delayOn = computed(() => Boolean(e.value.delayUntilRecursion));

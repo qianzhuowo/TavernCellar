@@ -171,3 +171,25 @@ select.tiny { height: 26px; border-radius: var(--r-md); border: 1px solid var(--
 .adv-grp.wide { grid-column: 1 / -1; border-right: 0; }
 .tri-grid .input.num { width: 90px; }
 .input.num { width: 84px; }
+
+/* ---------- groups, drag (S3 group operations) ---------- */
+.lb-group.on { background: var(--accent-soft); color: var(--text); }
+.lb-group.drop { box-shadow: inset 0 2px 0 var(--accent-hover); }
+.lb-chev { display: inline-flex; padding: 2px; border-radius: var(--r-sm); }
+.lb-chev:hover { background: var(--row-hover); }
+.lb-gcount { min-width: 22px; text-align: right; font-weight: 400; }
+.lb-gwarn { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: var(--r-pill); color: var(--st-local); border: 1px solid color-mix(in srgb, var(--st-local) 50%, transparent); }
+.lb-group .lb-pos { font-weight: 400; }
+.lb-gchip { flex: 0 1 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 19px; font-size: 11px; padding: 0 6px; background: var(--accent-soft); color: var(--accent-text); }
+.lb-row.drop-before { box-shadow: inset 0 2px 0 var(--accent-hover); }
+.lb-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent-hover); }
+.lb-dropval { position: absolute; right: var(--sp-3); top: -10px; z-index: 2; font-size: 11px; font-family: var(--font-mono); padding: 1px 6px; border-radius: var(--r-sm); background: var(--accent); color: var(--on-color); pointer-events: none; }
+.lb-row.drop-after .lb-dropval { top: auto; bottom: -10px; }
+.lb.dragging .lb-row, .lb.dragging .lb-group { cursor: grabbing; }
+.lb-row[draggable="true"] { cursor: grab; }
+.lb-bygroup { font-size: var(--fs-sm); color: var(--text-2); gap: 6px; }
+.lb-bygroup input { width: 14px; height: 14px; }
+.grp .grp-name { margin: 0; font-size: var(--fs-xl); font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp-help { margin: 0; font-size: var(--fs-sm); line-height: 1.6; }
+.grp-warn { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--st-local); }
+.grp-preview { font-size: var(--fs-sm); align-self: center; }
