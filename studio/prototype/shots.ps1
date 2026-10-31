@@ -24,8 +24,10 @@ $shots = @(
   @('library-preview-dark', 'theme=dark', 'library/preview'),
   @('sync-dark', 'theme=dark', 'sync'),
   @('sync-offline-wait-dark', 'theme=dark&ttoff=wait', 'sync'),
+  @('sync-unbound-dark', 'theme=dark&unbound=1', 'sync'),
   @('settings-dark', 'theme=dark', 'settings'),
   @('settings-taverns-dark', 'theme=dark&sec=conn', 'settings'),
+  @('settings-closed-dark', 'theme=dark&sec=conn&ttaccept=0', 'settings'),
   @('history-dark', 'theme=dark', 'history'),
   @('wizard-dark', 'theme=dark&step=0', 'wizard'),
   @('wizard-connect-dark', 'theme=dark&step=2', 'wizard')

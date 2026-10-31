@@ -12,6 +12,12 @@
   const OFF = { wait: ['等酒馆启动再同步', '只改工作区，不动酒馆文件；酒馆启动后，开了随时同步的项会自动同步。', '等启动再同步'],
     write: ['不开酒馆也同步', '直接写入酒馆数据目录，写入前先备份原文件；仅在酒馆未运行时进行。', '不开酒馆也同步'] };
   if (/[?&]ttoff=wait/.test(location.search)) window.DATA.locations.tt.whenOff = 'wait';
+  /* demo: ?ttaccept=0 shows TauriTavern switched off (接受连接 off); ?unbound=1 leaves 墨衡 unbound on TauriTavern */
+  if (/[?&]ttaccept=0/.test(location.search)) window.DATA.locations.tt.accept = false;
+  if (/[?&]unbound=1/.test(location.search)) {
+    const mo = window.DATA.items.find((x) => x.id === 'moheng');
+    if (mo) { mo.status.tt = 'unbound'; mo.auto.tt = false; }
+  }
 
   /* segmented control 「酒馆未运行时」; disabled when the tavern can't be used offline */
   function offCtl(l, accept) {
