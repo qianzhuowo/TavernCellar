@@ -20,6 +20,13 @@ coverage/
 test-results/
 playwright-report/
 *.lcov
+junit*.xml
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+.npm/
+builder-debug.yml
+builder-effective-config.yaml
 
 # Runtime state that must never be committed
 .env

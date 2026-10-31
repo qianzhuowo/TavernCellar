@@ -194,7 +194,7 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 - **单元测试**：`node --test`，覆盖协议校验、哈希、编解码往返；只用合成数据与 ST 自带的默认卡。
 - **ST 实机**：临时浏览器配置 + `--remote-debugging-port`，通过 CDP 在页面内执行验证脚本。
 - **tt 实机**：只把插件文件复制到 `<tt 数据目录>\extensions\third-party\TavernCellar`；确认 tt 完全退出后（tt 单实例运行），设置 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<端口>` 再启动 `tauritavern.exe`，通过 CDP 验证。
-- **测试数据**：实机验证只使用临时的 `TavernCellar_Test` 角色与 `TavernCellar_Test_WI` 世界书，验证结束后删除；不碰用户已有数据。
+- **测试数据**：实机验证只使用 `TavernCellar_Test` 角色与 `TavernCellar_Test_WI` 世界书，不改动用户已有数据（只读取出除外）。这两项目前保留供后续验证，由用户决定何时删除。
 - 每个阶段的验证结果记录在 `docs/verification-phase<N>.md`，并注明哪些没有验证。
 
 ## 11. 风险与待定事项

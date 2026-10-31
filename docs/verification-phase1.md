@@ -17,7 +17,7 @@ Phase 1 goal: skeleton + connection + checkout/sync loop (character cards and lo
 Environment: TauriTavern 2.4.0 (Windows), plugin installed under `<tt data>/extensions/third-party/TavernCellar`,
 companion on `127.0.0.1:7349` with an isolated
 `CELLAR_HOME`. Driven through WebView2 CDP (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`).
-Test data only: character `TavernCellar_Test`, lorebook `TavernCellar_Test_WI` (both deleted afterwards).
+Test data only: character `TavernCellar_Test`, lorebook `TavernCellar_Test_WI` (kept for later verification; the user decides when to delete them).
 
 | # | Check | Result |
 | --- | --- | --- |
