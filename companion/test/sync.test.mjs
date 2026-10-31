@@ -412,6 +412,13 @@ test('sync warnings are kept until the next agreement; unbind forgets the bindin
     assert.equal(r.result.result, 'synced', JSON.stringify(r));
     assert.deepEqual(r.result.warnings, ['Tavern kept deleted fields: data.extensions.x']);
     assert.deepEqual((await bindingOf()).warnings, ['Tavern kept deleted fields: data.extensions.x']);
+    tavern.putWarnings = [];
+    // a sync with nothing to send is an agreement too: the warnings go
+    assert.equal((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.result, 'up-to-date');
+    assert.equal((await bindingOf()).warnings, undefined);
+    tavern.putWarnings = ['Tavern kept deleted fields: data.extensions.x'];
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'warned again');
+    assert.deepEqual((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.warnings, ['Tavern kept deleted fields: data.extensions.x']);
     await writeFile(join(dir, 'characters/Alice/description.md'), 'clean edit');
     assert.equal((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.result, 'synced');
     assert.equal((await bindingOf()).warnings, undefined);

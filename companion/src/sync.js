@@ -361,7 +361,11 @@ export class SyncEngine {
     async #syncLocked(item, targetId, binding, link, force, attempt = 0) {
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
         const local = await this.encodeItem(item);
-        if (local.hash === state.base && !force) return { path: item.path, target: targetId, result: 'up-to-date', hash: local.hash };
+        if (local.hash === state.base && !force) {
+            // Nothing to send: workspace and tavern agree on the last written version, so earlier sync warnings go.
+            if (state.warnings) { this.ws.setSyncState(item.path, targetId, { warnings: undefined, warnedAt: undefined }); await this.ws.saveState(); }
+            return { path: item.path, target: targetId, result: 'up-to-date', hash: local.hash };
+        }
         this.#assertCanWrite(targetId);
         // An open conflict is re-evaluated: the user may have resolved the conflicting slots in the files.
         if (state.conflict && !force) return this.#reconcile(item, targetId, binding, link, { push: true, attempt });
