@@ -169,6 +169,9 @@ export function merge3(kind, base, local, remote) {
     const l = slotsOf(kind, local);
     const r = slotsOf(kind, remote);
     const merged = new Map();
+    // Base after this merge: slots taken over without a conflict now agree with the tavern; conflicting slots keep
+    // the old base. Saving it while conflicts are open keeps later tavern edits of merged slots one-sided.
+    const nextBase = new Map();
     const conflicts = [];
     for (const slot of new Set([...l.keys(), ...r.keys(), ...b.keys()])) {
         const lv = l.get(slot), rv = r.get(slot), bv = b.get(slot);
@@ -178,8 +181,10 @@ export function merge3(kind, base, local, remote) {
         else if (slot.endsWith('.$order') && Array.isArray(lv) && Array.isArray(rv) && (pick = mergeOrder(bv, lv, rv)) !== undefined) { /* combined */ }
         else { pick = lv; conflicts.push(slot); }
         if (pick !== undefined) merged.set(slot, pick);
+        const nb = conflicts.at(-1) === slot ? bv : rv;
+        if (nb !== undefined) nextBase.set(slot, nb);
     }
-    return { data: assemble(kind, merged), conflicts };
+    return { data: assemble(kind, merged), conflicts, base: assemble(kind, nextBase) };
 }
 
 const FIELD_LABELS = {

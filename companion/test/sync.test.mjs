@@ -239,6 +239,25 @@ test('slot merge: same field on both sides -> only that slot conflicts; resolvin
     assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
 });
 
+test('slot merge: while a conflict is open, tavern edits of already merged slots still merge (base advanced)', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L3');
+    await tavern.edit('character', 'Alice.png', d => { d.data.description = 'T3'; d.data.scenario = 'scenario A'; });
+    await until(async () => (await bindingOf('characters/Alice')).status === 'conflict');
+    await until(async () => (await readFile(join(dir, 'characters/Alice/scenario.md'), 'utf8').catch(() => '')) === 'scenario A');
+    // The tavern edits the merged slot again (SillyTavern also rewrites every entry on each save).
+    await tavern.edit('character', 'Alice.png', d => { d.data.scenario = 'scenario B'; });
+    await until(async () => (await readFile(join(dir, 'characters/Alice/scenario.md'), 'utf8').catch(() => '')) === 'scenario B');
+    const details = (await api('POST', '/api/conflict', { path: 'characters/Alice' })).result;
+    assert.deepEqual(details.slots.map(s => s.slot), ['data.description']);
+    assert.equal(details.slots[0].base.value, 'T2', 'conflicting slot keeps the old base');
+    const resolved = await api('POST', '/api/conflict/resolve', { path: 'characters/Alice', choices: { 'data.description': 'workspace' } });
+    assert.ok(resolved.ok, JSON.stringify(resolved.error));
+    const stored = tavern.store.character.get('Alice.png').data;
+    assert.equal(stored.description, 'L3');
+    assert.equal(stored.scenario, 'scenario B');
+    assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
+});
+
 test('resolve conflict: every slot needs a choice; manual value and tavern edits made meanwhile both survive', async () => {
     await writeFile(join(dir, 'characters/Alice/description.md'), 'L4');
     await tavern.edit('character', 'Alice.png', d => { d.data.description = 'T4'; });

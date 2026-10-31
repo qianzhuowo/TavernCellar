@@ -62,7 +62,8 @@ test('merge: a top-level V1 copy changes together with its data field and is not
 test('merge: the same change on both sides is no conflict', () => {
     const base = book();
     const both = edit(base, d => { d.entries[0].content = 'same'; });
-    assert.deepEqual(merge3('lorebook', base, both, structuredClone(both)), { data: both, conflicts: [] });
+    const { data, conflicts } = merge3('lorebook', base, both, structuredClone(both));
+    assert.deepEqual({ data, conflicts }, { data: both, conflicts: [] });
 });
 
 test('merge: delete vs edit conflicts; delete vs untouched deletes', () => {

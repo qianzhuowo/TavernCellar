@@ -344,10 +344,15 @@ export class SyncEngine {
             return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash };
         }
         const base = await this.ws.loadBase(item.path, targetId);
-        const baseUsable = local && base !== undefined && (await hashData(base)) === state.base;
-        const { data, conflicts } = baseUsable ? merge3(item.kind, base, local.data, remote.data) : { data: local?.data, conflicts: ['*'] };
+        // The snapshot is the agreed tavern version, or the advanced base saved by a merge that left conflicts.
+        const baseUsable = local && base !== undefined && (await hashData(base)) === (state.mergeBase ?? state.base);
+        const { data, conflicts, base: nextBase } = baseUsable ? merge3(item.kind, base, local.data, remote.data) : { data: local?.data, conflicts: ['*'] };
         if (baseUsable && (await hashData(data)) !== local.hash) await this.writeItem(item, data);
         if (conflicts.length) {
+            if (baseUsable) {
+                await this.ws.saveBase(item.path, targetId, nextBase);
+                this.ws.setSyncState(item.path, targetId, { mergeBase: await hashData(nextBase) });
+            }
             await this.#recordConflict(item, targetId, remote, conflicts);
             const labels = conflicts.map(slot => (slot === '*' ? '整项' : slotLabel(slot, slotsOf(item.kind, local?.data ?? {}).get(slot)))).join('、');
             throw new ProtocolError(ERR.CONFLICT, `${item.path} 与酒馆在这些地方都有修改：${labels}`, { slots: conflicts });
@@ -363,7 +368,7 @@ export class SyncEngine {
 
     /** Records that workspace and tavern agree on `data`: the base hash and the base snapshot used for merging. */
     async #agree(item, targetId, data, hash) {
-        this.ws.setSyncState(item.path, targetId, { base: hash, tavern: hash, conflict: undefined });
+        this.ws.setSyncState(item.path, targetId, { base: hash, tavern: hash, mergeBase: undefined, conflict: undefined });
         await this.ws.saveBase(item.path, targetId, data);
         await this.ws.clearConflict(item.path, targetId);
     }
