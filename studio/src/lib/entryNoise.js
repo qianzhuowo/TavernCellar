@@ -21,18 +21,21 @@ const ALSO_UNSET = {
 
 const same = (/** @type {any} */ a, /** @type {any} */ b) => JSON.stringify(a) === JSON.stringify(b);
 
+/** Editor-only flags that do not change what reaches the prompt (ST sets addMemo when it saves an entry). */
+const DISPLAY_ONLY = new Set(['addMemo']);
+
 /**
  * True when `key` differs only by normalisation: one side is absent/null and the other is the default (or another
- * "unset" value of that property).
+ * "unset" value of that property), both sides are "unset" values (0 vs false), or the property is display-only.
  * @param {string} key @param {any} a @param {any} b @param {Record<string, any>|null} template
  */
 export function isNoise(key, a, b, template) {
+  if (DISPLAY_ONLY.has(key)) return true;
   const unset = (/** @type {any} */ v) => v === undefined || v === null;
-  if (!unset(a) && !unset(b)) return false;
-  const other = unset(a) ? b : a;
-  if (unset(other)) return true;
   const defs = template && isPlain(template) && key in template ? [template[key]] : key in ENTRY_DEFAULTS ? [ENTRY_DEFAULTS[key]] : [];
-  return [...defs, ...(ALSO_UNSET[key] || [])].some((d) => same(d, other));
+  const unsetValues = [...defs, ...(ALSO_UNSET[key] || [])];
+  const meansUnset = (/** @type {any} */ v) => unset(v) || unsetValues.some((d) => same(d, v));
+  return meansUnset(a) && meansUnset(b);
 }
 
 /** Slots that are lorebook entries (standalone lorebook items). */
