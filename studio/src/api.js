@@ -93,7 +93,11 @@ export const api = {
    * @param {string} path @param {string} target
    * @param {Record<string, 'workspace'|'tavern'|{value:any}|{delete:true}>} choices one per conflicting slot
    */
-  resolveConflict: (path, target, choices) => call('POST', '/api/conflict/resolve', { path, target, choices })
+  resolveConflict: (path, target, choices) => call('POST', '/api/conflict/resolve', { path, target, choices }),
+  // Editors (S2/S3): structured item data guarded by the workspace hash.
+  item: (path) => call('POST', '/api/item', { path }),
+  putItem: (path, data, hash) => call('PUT', '/api/item', { path, data, hash }),
+  editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */

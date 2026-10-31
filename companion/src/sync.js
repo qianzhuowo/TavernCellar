@@ -671,7 +671,7 @@ export class SyncEngine {
                     ...(tavernError ? { tavernError } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(world ? { world } : {}) });
+            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(world ? { world } : {}) });
         }
         return {
             workspace: this.ws.root,
