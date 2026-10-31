@@ -59,7 +59,7 @@ class FakeTavern {
             if (payload.baseHash !== currentHash) throw new ProtocolError(ERR.CONFLICT, 'changed', { currentHash });
             this.puts++;
             items.set(payload.id, payload.data);
-            return { data: payload.data, hash: await hashData(payload.data) };
+            return { data: payload.data, hash: await hashData(payload.data), ...(this.putWarnings ? { warnings: this.putWarnings.splice(0) } : {}) };
         }
         throw new ProtocolError(ERR.BAD_REQUEST, type);
     }
@@ -402,4 +402,29 @@ test('item API: read, write guarded by hash, entry ops with groups land in group
     assert.equal(final.data.entries['0'].extensions, undefined);
     const bad = await api('POST', '/api/item/entries', { path: 'lorebooks/Book', hash: final.hash, ops: [{ op: 'set', uid: 999, patch: {} }] });
     assert.equal(bad.error.code, 'not_found');
+});
+
+test('sync warnings are kept until the next agreement; unbind forgets the binding and leaves files and tavern alone', async () => {
+    const bindingOf = async () => (await api('GET', '/api/status')).result.items.find(i => i.path === 'characters/Alice').bindings[0];
+    tavern.putWarnings = ['Tavern kept deleted fields: data.extensions.x'];
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'warned edit');
+    const r = await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal(r.result.result, 'synced', JSON.stringify(r));
+    assert.deepEqual(r.result.warnings, ['Tavern kept deleted fields: data.extensions.x']);
+    assert.deepEqual((await bindingOf()).warnings, ['Tavern kept deleted fields: data.extensions.x']);
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'clean edit');
+    assert.equal((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.result, 'synced');
+    assert.equal((await bindingOf()).warnings, undefined);
+
+    const puts = tavern.puts;
+    const watched = tavern.watch.length;
+    const u = await api('POST', '/api/unbind', { path: 'characters/Alice' });
+    assert.equal(u.result.result, 'unbound', JSON.stringify(u));
+    const item = (await api('GET', '/api/status')).result.items.find(i => i.path === 'characters/Alice');
+    assert.deepEqual(item.bindings, []);
+    assert.equal(await readFile(join(dir, 'characters/Alice/description.md'), 'utf8'), 'clean edit');
+    assert.equal(tavern.puts, puts);
+    await until(() => tavern.watch.length === watched - 1);
+    const again = await api('POST', '/api/unbind', { path: 'characters/Alice' });
+    assert.equal(again.error.code, 'bad_request');
 });

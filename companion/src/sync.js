@@ -387,6 +387,8 @@ export class SyncEngine {
             if (warnings.length) warnings.push('Workspace updated to match the tavern');
         }
         await this.#agree(item, targetId, result.data ?? local.data, result.hash);
+        // Kept until the next agreement so the sync matrix can show them (e.g. fields the tavern kept).
+        if (warnings.length) this.ws.setSyncState(item.path, targetId, { warnings, warnedAt: new Date().toISOString() });
         await this.ws.saveState();
         this.log(`synced ${item.path} -> ${targetId}${warnings.length ? ` (${warnings.length} warning(s))` : ''}`);
         return { path: item.path, target: targetId, result: 'synced', hash: result.hash, warnings };
@@ -433,7 +435,7 @@ export class SyncEngine {
 
     /** Records that workspace and tavern agree on `data`: the base hash and the base snapshot used for merging. */
     async #agree(item, targetId, data, hash) {
-        this.ws.setSyncState(item.path, targetId, { base: hash, tavern: hash, mergeBase: undefined, conflict: undefined });
+        this.ws.setSyncState(item.path, targetId, { base: hash, tavern: hash, mergeBase: undefined, conflict: undefined, warnings: undefined, warnedAt: undefined });
         await this.ws.saveBase(item.path, targetId, data);
         await this.ws.clearConflict(item.path, targetId);
     }
@@ -466,6 +468,26 @@ export class SyncEngine {
         item.bindings[targetId].autoSync = Boolean(enabled);
         await this.ws.saveManifest();
         return { path, target: targetId, autoSync: item.bindings[targetId].autoSync };
+    }
+
+    /**
+     * Removes one binding of an item: the workspace files stay, the tavern is not touched, and the sync state,
+     * base snapshot and conflict for that tavern are forgotten. The item can be bound again by checking it out.
+     */
+    async unbind(path, { target: targetSpec }) {
+        const item = this.requireItem(path);
+        const bound = Object.keys(item.bindings ?? {});
+        const targetId = targetSpec ? bound.find(id => id === targetSpec || id.startsWith(targetSpec)) : (bound.length === 1 ? bound[0] : null);
+        if (!targetId) throw new ProtocolError(ERR.BAD_REQUEST, `Specify which binding of ${path} to remove`);
+        return this.withLock(path, async () => {
+            delete item.bindings[targetId];
+            await this.ws.forgetSync(item.path, targetId);
+            await this.ws.saveManifest();
+            await this.ws.saveState();
+            await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
+            this.log(`unbound ${item.path} from ${targetId}`);
+            return { path: item.path, target: targetId, result: 'unbound' };
+        });
     }
 
     // ---- events ----------------------------------------------------------
@@ -669,6 +691,7 @@ export class SyncEngine {
                     // Local edits held back until the tavern starts (mode 'wait').
                     ...(offlineSync === 'wait' && (status === 'local-changes' || status === 'both-changed') ? { waiting: true } : {}),
                     ...(tavernError ? { tavernError } : {}),
+                    ...(state.warnings?.length ? { warnings: state.warnings, warnedAt: state.warnedAt } : {}),
                 };
             }));
             items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(world ? { world } : {}) });

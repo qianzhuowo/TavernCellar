@@ -87,6 +87,7 @@ export const api = {
   pull: (path, target) => call('POST', '/api/pull', { path, target }),
   /** @param {string} path @param {string} target @param {boolean} enabled */
   autoSync: (path, target, enabled) => call('POST', '/api/auto-sync', { path, target, enabled }),
+  unbind: (path, target) => call('POST', '/api/unbind', { path, target }),
   /** Conflicting slots of one binding. @param {string} path @param {string} [target] */
   conflict: (path, target) => call('POST', '/api/conflict', { path, target }),
   /**

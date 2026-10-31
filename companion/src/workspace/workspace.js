@@ -212,6 +212,16 @@ export class Workspace {
         }
     }
 
+    /** Forgets everything recorded for one binding: sync state, base snapshot, conflict. */
+    async forgetSync(path, targetId) {
+        if (this.state.items[path]) {
+            delete this.state.items[path][targetId];
+            if (!Object.keys(this.state.items[path]).length) delete this.state.items[path];
+        }
+        await rm(this.internal('base', ...path.split('/'), `${targetId}.json`), { force: true });
+        await this.clearConflict(path, targetId);
+    }
+
     async saveTemplate(name, value) {
         const file = this.internal('templates', `${name}.json`);
         await mkdir(dirname(file), { recursive: true });
