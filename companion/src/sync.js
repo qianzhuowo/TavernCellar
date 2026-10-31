@@ -13,7 +13,7 @@ import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
-import { assemble, merge3, slotLabel, slotsOf } from './codec/slots.js';
+import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
 
 /** Re-merge attempts when the tavern changes again between our merge and the write (rule 6). */
 const MAX_MERGE_ATTEMPTS = 2;
@@ -487,7 +487,10 @@ export class SyncEngine {
         const l = slotsOf(item.kind, local ?? {}), t = slotsOf(item.kind, saved?.data ?? {}), b = base ? slotsOf(item.kind, base) : new Map();
         const side = (m, slot) => ({ value: m.has(slot) ? m.get(slot) : null, present: m.has(slot) });
         const slots = (conflict.slots ?? ['*']).map(slot => slot === '*'
-            ? { slot, label: '整项', workspace: { value: local, present: local != null }, tavern: { value: saved?.data ?? null, present: Boolean(saved) }, base: { value: base ?? null, present: base !== undefined } }
+            ? { slot, label: '整项', workspace: { value: null, present: local != null }, tavern: { value: null, present: Boolean(saved) }, base: { value: null, present: false },
+                // No base to merge against: show what differs between the two sides, slot by slot, to choose from.
+                differences: [...new Set([...l.keys(), ...t.keys()])].filter(s => !same(l.get(s), t.get(s)) && !s.endsWith('.$'))
+                    .map(s => ({ slot: s, label: slotLabel(s, l.get(s) ?? t.get(s)), workspace: side(l, s), tavern: side(t, s), base: { value: null, present: false } })) }
             : { slot, label: slotLabel(slot, l.get(slot) ?? t.get(slot)), workspace: side(l, slot), tavern: side(t, slot), base: base ? side(b, slot) : { value: null, present: false, unknown: true } });
         return { path, kind: item.kind, target: targetId, at: conflict.at, slots };
     }

@@ -1,7 +1,7 @@
 <script setup>
 import Icon from './Icon.vue';
 import { useApp } from '../stores/app.js';
-import { useUi, hrefOf } from '../stores/ui.js';
+import { useUi, hrefOf, pathOfKey } from '../stores/ui.js';
 import { itemName } from '../lib/status.js';
 
 defineProps({ hasInspector: { type: Boolean, default: false } });
@@ -16,6 +16,7 @@ function info(/** @type {string} */ key) {
     const it = app.item(key.slice(5));
     return { label: itemName(key.slice(5)), icon: it && it.kind === 'lorebook' ? 'book' : 'user', bar: it ? BAR[app.worst(it)] : '' };
   }
+  if (key.startsWith('conflict:')) return { label: '冲突 · ' + itemName(key.slice(9)), icon: 'alert', bar: BAR.conflict };
   const f = FIXED[key] || [key, 'circle'];
   return { label: f[0], icon: f[1], bar: '' };
 }
@@ -30,7 +31,7 @@ function info(/** @type {string} */ key) {
       role="tab"
       :class="{ on: ui.route.key === k }"
       :href="hrefOf(k)"
-      :title="k.startsWith('item:') ? k.slice(5) : ''"
+      :title="pathOfKey(k)"
       @auxclick.prevent="ui.closeTab(k)"
     >
       <span v-if="info(k).bar" class="bar" :style="{ background: info(k).bar }" />

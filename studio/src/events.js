@@ -32,9 +32,20 @@ export function connectEvents(h) {
       if (es && es.readyState === EventSource.CLOSED) {
         es = null;
         clearTimeout(retryTimer);
-        retryTimer = window.setTimeout(open, 2000);
+        retryTimer = window.setTimeout(retry, 2000);
       }
     };
+  }
+
+  // The session cookie is per companion run: after a restart this page gets 401 forever. Reloading /studio/ picks up
+  // the new cookie; while the companion is still down keep retrying here (a reload would show a browser error page).
+  async function retry() {
+    if (closed) return;
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      if (res.status === 401) { location.reload(); return; }
+    } catch (e) { /* companion down */ }
+    open();
   }
   open();
   return () => { closed = true; clearTimeout(retryTimer); if (es) es.close(); };

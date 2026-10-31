@@ -33,7 +33,7 @@ function canAct(/** @type {any} */ b) {
 
 async function run(/** @type {any} */ b, /** @type {'sync'|'pull'} */ op) {
   const s = uiStatus(b.status);
-  if (isConflict(s)) { ui.toast('冲突处理将在后续开放', 'alert'); return; }
+  if (isConflict(s)) { ui.openConflict(props.path); return; }
   busy[b.target] = op;
   try {
     await (op === 'sync' ? api.sync(props.path, b.target) : api.pull(props.path, b.target));
@@ -86,7 +86,10 @@ async function copyPath() {
           <div v-if="app.modeOf(b) === 'stale'" class="sync-note warn"><Icon name="alert" size="sm" />{{ STALE_HINT }}</div>
           <div v-if="b.waiting" class="sync-note"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</div>
           <div v-if="b.tavernError" class="sync-note err"><Icon name="alert" size="sm" />{{ b.tavernError }}</div>
-          <div v-if="isConflict(uiStatus(b.status))" class="sync-note err"><Icon name="alert" size="sm" />冲突处理将在后续开放</div>
+          <div v-if="isConflict(uiStatus(b.status))" class="sync-note err">
+            <Icon name="alert" size="sm" /><span class="grow">两边都改了同一处</span>
+            <a v-if="ui.route.name !== 'conflict'" href="#" @click.prevent="ui.openConflict(props.path)">处理冲突</a>
+          </div>
           <div class="sync-ops">
             <Toggle
               sync

@@ -86,7 +86,14 @@ export const api = {
   /** @param {string} path @param {string} [target] */
   pull: (path, target) => call('POST', '/api/pull', { path, target }),
   /** @param {string} path @param {string} target @param {boolean} enabled */
-  autoSync: (path, target, enabled) => call('POST', '/api/auto-sync', { path, target, enabled })
+  autoSync: (path, target, enabled) => call('POST', '/api/auto-sync', { path, target, enabled }),
+  /** Conflicting slots of one binding. @param {string} path @param {string} [target] */
+  conflict: (path, target) => call('POST', '/api/conflict', { path, target }),
+  /**
+   * @param {string} path @param {string} target
+   * @param {Record<string, 'workspace'|'tavern'|{value:any}|{delete:true}>} choices one per conflicting slot
+   */
+  resolveConflict: (path, target, choices) => call('POST', '/api/conflict/resolve', { path, target, choices })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */
@@ -96,7 +103,7 @@ export const UNRESPONSIVE_TEXT = '酒馆页面没有响应：可能被浏览器�
 export function errorText(e) {
   if (!(e instanceof ApiError)) return String((e && e.message) || e);
   switch (e.code) {
-    case 'conflict': return '存在冲突，冲突处理将在后续开放';
+    case 'conflict': return (e.message && /[\u4e00-\u9fff]/.test(e.message) ? e.message.replace(/^.*?与酒馆/, '与酒馆') : '存在冲突') + '。请在「处理冲突」中逐项选择';
     case 'waiting_for_tavern': return '酒馆未运行：修改已留在工作区，酒馆启动后再同步';
     case 'tavern_running': return '酒馆正在运行：请在酒馆中启用 Cellar Link 后同步';
     case 'not_connected': return '酒馆未连接';

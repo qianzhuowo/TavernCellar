@@ -182,3 +182,19 @@
 .copy-line .mono { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .wz-foot { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-4) var(--sp-6); border-top: 1px solid var(--line); }
 .wz-note { margin-top: var(--sp-4); font-size: var(--fs-sm); }
+
+/* S4 conflict view additions */
+.cf-targets { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); font-size: var(--fs-sm); }
+.cf-note { display: flex; align-items: center; gap: 6px; padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); border-bottom: 1px solid var(--line); }
+.cf-kv + .cf-kv { margin-top: var(--sp-3); }
+.cf-key { display: block; font-size: 11.5px; color: var(--text-3); margin-bottom: 2px; }
+.cf-json { margin: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; max-height: 360px; overflow: auto; }
+.cf-merge .textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.sync-note .grow { flex: 1; }
+.sync-note a { color: inherit; font-weight: 600; text-decoration: underline; }
+.cf .cf-summary { flex-wrap: wrap; row-gap: var(--sp-3); }
+.cf .cf-prog { min-width: 120px; }
+.cf .cf-counts { flex-wrap: wrap; gap: var(--sp-3); }
+.cf-diff { border-top: 1px solid var(--line); }
+.cf-diff-h { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4) 0; font-size: var(--fs-sm); }
+.cf-diff-h .mono { font-size: 11.5px; }

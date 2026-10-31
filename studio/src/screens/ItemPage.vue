@@ -31,8 +31,8 @@ const avatarStyle = computed(() => {
   <div v-else class="page item-page">
     <div v-for="b in conflicts" :key="b.target" class="banner conflict">
       <Icon name="alert" />
-      <div class="grow">与「{{ app.targetName(b.target) }}」存在冲突 · 工作区与酒馆都修改了，暂不会同步。<span class="faint">冲突处理将在后续开放</span></div>
-      <button class="btn sm" disabled title="冲突处理将在后续开放">处理冲突</button>
+      <div class="grow">与「{{ app.targetName(b.target) }}」存在冲突 · 工作区与酒馆都修改了同一处，暂不会同步。</div>
+      <button class="btn sm" @click="ui.openConflict(item.path)">处理冲突</button>
     </div>
     <div v-if="item.error" class="banner conflict"><Icon name="alert" /><div class="grow">读取失败：{{ item.error }}</div></div>
 

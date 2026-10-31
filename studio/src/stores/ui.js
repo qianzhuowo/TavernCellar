@@ -7,21 +7,26 @@ const ls = {
 };
 
 /**
- * Routes (hash): #/library  #/item/<encoded path>  #/sync  #/history  #/settings[/<section>]  #/wizard
- * Tab keys: 'library' | 'sync' | 'history' | 'settings' | 'item:<path>'
+ * Routes (hash): #/library  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/settings[/<section>]  #/wizard
+ * Tab keys: 'library' | 'sync' | 'history' | 'settings' | 'item:<path>' | 'conflict:<path>'
  */
 export function parseHash(/** @type {string} */ hash) {
   const h = hash.replace(/^#\/?/, '');
   const [name, ...rest] = h.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
-  if (name === 'item' && arg) return { name: 'item', arg, key: 'item:' + arg };
+  if ((name === 'item' || name === 'conflict') && arg) return { name, arg, key: name + ':' + arg };
   if (['library', 'sync', 'history', 'wizard'].includes(name)) return { name, arg: '', key: name };
   if (name === 'settings') return { name, arg, key: 'settings' };
   return { name: 'library', arg: '', key: 'library' };
 }
 
-export const hrefOf = (/** @type {string} */ key) =>
-  key.startsWith('item:') ? '#/item/' + encodeURIComponent(key.slice(5)) : '#/' + key;
+/** Workspace item path of an item or conflict tab key, or '' for fixed tabs. */
+export const pathOfKey = (/** @type {string} */ key) => (/^(item|conflict):/.test(key) ? key.slice(key.indexOf(':') + 1) : '');
+
+export const hrefOf = (/** @type {string} */ key) => {
+  const m = /^(item|conflict):(.*)$/s.exec(key);
+  return m ? `#/${m[1]}/` + encodeURIComponent(m[2]) : '#/' + key;
+};
 
 let toastSeq = 0;
 
@@ -54,6 +59,8 @@ export const useUi = defineStore('ui', {
     go(hash) { if (location.hash === hash) this.syncRoute(); else location.hash = hash; },
     /** @param {string} path */
     openItem(path) { this.go(hrefOf('item:' + path)); },
+    /** @param {string} path */
+    openConflict(path) { this.go(hrefOf('conflict:' + path)); },
     /** @param {string} key */
     closeTab(key) {
       const i = this.tabs.indexOf(key);
@@ -64,7 +71,7 @@ export const useUi = defineStore('ui', {
     },
     /** Drop tabs of items that no longer exist in the workspace. @param {string[]} paths */
     pruneTabs(paths) {
-      const keep = this.tabs.filter((k) => !k.startsWith('item:') || paths.includes(k.slice(5)));
+      const keep = this.tabs.filter((k) => !pathOfKey(k) || paths.includes(pathOfKey(k)));
       if (keep.length !== this.tabs.length) { this.tabs = keep; ls.set('cs.tabs', keep); }
       if (this.lastItem && !paths.includes(this.lastItem)) this.lastItem = '';
     },

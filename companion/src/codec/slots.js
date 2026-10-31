@@ -134,6 +134,9 @@ export function assemble(kind, slots) {
 
 const same = (a, b) => stableStringify(a ?? null) === stableStringify(b ?? null) && (a === undefined) === (b === undefined);
 
+/** Equality of two slot values (absent differs from null). */
+export const sameSlot = same;
+
 /** True when `side` moved items that it shares with `base` relative to each other (not just added/removed some). */
 function reordered(side, base) {
     const common = side.filter(k => base.includes(k));
