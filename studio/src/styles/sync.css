@@ -84,3 +84,13 @@
   .sx-split { width: 100%; display: flex; }
   .sx-split .btn.primary { flex: 1; }
 }
+
+/* ---------- bind picker (unbound cell) ---------- */
+.sx-bind { margin-left: auto; }
+.sx-pick { display: flex; flex-direction: column; gap: 4px; margin-top: var(--sp-2); }
+.sx-pick-bar { display: flex; gap: 4px; align-items: center; }
+.sx-pick-bar .input { flex: 1; min-width: 0; }
+.sx-pick-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); width: 100%; min-width: 0; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+.sx-pick-row:hover:not(:disabled) { background: var(--row-hover); }
+.sx-pick-row:disabled { color: var(--text-3); cursor: default; }
+.sx-pick-empty { font-size: var(--fs-sm); padding: 4px 8px; }

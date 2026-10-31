@@ -70,3 +70,26 @@ export async function unbindBinding(app, ui, path, b) {
 
 /** Whether sync / pull can reach the tavern right now (Cellar Link connected or offline data folder). */
 export const canReach = (/** @type {string} */ mode) => mode === 'online' || mode === 'offline';
+
+/**
+ * Binds an existing workspace item to a tavern item (the way back from unbind). Identical data comes back in sync;
+ * different data is a whole-item conflict, which opens the conflict page.
+ * @param {any} app @param {any} ui @param {string} path @param {string} target @param {string} id
+ * @returns {Promise<'in-sync'|'conflict'|'error'>}
+ */
+export async function bindItem(app, ui, path, target, id) {
+  try {
+    const r = /** @type {any} */ (await api.bind(path, target, id));
+    await app.refreshStatus();
+    if (r.result === 'conflict') {
+      ui.toast('已绑定到 ' + app.targetName(target) + '：两边内容不同，请选择保留哪一边', 'alert');
+      ui.openConflict(path);
+      return 'conflict';
+    }
+    ui.toast('已绑定到 ' + app.targetName(target) + '：两边一致');
+    return 'in-sync';
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    return 'error';
+  }
+}

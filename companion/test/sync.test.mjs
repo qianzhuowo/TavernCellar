@@ -428,3 +428,26 @@ test('sync warnings are kept until the next agreement; unbind forgets the bindin
     const again = await api('POST', '/api/unbind', { path: 'characters/Alice' });
     assert.equal(again.error.code, 'bad_request');
 });
+
+test('bind is the way back from unbind: identical data is in sync, different data is a whole-item conflict', async () => {
+    const bindingOf = async () => (await api('GET', '/api/status')).result.items.find(i => i.path === 'characters/Alice').bindings[0];
+    // after the previous test Alice is unbound; workspace and tavern hold the same data
+    const puts = tavern.puts;
+    const watched = tavern.watch.length;
+    const b = await api('POST', '/api/bind', { path: 'characters/Alice', id: 'Alice.png' });
+    assert.equal(b.result.result, 'in-sync', JSON.stringify(b));
+    assert.equal((await bindingOf()).status, 'in-sync');
+    assert.equal(tavern.puts, puts);
+    await until(() => tavern.watch.length === watched + 1);
+    assert.equal((await api('POST', '/api/bind', { path: 'characters/Alice', id: 'Alice.png' })).error.code, 'bad_request');
+
+    await api('POST', '/api/unbind', { path: 'characters/Alice' });
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'workspace while unbound');
+    const c = await api('POST', '/api/bind', { path: 'characters/Alice', id: 'Alice.png' });
+    assert.equal(c.result.result, 'conflict', JSON.stringify(c));
+    assert.equal((await bindingOf()).status, 'conflict');
+    const details = await api('POST', '/api/conflict', { path: 'characters/Alice' });
+    assert.deepEqual(details.result.slots.map(s => s.slot), ['*']);
+    assert.equal(tavern.puts, puts);
+    assert.equal(await readFile(join(dir, 'characters/Alice/description.md'), 'utf8'), 'workspace while unbound');
+});

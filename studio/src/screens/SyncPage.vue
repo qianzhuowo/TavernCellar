@@ -11,7 +11,8 @@ import {
   uiStatus, isConflict, itemName, hueOf, initialOf, relTime,
   HOST, STATUS, MODE_DOT, MODE_LABEL, MODE_TIP, OFF_MODE, STALE_HINT
 } from '../lib/status.js';
-import { runBindingOp, setAutoSync, unbindBinding, canReach } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem } from '../lib/syncOps.js';
+import { api, errorText } from '../api.js';
 
 const app = useApp();
 const ui = useUi();
@@ -66,6 +67,37 @@ async function unbind(/** @type {string} */ path, /** @type {any} */ b) {
   armed.value = '';
   busy[k] = 'unbind';
   try { await unbindBinding(app, ui, path, b); } finally { delete busy[k]; }
+}
+
+// ---- bind an unbound cell to a tavern item (the way back from unbind) -------
+/** cell (path|target) whose picker is open */
+const picking = ref('');
+const pickQuery = ref('');
+/** @type {import('vue').Ref<any[]>} */
+const pickResults = ref([]);
+const pickError = ref('');
+const pickBusy = ref(false);
+let pickSeq = 0;
+function openPick(/** @type {any} */ it, /** @type {any} */ c) {
+  picking.value = it.path + '|' + c.id;
+  pickQuery.value = itemName(it.path);
+  searchPick(it, c);
+}
+async function searchPick(/** @type {any} */ it, /** @type {any} */ c) {
+  const my = ++pickSeq;
+  pickError.value = '';
+  try {
+    const r = /** @type {any} */ (await api.catalog({ target: c.id, kind: it.kind, query: pickQuery.value.trim() || undefined, limit: 20 }));
+    if (my === pickSeq) pickResults.value = r.items || [];
+  } catch (e) {
+    if (my === pickSeq) { pickResults.value = []; pickError.value = errorText(e); }
+  }
+}
+async function bindTo(/** @type {any} */ it, /** @type {any} */ c, /** @type {string} */ id) {
+  pickBusy.value = true;
+  try {
+    if ((await bindItem(app, ui, it.path, c.id, id)) !== 'error') picking.value = '';
+  } finally { pickBusy.value = false; }
 }
 
 /** Cell presentation for an existing binding. */
@@ -231,7 +263,21 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                 <td v-for="c in columns" :key="c.id" class="cell" :class="(() => { const b = bindingOf(r.it, c.id); if (!b) return 'unbound'; const v = cellView(b); return { conflict: v.conflict && v.reach, 'is-off': !v.reach }; })()">
                   <template v-if="!bindingOf(r.it, c.id)">
                     <div class="cell-main">
-                      <StatusBadge status="unbound" title="从这个酒馆的资料库取出后才会绑定" />
+                      <StatusBadge status="unbound" title="取出或绑定到这个酒馆中的对应项后才会同步" />
+                      <button v-if="canReach(c.mode) && picking !== r.it.path + '|' + c.id" class="btn sm ghost sx-bind" title="把这个资料项绑定到酒馆中已有的一项；两边一致即为已同步，不同则先选择保留哪一边" @click="openPick(r.it, c)"><Icon name="link" size="sm" />绑定…</button>
+                    </div>
+                    <div v-if="picking === r.it.path + '|' + c.id" class="sx-pick">
+                      <div class="sx-pick-bar">
+                        <input v-model="pickQuery" class="input sm" placeholder="搜索酒馆中的名称" @keydown.enter="searchPick(r.it, c)" @keydown.esc="picking = ''" />
+                        <button class="btn sm ghost" @click="searchPick(r.it, c)"><Icon name="search" size="sm" /></button>
+                        <button class="btn sm ghost" title="取消" @click="picking = ''"><Icon name="x" size="sm" /></button>
+                      </div>
+                      <div v-if="pickError" class="sx-err"><Icon name="alert" size="sm" /><span>{{ pickError }}</span></div>
+                      <div v-else-if="!pickResults.length" class="faint sx-pick-empty">没有找到</div>
+                      <button v-for="e in pickResults" :key="e.id" class="sx-pick-row" :disabled="pickBusy || !!e.checkedOut" :title="e.checkedOut ? '已绑定在 ' + e.checkedOut : e.id" @click="bindTo(r.it, c, e.id)">
+                        <span class="sx-ellip">{{ e.name || e.id }}</span>
+                        <span v-if="e.checkedOut" class="faint sx-ellip">已绑定</span>
+                      </button>
                     </div>
                   </template>
 

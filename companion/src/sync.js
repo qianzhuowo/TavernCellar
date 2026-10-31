@@ -472,7 +472,7 @@ export class SyncEngine {
 
     /**
      * Removes one binding of an item: the workspace files stay, the tavern is not touched, and the sync state,
-     * base snapshot and conflict for that tavern are forgotten. The item can be bound again by checking it out.
+     * base snapshot and conflict for that tavern are forgotten. `bind` binds the item again.
      */
     async unbind(path, { target: targetSpec }) {
         const item = this.requireItem(path);
@@ -487,6 +487,36 @@ export class SyncEngine {
             await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
             this.log(`unbound ${item.path} from ${targetId}`);
             return { path: item.path, target: targetId, result: 'unbound' };
+        });
+    }
+
+    /**
+     * Binds an existing workspace item to an item in a tavern (the way back from `unbind`, or adopting a tavern item
+     * for a folder made elsewhere). Nothing is written on either side: identical data is recorded as in sync;
+     * otherwise there is no common base, so a whole-item conflict is recorded and the user picks a side.
+     */
+    async bind(path, { target: targetSpec, id }) {
+        const item = this.requireItem(path);
+        if (typeof id !== 'string' || !id) throw new ProtocolError(ERR.BAD_REQUEST, 'id is required (avatar file name or lorebook name)');
+        const { target, link } = this.targets.resolve(targetSpec);
+        if (item.bindings?.[target.id]) throw new ProtocolError(ERR.BAD_REQUEST, path + ' is already bound to this tavern');
+        const other = this.ws.findBinding(target.id, item.kind, id);
+        if (other) throw new ProtocolError(ERR.BAD_REQUEST, item.kind + ' "' + id + '" is already bound at ' + other.item.path);
+        return this.withLock(path, async () => {
+            const remote = await link.request(MSG.ITEM_GET, { kind: item.kind, id });
+            item.bindings = { ...(item.bindings ?? {}), [target.id]: { id, autoSync: false } };
+            await this.ws.saveManifest();
+            await this.pushWatchList(target.id).catch(error => this.log('watch list for ' + target.id + ' not updated: ' + error.message));
+            const local = await this.encodeItem(item).catch(() => null);
+            if (local && local.hash === remote.hash) {
+                await this.#agree(item, target.id, remote.data, remote.hash);
+                await this.ws.saveState();
+                this.log('bound ' + item.path + ' to ' + target.id + ' (' + id + '), in sync');
+                return { path: item.path, target: target.id, result: 'in-sync', hash: remote.hash };
+            }
+            await this.#recordConflict(item, target.id, remote);
+            this.log('bound ' + item.path + ' to ' + target.id + ' (' + id + '), differs: whole-item conflict');
+            return { path: item.path, target: target.id, result: 'conflict' };
         });
     }
 
