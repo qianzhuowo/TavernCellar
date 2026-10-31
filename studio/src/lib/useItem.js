@@ -5,8 +5,10 @@ import { ref, shallowRef, watch, onBeforeUnmount } from 'vue';
 import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
+import { entryOpsBetween, clone } from './entryOps.js';
 
 const SAVE_DELAY = 600;
+
 
 /**
  * @param {import('vue').Ref<string>} pathRef
@@ -28,6 +30,8 @@ export function useItem(pathRef) {
   /** Bumped on every (re)load so views can reset local UI state derived from data. */
   const version = ref(0);
   let timer = 0;
+  /** Plain copy of the data as last loaded or written (lorebooks: base for entry-by-entry writes). */
+  let written = null;
 
   async function load() {
     clearTimeout(timer);
@@ -37,6 +41,7 @@ export function useItem(pathRef) {
       const r = await api.item(pathRef.value);
       data.value = r.data;
       hash.value = r.hash;
+      written = clone(r.data);
       entryTemplate.value = r.entryTemplate ?? null;
       dirty.value = false;
       externalChange.value = false;
@@ -60,9 +65,28 @@ export function useItem(pathRef) {
     if (!dirty.value || saving.value || !data.value) return;
     saving.value = true;
     dirty.value = false;
+    // What is sent now; edits made while the request runs stay dirty and go in the next round.
+    const sent = clone(data.value);
     try {
-      const r = await api.putItem(pathRef.value, data.value, hash.value);
-      hash.value = r.hash;
+      const diff = written ? entryOpsBetween(written, sent) : null;
+      if (diff && !diff.ops.length) { written = sent; return; }
+      if (diff) {
+        const r = await api.editEntries(pathRef.value, hash.value, diff.ops);
+        hash.value = r.hash;
+        written = sent;
+        // The companion numbers new entries itself (same rule as the editor); reload in the rare case they differ.
+        if (JSON.stringify(r.created ?? []) !== JSON.stringify(diff.creates)) {
+          const fresh = await api.item(pathRef.value);
+          data.value = fresh.data;
+          hash.value = fresh.hash;
+          written = clone(fresh.data);
+          version.value++;
+        }
+      } else {
+        const r = await api.putItem(pathRef.value, sent, hash.value);
+        hash.value = r.hash;
+        written = sent;
+      }
     } catch (e) {
       dirty.value = true;
       if (/** @type {any} */ (e).code === 'conflict') externalChange.value = true;
@@ -88,6 +112,7 @@ export function useItem(pathRef) {
       const fresh = await api.item(pathRef.value);
       data.value = fresh.data;
       hash.value = fresh.hash;
+      written = clone(fresh.data);
       return { created: r.created };
     } catch (e) {
       if (/** @type {any} */ (e).code === 'conflict') externalChange.value = true;
