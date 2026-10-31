@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { api, errorText, isAborted } from '../api.js';
 import { useApp } from './app.js';
 import { useUi } from './ui.js';
+import { warningText } from '../lib/warnings.js';
 
 const PAGE = 120;
 /** In-flight catalog request; aborted whenever the query changes or the library is left. */
@@ -118,7 +119,10 @@ export const useLibrary = defineStore('library', {
         entry.checkedOut = r.path;
         await app.refreshStatus();
         ui.toast('已取出到工作区：' + r.path);
-        if (r.warnings && r.warnings.length) setTimeout(() => ui.toast(r.warnings.join('；'), 'alert'), 1200);
+        if (r.warnings && r.warnings.length) {
+          const lang = app.settings?.ui?.messageLang;
+          setTimeout(() => ui.toast(r.warnings.map((/** @type {any} */ w) => warningText(w, lang)).join('；'), 'alert'), 1200);
+        }
         return r.path;
       } catch (e) {
         ui.toast('取出失败：' + errorText(e), 'alert');

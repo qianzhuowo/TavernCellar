@@ -210,8 +210,8 @@ export class OfflineLink {
 
         const stored = (await this.readItem(kind, id)).data;
         const hash = await hashData(stored);
-        const warnings = [`Written offline to ${file} (backup: ${backup})`];
-        if (hash !== await hashData(sent)) warnings.push(`Tavern normalized the saved data: ${diffPaths(sent, stored).join(', ')}`);
+        const warnings = [{ code: 'offline-written', file, backup }];
+        if (hash !== await hashData(sent)) warnings.push({ code: 'normalized', paths: diffPaths(sent, stored) });
         return { kind, id, hash, data: stored, warnings };
     }
 }

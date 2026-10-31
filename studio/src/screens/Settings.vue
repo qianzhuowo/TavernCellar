@@ -100,6 +100,12 @@ function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/w
           <Seg :model-value="app.settings.ui.density" :options="[{ value: 'comfortable', label: '舒适' }, { value: 'compact', label: '紧凑' }]" @update:model-value="(v) => app.saveUi({ density: v })" />
         </div>
       </div>
+      <div class="set-row">
+        <div class="set-label"><div>提示语言</div><div class="faint">同步、取出时伴侣程序与酒馆给出的提示</div></div>
+        <div class="set-ctl">
+          <Seg :model-value="app.settings.ui.messageLang" :options="[{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }]" @update:model-value="(v) => app.saveUi({ messageLang: v })" />
+        </div>
+      </div>
     </section>
 
     <section id="set-app" class="set-sec card">

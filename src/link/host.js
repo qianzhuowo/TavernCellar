@@ -9,6 +9,17 @@ import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../..
 const ctx = () => SillyTavern.getContext();
 const watchKey = (kind, id) => `${kind}\u0000${id}`;
 
+/** Whether a dotted path from diffPaths exists in a value ('(root)' always does). */
+function hasPath(value, path) {
+    if (path === '(root)') return true;
+    let v = value;
+    for (const key of path.split('.')) {
+        if (v === null || typeof v !== 'object' || !Object.prototype.hasOwnProperty.call(v, key)) return false;
+        v = v[key];
+    }
+    return true;
+}
+
 async function postJson(url, body) {
     const response = await fetch(url, {
         method: 'POST',
@@ -196,10 +207,16 @@ export class Host {
             const hash = await hashData(stored);
             const sentHash = await hashData(sent);
             if (hash === currentHash && sentHash !== currentHash) {
-                throw new ProtocolError(ERR.HOST_ERROR, `${kind} ${id} was not saved (backend still returns the old data)`);
+                // The only changes were deleted fields and the tavern kept them: saved, worth a warning, not an error.
+                const paths = diffPaths(sent, current, 50);
+                if (!paths.length || !paths.every(p => !hasPath(sent, p))) {
+                    throw new ProtocolError(ERR.HOST_ERROR, `${kind} ${id} was not saved (backend still returns the old data)`);
+                }
+                return { data: stored, hash, warnings: [{ code: 'kept-deleted', paths }] };
             }
             const warnings = [];
-            if (hash !== sentHash) warnings.push(`Tavern normalized the saved data: ${diffPaths(sent, stored).join(', ')}`);
+            // Structured warnings ({ code, ...params }): Cellar Studio words them in the user's language.
+            if (hash !== sentHash) warnings.push({ code: 'normalized', paths: diffPaths(sent, stored) });
             if (kind === 'lorebook') {
                 if (hash !== sentHash) worldInfoCache.set(id, structuredClone(stored));
                 ctx().reloadWorldInfoEditor(id, false);

@@ -319,7 +319,7 @@ export class SyncEngine {
             const book = await this.checkoutOne(result.target, { kind: 'lorebook', id: name });
             return { ...result, world: { name, path: book.path, checkedOut: true }, warnings: [...result.warnings, ...book.warnings] };
         } catch (error) {
-            return { ...result, warnings: [...result.warnings, `绑定的世界书「${name}」未能取出：${error.message}`] };
+            return { ...result, warnings: [...result.warnings, { code: 'world-checkout-failed', name, detail: error.message }] };
         }
     }
 
@@ -343,7 +343,7 @@ export class SyncEngine {
             const warnings = [];
             if (written !== remote.hash) {
                 const paths = diffPaths(remote.data, (await this.encodeItem(item)).data);
-                warnings.push(`Workspace files do not round-trip to the tavern data exactly; differing fields: ${paths.join(', ') || '(key order only)'}`);
+                warnings.push({ code: 'round-trip', paths });
                 this.log(`round-trip differences in ${path}: ${paths.join(', ') || '(key order only)'}`);
             }
             this.log(`checked out ${kind} "${id}" -> ${path}`);
@@ -388,7 +388,7 @@ export class SyncEngine {
             // The stored data differs from what we sent (identity fields such as a character's avatar,
             // or host normalization the plugin reported above): adopt what the tavern actually stored.
             await this.writeItem(item, result.data);
-            if (warnings.length) warnings.push('Workspace updated to match the tavern');
+            if (warnings.length) warnings.push({ code: 'workspace-updated' });
         }
         await this.#agree(item, targetId, result.data ?? local.data, result.hash);
         // Kept until the next agreement so the sync matrix can show them (e.g. fields the tavern kept).

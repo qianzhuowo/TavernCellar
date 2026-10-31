@@ -406,19 +406,20 @@ test('item API: read, write guarded by hash, entry ops with groups land in group
 
 test('sync warnings are kept until the next agreement; unbind forgets the binding and leaves files and tavern alone', async () => {
     const bindingOf = async () => (await api('GET', '/api/status')).result.items.find(i => i.path === 'characters/Alice').bindings[0];
-    tavern.putWarnings = ['Tavern kept deleted fields: data.extensions.x'];
+    const kept = { code: 'normalized', paths: ['data.extensions.x'] };
+    tavern.putWarnings = [kept];
     await writeFile(join(dir, 'characters/Alice/description.md'), 'warned edit');
     const r = await api('POST', '/api/sync', { path: 'characters/Alice' });
     assert.equal(r.result.result, 'synced', JSON.stringify(r));
-    assert.deepEqual(r.result.warnings, ['Tavern kept deleted fields: data.extensions.x']);
-    assert.deepEqual((await bindingOf()).warnings, ['Tavern kept deleted fields: data.extensions.x']);
+    assert.deepEqual(r.result.warnings, [kept]);
+    assert.deepEqual((await bindingOf()).warnings, [kept]);
     tavern.putWarnings = [];
     // a sync with nothing to send is an agreement too: the warnings go
     assert.equal((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.result, 'up-to-date');
     assert.equal((await bindingOf()).warnings, undefined);
-    tavern.putWarnings = ['Tavern kept deleted fields: data.extensions.x'];
+    tavern.putWarnings = [kept];
     await writeFile(join(dir, 'characters/Alice/description.md'), 'warned again');
-    assert.deepEqual((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.warnings, ['Tavern kept deleted fields: data.extensions.x']);
+    assert.deepEqual((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.warnings, [kept]);
     await writeFile(join(dir, 'characters/Alice/description.md'), 'clean edit');
     assert.equal((await api('POST', '/api/sync', { path: 'characters/Alice' })).result.result, 'synced');
     assert.equal((await bindingOf()).warnings, undefined);

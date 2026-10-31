@@ -79,9 +79,9 @@ test('studio session: page sets an HttpOnly cookie; API and events accept it onl
 
         // settings: defaults, validation, partial update
         const s = JSON.parse((await get(p, '/api/settings', 'GET', { Cookie: cookie })).body).result;
-        assert.deepEqual(s.ui, { theme: 'dark', density: 'comfortable', wizardDone: false });
+        assert.deepEqual(s.ui, { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh' });
         const put = await get(p, '/api/settings', 'PUT', { Cookie: cookie, Origin: same }, { ui: { theme: 'light', wizardDone: true } });
-        assert.deepEqual(JSON.parse(put.body).result.ui, { theme: 'light', density: 'comfortable', wizardDone: true });
+        assert.deepEqual(JSON.parse(put.body).result.ui, { theme: 'light', density: 'comfortable', wizardDone: true, messageLang: 'zh' });
         assert.equal((await get(p, '/api/settings', 'PUT', { Cookie: cookie }, { ui: { theme: 'pink' } })).status, 400);
 
         // workspace switch

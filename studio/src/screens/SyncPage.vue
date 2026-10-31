@@ -13,8 +13,10 @@ import {
 } from '../lib/status.js';
 import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem } from '../lib/syncOps.js';
 import { api, errorText } from '../api.js';
+import { warningText } from '../lib/warnings.js';
 
 const app = useApp();
+const warnText = (/** @type {any} */ w) => warningText(w, app.settings?.ui?.messageLang);
 const ui = useUi();
 
 const onlyIssues = ref(localStorage.getItem('cs.sync.onlyIssues') === '1');
@@ -346,13 +348,13 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                     <summary>
                       <Icon name="alert" size="sm" />
                       <span class="sx-warn-head">
-                        <b>{{ b.warnings[0] }}</b><template v-if="b.warnings.length > 1"> 等 {{ b.warnings.length }} 条提示</template>
+                        <b>{{ warnText(b.warnings[0]) }}</b><template v-if="b.warnings.length > 1"> 等 {{ b.warnings.length }} 条提示</template>
                         <span class="faint">（{{ app.targetName(b.target) }} · 上次同步{{ warnTime(b) ? ' · ' + warnTime(b) : '' }}）</span>
                       </span>
                       <span class="faint sx-warn-toggle">展开查看<Icon name="chevDown" size="sm" /></span>
                     </summary>
                     <ul class="sx-warn-list">
-                      <li v-for="(w, i) in b.warnings" :key="i" class="mono">{{ w }}</li>
+                      <li v-for="(w, i) in b.warnings" :key="i" class="mono">{{ warnText(w) }}</li>
                     </ul>
                     <div class="faint sx-warn-foot">下次与该酒馆同步一致后，这条提示会自动消失。</div>
                   </details>

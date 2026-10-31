@@ -101,8 +101,8 @@ function readCookie(req, name) {
     return undefined;
 }
 
-const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false };
-const UI_RULES = { theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false] };
+const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh' };
+const UI_RULES = { theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false], messageLang: ['zh', 'en'] };
 
 /** Heartbeat: a frozen tavern tab keeps its socket open but runs no JavaScript, so only an app-level ping reveals it. */
 const HEARTBEAT_INTERVAL_MS = 15000;

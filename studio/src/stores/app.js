@@ -36,7 +36,7 @@ export const useApp = defineStore('app', {
     online: false,
     /** first successful load done */
     ready: false,
-    /** @type {{port:number, workspace:string, ui:{theme:string, density:string, wizardDone:boolean}}|null} */
+    /** @type {{port:number, workspace:string, ui:{theme:string, density:string, wizardDone:boolean, messageLang:string}}|null} */
     settings: null,
     /** @type {any} /api/status result */
     status: null,
@@ -161,7 +161,7 @@ export const useApp = defineStore('app', {
       return tavernsRun();
     },
 
-    /** @param {Partial<{theme:string, density:string, wizardDone:boolean}>} patch */
+    /** @param {Partial<{theme:string, density:string, wizardDone:boolean, messageLang:string}>} patch */
     async saveUi(patch) {
       const ui = useUi();
       if (this.settings) this.settings = { ...this.settings, ui: { ...this.settings.ui, ...patch } };
