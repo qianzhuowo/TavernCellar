@@ -1,19 +1,26 @@
 <script setup>
 // One slot side by side: workspace | tavern (| base). Text gets an inline diff, objects list only the fields that
 // differ, anything else is shown as JSON.
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import Icon from './Icon.vue';
 import { fmt, kindOf, fieldRows, parts } from '../lib/slot-view.js';
+import { isNoise } from '../lib/entryNoise.js';
 
 const props = defineProps({
   slotView: { type: Object, required: true },
   showBase: { type: Boolean, default: false },
-  targetLabel: { type: String, default: '' }
+  targetLabel: { type: String, default: '' },
+  /** lorebook entry template: fields that differ only by SillyTavern's default-filling fold away; null = no folding */
+  noiseTemplate: { type: Object, default: null },
+  foldNoise: { type: Boolean, default: false }
 });
 const r = computed(() => props.slotView);
 const kind = computed(() => kindOf(r.value));
 const withBase = computed(() => props.showBase && r.value.base.present);
-const fields = computed(() => (kind.value === 'object' ? fieldRows(r.value) : []));
+const allFields = computed(() => (kind.value === 'object' ? fieldRows(r.value) : []));
+const noiseKeys = computed(() => (props.foldNoise ? new Set(allFields.value.filter((f) => isNoise(f.key, f.ws, f.tv, props.noiseTemplate)).map((f) => f.key)) : new Set()));
+const showNoise = ref(false);
+const fields = computed(() => (showNoise.value ? allFields.value : allFields.value.filter((f) => !noiseKeys.value.has(f.key))));
 </script>
 
 <template>
@@ -54,4 +61,19 @@ const fields = computed(() => (kind.value === 'object' ? fieldRows(r.value) : []
       <div v-else class="cf-text long">{{ r.tavern.value }}</div>
     </div>
   </div>
+  <button v-if="noiseKeys.size" type="button" class="cf-noise-toggle" :aria-expanded="showNoise" @click="showNoise = !showNoise">
+    <Icon :name="showNoise ? 'chevDown' : 'chevRight'" size="sm" />
+    {{ showNoise ? '收起' : '另有' }} {{ noiseKeys.size }} 处酒馆自动补全的差异
+    <span class="faint">（一边缺省、另一边是 SillyTavern 默认值，含义相同）</span>
+  </button>
 </template>
+
+<style>
+.cf-noise-toggle {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: var(--sp-2); padding: 3px 6px; border: 0;
+  border-radius: var(--r-md); background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.cf-noise-toggle:hover { background: var(--bg-3); color: var(--text); }
+.cf-noise-toggle:focus-visible { outline: 1px solid var(--accent); }
+.cf-noise-toggle .faint { font-size: var(--fs-xs); }
+</style>

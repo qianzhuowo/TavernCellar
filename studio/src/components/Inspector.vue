@@ -5,7 +5,7 @@ import Toggle from './Toggle.vue';
 import StatusBadge from './StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { api, errorText } from '../api.js';
+import { runBindingOp, setAutoSync, canReach } from '../lib/syncOps.js';
 import { desktop, copyText, joinPath } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
@@ -27,38 +27,18 @@ function subline(/** @type {any} */ b) {
 
 /** Whether sync / pull can be attempted for this binding right now. */
 function canAct(/** @type {any} */ b) {
-  const m = app.modeOf(b);
-  return m === 'online' || m === 'offline';
+  return canReach(app.modeOf(b));
 }
 
 async function run(/** @type {any} */ b, /** @type {'sync'|'pull'} */ op) {
-  const s = uiStatus(b.status);
-  if (isConflict(s)) { ui.openConflict(props.path); return; }
+  if (isConflict(uiStatus(b.status))) { ui.openConflict(props.path); return; }
   busy[b.target] = op;
-  try {
-    await (op === 'sync' ? api.sync(props.path, b.target) : api.pull(props.path, b.target));
-    ui.toast((op === 'sync' ? '已同步到 ' : '已从酒馆取回：') + app.targetName(b.target));
-    await app.refreshStatus();
-  } catch (e) {
-    ui.toast(errorText(e), 'alert');
-    await app.refreshStatus();
-  } finally {
-    delete busy[b.target];
-  }
+  try { await runBindingOp(app, ui, props.path, b, op); } finally { delete busy[b.target]; }
 }
 
 async function setAuto(/** @type {any} */ b, /** @type {boolean} */ on) {
   busy[b.target] = 'auto';
-  try {
-    await api.autoSync(props.path, b.target, on);
-    b.autoSync = on;
-    ui.toast(on ? '已开启随时同步' : '已关闭随时同步');
-    await app.refreshStatus();
-  } catch (e) {
-    ui.toast(errorText(e), 'alert');
-  } finally {
-    delete busy[b.target];
-  }
+  try { await setAutoSync(app, ui, props.path, b, on); } finally { delete busy[b.target]; }
 }
 
 async function copyPath() {

@@ -10,7 +10,9 @@ const props = defineProps({
   hint: { type: String, default: '' },
   placeholder: { type: String, default: '' },
   code: { type: Boolean, default: false },
-  big: { type: Boolean, default: false }
+  big: { type: Boolean, default: false },
+  /** value when the editor loaded; clearing a field that had content shows a sync hint */
+  was: { type: [String, null], default: null }
 });
 const emit = defineEmits(['update:modelValue']);
 const ta = ref(/** @type {HTMLTextAreaElement|null} */ (null));
@@ -44,7 +46,8 @@ watch(() => props.modelValue, () => nextTick(grow));
       @input="onInput"
     />
     <div class="field-foot">
-      <span v-if="hint">{{ hint }}</span>
+      <span v-if="!modelValue && was" class="ce-clear-hint" role="note">清空后同步时，酒馆可能保留原值</span>
+      <span v-else-if="hint">{{ hint }}</span>
       <span class="spacer" />
       <span class="wc">{{ countChars(modelValue) }} 字</span>
     </div>

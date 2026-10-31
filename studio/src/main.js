@@ -7,6 +7,7 @@ import './styles/components.css';
 import './styles/screens.css';
 import './styles/screens2.css';
 import './styles/editor.css';
+import './styles/sync.css';
 import './styles/lorebook.css';
 import './styles/app.css';
 

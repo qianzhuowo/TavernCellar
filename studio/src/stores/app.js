@@ -61,9 +61,13 @@ export const useApp = defineStore('app', {
       const st = s.status || {};
       for (const t of st.targets || []) m.set(t.id, { ...t, live: true });
       for (const t of st.offlineTargets || []) if (!m.has(t.id)) m.set(t.id, { ...t, live: false, offline: true });
+      // remembered by the workspace (connected before): only names taverns that still have bindings
+      const known = new Map((st.knownTargets || []).map((t) => [t.id, t]));
       for (const it of st.items || []) {
         for (const b of it.bindings || []) {
-          if (!m.has(b.target)) m.set(b.target, { id: b.target, host: undefined, label: '未连接的酒馆', live: false, unknown: true });
+          if (m.has(b.target)) continue;
+          const k = known.get(b.target);
+          m.set(b.target, k ? { ...k, live: false } : { id: b.target, host: undefined, label: '未连接的酒馆', live: false, unknown: true });
         }
       }
       return [...m.values()];

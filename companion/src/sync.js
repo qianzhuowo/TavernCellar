@@ -700,6 +700,8 @@ export class SyncEngine {
             workspace: this.ws.root,
             targets: this.targets.list(),
             offlineTargets: this.targets.listOffline(),
+            // every tavern that ever connected to this workspace (names for bindings whose tavern is not reachable)
+            knownTargets: Object.entries(this.ws.manifest.targets ?? {}).map(([id, t]) => ({ id, host: t.host, label: t.label })),
             items,
         };
     }

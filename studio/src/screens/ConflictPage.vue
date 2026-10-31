@@ -12,6 +12,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { uiStatus, isConflict, itemName } from '../lib/status.js';
 import { kindOf } from '../lib/slot-view.js';
+import { isEntrySlot } from '../lib/entryNoise.js';
 
 const app = useApp();
 const ui = useUi();
@@ -27,6 +28,8 @@ const loading = ref(false);
 const applying = ref(false);
 const error = ref('');
 const showBase = ref(false);
+/** Lorebook entry template of this item (defaults ST fills in); folds normalisation noise in entry diffs. */
+const entryTemplate = ref(/** @type {any} */ (null));
 /** @type {Record<string, 'workspace'|'tavern'|'merge'>} */
 const choices = reactive({});
 /** @type {Record<string, string>} */
@@ -197,11 +200,11 @@ onMounted(load);
             </div>
             <div v-for="d in r.differences" :key="d.slot" class="cf-diff">
               <div class="cf-diff-h"><b>{{ d.label }}</b><span class="mono faint">{{ d.slot }}</span></div>
-              <SlotDiff :slot-view="d" :target-label="targetLabel" />
+              <SlotDiff :slot-view="d" :target-label="targetLabel" :fold-noise="isEntrySlot(d.slot)" :noise-template="entryTemplate" />
             </div>
             <div v-if="!r.differences.length" class="cf-note faint">两边内容相同，任选一边即可。</div>
           </template>
-          <SlotDiff v-else :slot-view="r" :show-base="showBase" :target-label="targetLabel" />
+          <SlotDiff v-else :slot-view="r" :show-base="showBase" :target-label="targetLabel" :fold-noise="isEntrySlot(r.slot)" :noise-template="entryTemplate" />
 
           <div v-if="choices[r.slot] === 'merge'" class="cf-merge">
             <div class="cf-side-h"><Icon name="code" size="sm" />合并结果（可编辑{{ r.kind === 'text' ? '' : '，JSON' }}）</div>

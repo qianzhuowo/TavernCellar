@@ -75,7 +75,7 @@ async function copyRepo() { ui.toast((await copyText(REPO_URL)) ? '已复制仓�
               <div class="grow">
                 <div>使用当前工作区</div>
                 <div class="faint">伴侣程序正在使用的文件夹</div>
-                <div class="path-box mono" style="margin-top: 8px">{{ app.workspace }}</div>
+                <div class="path-box mono wz-cur-path" style="margin-top: 8px" :title="app.workspace"><bdi>{{ app.workspace }}</bdi></div>
               </div>
             </div>
             <div class="wz-opt" :class="{ on: choice === 'other' }" tabindex="0" @click="choice = 'other'">
@@ -132,3 +132,13 @@ async function copyRepo() { ui.toast((await copyText(REPO_URL)) ? '已复制仓�
     </div>
   </div>
 </template>
+
+<style>
+/* Long workspace paths: keep the card width, ellipsize from the left so the folder name stays visible. */
+.wz-body, .wz-opts, .wz-opt { min-width: 0; max-width: 100%; }
+.wz-opt .wz-cur-path {
+  display: block; box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; direction: rtl; text-align: left;
+}
+.wz-opt .wz-cur-path bdi { direction: ltr; unicode-bidi: isolate; }
+</style>
