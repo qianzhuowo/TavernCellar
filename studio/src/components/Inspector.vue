@@ -6,7 +6,7 @@ import StatusBadge from './StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach } from '../lib/syncOps.js';
-import { desktop, copyText, joinPath } from '../lib/desktop.js';
+import { desktop, joinPath, openNative, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
 const props = defineProps({ path: { type: String, required: true } });
@@ -42,8 +42,7 @@ async function setAuto(/** @type {any} */ b, /** @type {boolean} */ on) {
 }
 
 async function copyPath() {
-  const ok = await copyText(abs.value);
-  ui.toast(ok ? '已复制路径' : '复制失败', ok ? 'copy' : 'alert');
+  await copyPathToast(abs.value, ui.toast);
 }
 </script>
 
@@ -106,10 +105,10 @@ async function copyPath() {
         <div class="path-box mono" :title="abs">{{ path }}/</div>
         <div class="insp-btns">
           <template v-if="desktop.available">
-            <button class="btn sm" @click="desktop.showInFolder(abs)"><Icon name="folderOpen" size="sm" />在资源管理器中显示</button>
-            <button class="btn sm" @click="desktop.openInEditor(abs)"><Icon name="code" size="sm" />VS Code</button>
+            <button class="btn sm" @click="openNative('showInFolder', abs, ui.toast)"><Icon name="folderOpen" size="sm" />在资源管理器中显示</button>
+            <button class="btn sm" title="用系统默认程序打开这个文件夹" @click="openNative('openInEditor', abs, ui.toast)"><Icon name="external" size="sm" />打开文件夹</button>
           </template>
-          <button v-else class="btn sm" :title="abs" @click="copyPath"><Icon name="copy" size="sm" />复制路径</button>
+          <button class="btn sm" :title="abs" @click="copyPath"><Icon name="copy" size="sm" />复制路径</button>
         </div>
         <dl class="kv" style="margin-top: 10px">
           <dt>类型</dt><dd>{{ item.kind === 'character' ? '角色卡' : '世界书' }}</dd>

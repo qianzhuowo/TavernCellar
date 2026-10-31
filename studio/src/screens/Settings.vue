@@ -6,7 +6,7 @@ import TavernList from '../components/TavernList.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { errorText } from '../api.js';
-import { desktop, copyText } from '../lib/desktop.js';
+import { desktop, copyText, openNative, copyPathToast } from '../lib/desktop.js';
 
 const app = useApp();
 const ui = useUi();
@@ -39,7 +39,7 @@ async function changeWs() {
   editingWs.value = true;
 }
 
-async function copyWs() { ui.toast((await copyText(app.workspace)) ? '已复制路径' : '复制失败', 'copy'); }
+async function copyWs() { await copyPathToast(app.workspace, ui.toast); }
 function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/wizard')); }
 </script>
 
@@ -65,7 +65,7 @@ function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/w
         <div class="set-label" />
         <div class="set-ctl">
           <button class="btn sm" @click="changeWs">切换…</button>
-          <button v-if="desktop.available" class="btn sm ghost" @click="desktop.showInFolder(app.workspace)"><Icon name="external" size="sm" />在资源管理器中打开</button>
+          <button v-if="desktop.available" class="btn sm ghost" @click="openNative('showInFolder', app.workspace, ui.toast)"><Icon name="external" size="sm" />在资源管理器中打开</button>
           <button v-else class="btn sm ghost" @click="copyWs"><Icon name="copy" size="sm" />复制路径</button>
         </div>
       </div>

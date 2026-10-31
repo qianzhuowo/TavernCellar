@@ -22,11 +22,24 @@ const mode = computed(() => (props.binding ? app.modeOf(props.binding) : 'none')
 const tavernUsable = computed(() => mode.value === 'online' || mode.value === 'offline');
 const tavernLabel = computed(() => (target.value ? app.targetName(target.value) : ''));
 
-/** workspace lorebooks: name = binding id for this card's tavern, else any binding id, else folder name */
-const wsBooks = computed(() => app.items.filter((i) => i.kind === 'lorebook').map((i) => {
-  const b = i.bindings.find((x) => x.target === target.value) || i.bindings[0];
-  return { name: (b && b.id) || itemName(i.path), path: i.path };
-}));
+/**
+ * workspace lorebooks: name = binding id for this card's tavern, else any binding id, else folder name.
+ * Several workspace books can carry the same name (the same book taken from two taverns, e.g. X and X-2):
+ * the one bound to this card's tavern wins, the same rule the companion uses for status `world.path`.
+ */
+const wsBooks = computed(() => {
+  /** @type {Map<string, {name: string, path: string, own: boolean}>} */
+  const byName = new Map();
+  for (const i of app.items) {
+    if (i.kind !== 'lorebook') continue;
+    const own = i.bindings.find((x) => x.target === target.value);
+    const b = own || i.bindings[0];
+    const book = { name: (b && b.id) || itemName(i.path), path: i.path, own: !!own };
+    const prev = byName.get(book.name);
+    if (!prev || (book.own && !prev.own)) byName.set(book.name, book);
+  }
+  return [...byName.values()];
+});
 
 const tavernBooks = ref(/** @type {string[]} */ ([]));
 const loadingCat = ref(false);

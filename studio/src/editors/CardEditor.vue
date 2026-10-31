@@ -1,7 +1,7 @@
 <script setup>
 // S2 character card editor (docs/studio-design.md §4.3, §5.1-5.2). Edits `data.*` of the decoded card and keeps the
 // root mirrors equal (components/card/cardFields.js); useItem writes the workspace files after a short pause.
-import { ref, shallowRef, computed, watch, toRef, toRaw } from 'vue';
+import { ref, shallowRef, computed, watch, toRef, toRaw, onBeforeUnmount } from 'vue';
 import { Star } from 'lucide-vue-next';
 import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
@@ -14,12 +14,41 @@ import GreetingList from '../components/card/GreetingList.vue';
 import TagInput from '../components/card/TagInput.vue';
 import WorldPicker from '../components/card/WorldPicker.vue';
 import { getField, setField, extraFields } from '../components/card/cardFields.js';
+import { api, errorText } from '../api.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const it = useItem(toRef(props, 'path'));
 const app = useApp();
 const ui = useUi();
 
+// Files changed on disk while this editor held unsaved edits: the user picks a side explicitly.
+const keeping = ref(false);
+async function keepMine() {
+  keeping.value = true;
+  try {
+    // Adopt the current workspace hash, then write the editor's version over the files.
+    const r = await api.item(props.path);
+    it.hash.value = r.hash;
+    it.externalChange.value = false;
+    it.touch();
+    await it.save();
+    if (!it.externalChange.value && !it.dirty.value) ui.toast('已用编辑器中的内容覆盖工作区文件', 'check');
+  } catch (e) {
+    ui.toast('写入失败：' + errorText(e), 'alert');
+  } finally {
+    keeping.value = false;
+  }
+}
+// Leaving with edits that cannot be written (files changed elsewhere) must not drop them silently.
+onBeforeUnmount(() => {
+  if (!it.dirty.value && !it.externalChange.value) return;
+  const label = name.value || props.path;
+  const check = () => {
+    if (it.saving.value) { window.setTimeout(check, 200); return; }
+    if (it.externalChange.value) ui.toast(`「${label}」有修改未写入：文件在别处被修改，这些修改已丢弃`, 'alert');
+  };
+  window.setTimeout(check, 0);
+});
 // `it.data` is a shallowRef mutated in place: `rev` makes the template re-read fields after each edit.
 const rev = ref(0);
 watch(it.version, () => { rev.value++; });
@@ -46,6 +75,8 @@ const item = computed(() => app.item(props.path));
 const binding = computed(() => item.value?.bindings?.[0] || null);
 
 const name = computed(() => f('name') || '');
+/** "1.3" -> "v1.3"; versions that already carry a v ("V1.3") are shown as written */
+const versionLabel = computed(() => { const v = String(f('character_version') || '').trim(); return !v ? 'v—' : /^v/i.test(v) ? v : 'v' + v; });
 const avatarStyle = computed(() => {
   const h = hueOf(name.value || props.path);
   return { background: `linear-gradient(150deg, hsl(${h} 42% 46%), hsl(${(h + 40) % 360} 46% 26%))` };
@@ -92,8 +123,9 @@ function toggleAdv() {
   <div class="ce">
     <div v-if="it.externalChange.value" class="banner warn">
       <Icon name="alert" />
-      <div class="grow"><b>文件在别处被修改</b><span class="muted"> · 工作区里的文件在你编辑时被改动了（VS Code 或从酒馆取回）。重新加载会丢弃这里尚未写入的修改。</span></div>
-      <button class="btn sm" type="button" @click="it.load()"><Icon name="refresh" size="sm" />重新加载</button>
+      <div class="grow"><b>文件在别处被修改</b><span class="muted"> · 工作区里的文件在你编辑时被改动了（VS Code 或从酒馆取回），暂停写入。重新加载会丢弃这里尚未写入的修改；保留我的修改会用这里的内容覆盖那些改动。</span></div>
+      <button class="btn sm" type="button" :disabled="keeping" @click="it.load()"><Icon name="refresh" size="sm" />重新加载</button>
+      <button class="btn sm" type="button" :disabled="keeping" @click="keepMine"><Icon :name="keeping ? 'spin' : 'check'" size="sm" />保留我的修改</button>
     </div>
 
     <div v-if="it.error.value && !it.data.value" class="banner conflict">
@@ -145,7 +177,7 @@ function toggleAdv() {
           </div>
           <div class="ce-sub faint">
             <Icon name="user" size="sm" />{{ f('creator') || '未填写创作者' }}
-            <span>·</span>v{{ f('character_version') || '—' }}
+            <span>·</span>{{ versionLabel }}
             <template v-if="world"><span>·</span><Icon name="book" size="sm" />{{ world }}</template>
           </div>
         </div>
