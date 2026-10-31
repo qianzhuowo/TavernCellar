@@ -13,7 +13,7 @@ import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
 import { codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
-import { merge3, slotLabel, slotsOf } from './codec/slots.js';
+import { assemble, merge3, slotLabel, slotsOf } from './codec/slots.js';
 
 /** Re-merge attempts when the tavern changes again between our merge and the write (rule 6). */
 const MAX_MERGE_ATTEMPTS = 2;
@@ -485,10 +485,62 @@ export class SyncEngine {
             this.ws.loadBase(path, targetId),
         ]);
         const l = slotsOf(item.kind, local ?? {}), t = slotsOf(item.kind, saved?.data ?? {}), b = base ? slotsOf(item.kind, base) : new Map();
+        const side = (m, slot) => ({ value: m.has(slot) ? m.get(slot) : null, present: m.has(slot) });
         const slots = (conflict.slots ?? ['*']).map(slot => slot === '*'
-            ? { slot, label: '整项', workspace: local, tavern: saved?.data ?? null, base: base ?? null }
-            : { slot, label: slotLabel(slot, l.get(slot) ?? t.get(slot)), workspace: l.get(slot) ?? null, tavern: t.get(slot) ?? null, base: b.get(slot) ?? null });
-        return { path, target: targetId, at: conflict.at, slots };
+            ? { slot, label: '整项', workspace: { value: local, present: local != null }, tavern: { value: saved?.data ?? null, present: Boolean(saved) }, base: { value: base ?? null, present: base !== undefined } }
+            : { slot, label: slotLabel(slot, l.get(slot) ?? t.get(slot)), workspace: side(l, slot), tavern: side(t, slot), base: base ? side(b, slot) : { value: null, present: false, unknown: true } });
+        return { path, kind: item.kind, target: targetId, at: conflict.at, slots };
+    }
+
+    /**
+     * Applies the user's choice for every conflicting slot: 'workspace', 'tavern', or {value} (merged by hand;
+     * {delete: true} removes the slot). The tavern version the user reviewed (saved with the conflict) becomes the
+     * base, then a normal sync runs: unchanged tavern -> written back; changed again -> merged against it, so
+     * newer tavern edits are neither lost nor overwritten. Without a writable link the result stays local.
+     */
+    async resolveConflict(path, { target: targetSpec, choices } = {}) {
+        const item = this.requireItem(path);
+        const { targetId, binding, link } = this.resolveBinding(item, targetSpec);
+        if (!choices || typeof choices !== 'object') throw new ProtocolError(ERR.BAD_REQUEST, 'choices is required');
+        return this.withLock(path, async () => {
+            const state = this.ws.getSyncState(path, targetId) ?? {};
+            const saved = state.conflict && await this.ws.loadConflict(path, targetId);
+            if (!saved) throw new ProtocolError(ERR.BAD_REQUEST, `${path} has no recorded conflict with ${targetId}`);
+            const wanted = state.conflict.slots ?? ['*'];
+            const missing = wanted.filter(slot => !(slot in choices));
+            if (missing.length) throw new ProtocolError(ERR.BAD_REQUEST, `No choice for: ${missing.join(', ')}`, { slots: missing });
+            const local = await this.encodeItem(item).catch(() => null);
+            let data;
+            if (wanted.includes('*')) {
+                const c = choices['*'];
+                if (c === 'tavern') data = saved.data;
+                else if (c === 'workspace' && local) data = local.data;
+                else throw new ProtocolError(ERR.BAD_REQUEST, 'The whole-item conflict takes "workspace" or "tavern"');
+            } else {
+                if (!local) throw new ProtocolError(ERR.BAD_REQUEST, `${path} cannot be read; fix its files first`);
+                const merged = slotsOf(item.kind, local.data);
+                const tavern = slotsOf(item.kind, saved.data);
+                for (const slot of wanted) {
+                    const c = choices[slot];
+                    let value;
+                    if (c === 'workspace') continue;
+                    else if (c === 'tavern') value = tavern.get(slot);
+                    else if (c && typeof c === 'object' && c.delete === true) value = undefined;
+                    else if (c && typeof c === 'object' && 'value' in c) value = c.value;
+                    else throw new ProtocolError(ERR.BAD_REQUEST, `Bad choice for ${slot}`);
+                    if (value === undefined) merged.delete(slot);
+                    else merged.set(slot, value);
+                }
+                data = assemble(item.kind, merged);
+            }
+            await this.writeItem(item, data);
+            await this.#agree(item, targetId, saved.data, saved.hash);
+            await this.ws.saveState();
+            this.log(`resolved conflict of ${path} with ${targetId} (${wanted.length} slot(s))`);
+            if (!this.#writableConn(targetId)) return { path, target: targetId, result: 'resolved', pending: true };
+            const synced = await this.#syncLocked(item, targetId, binding, link, false);
+            return { ...synced, resolved: true };
+        });
     }
 
     // ---- status ------------------------------------------------------------

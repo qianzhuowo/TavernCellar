@@ -230,12 +230,45 @@ test('slot merge: same field on both sides -> only that slot conflicts; resolvin
     await until(async () => (await bindingOf('characters/Alice')).status === 'conflict');
     assert.equal(await readFile(join(dir, 'characters/Alice/scenario.md'), 'utf8'), 'tavern scenario', 'other slots still merged');
     const details = (await api('POST', '/api/conflict', { path: 'characters/Alice' })).result;
-    assert.deepEqual(details.slots.map(s => [s.slot, s.label, s.workspace, s.tavern, s.base]), [['data.description', '角色描述', 'L2', 'T2', 'merged local']]);
+    assert.deepEqual(details.slots.map(s => [s.slot, s.label, s.workspace.value, s.tavern.value, s.base.value]), [['data.description', '角色描述', 'L2', 'T2', 'merged local']]);
     const blocked = await api('POST', '/api/sync', { path: 'characters/Alice' });
     assert.equal(blocked.error.code, 'conflict');
     assert.match(blocked.error.message, /角色描述/);
     await writeFile(join(dir, 'characters/Alice/description.md'), 'T2');
     await api('POST', '/api/sync', { path: 'characters/Alice' });
+    assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
+});
+
+test('resolve conflict: every slot needs a choice; manual value and tavern edits made meanwhile both survive', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L4');
+    await tavern.edit('character', 'Alice.png', d => { d.data.description = 'T4'; });
+    await until(async () => (await bindingOf('characters/Alice')).status === 'conflict');
+    const details = (await api('POST', '/api/conflict', { path: 'characters/Alice' })).result;
+    assert.equal(details.kind, 'character');
+    assert.deepEqual(details.slots[0].workspace, { value: 'L4', present: true });
+    assert.deepEqual(details.slots[0].tavern, { value: 'T4', present: true });
+    const missing = await api('POST', '/api/conflict/resolve', { path: 'characters/Alice', choices: {} });
+    assert.equal(missing.error.code, 'bad_request');
+    // The tavern changes another field after the conflict was found (silently, as merge-attributes would).
+    const stored = tavern.store.character.get('Alice.png');
+    tavern.store.character.set('Alice.png', { ...stored, data: { ...stored.data, scenario: 'later tavern edit' } });
+    const resolved = await api('POST', '/api/conflict/resolve', { path: 'characters/Alice', choices: { 'data.description': { value: 'L4 + T4' } } });
+    assert.ok(resolved.result, JSON.stringify(resolved));
+    const now = tavern.store.character.get('Alice.png').data;
+    assert.deepEqual([now.description, now.scenario], ['L4 + T4', 'later tavern edit']);
+    assert.equal(await readFile(join(dir, 'characters/Alice/description.md'), 'utf8'), 'L4 + T4');
+    assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
+});
+
+test('resolve conflict: choosing the tavern side writes nothing new to the tavern', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L5');
+    await tavern.edit('character', 'Alice.png', d => { d.data.description = 'T5'; });
+    await until(async () => (await bindingOf('characters/Alice')).status === 'conflict');
+    const putsBefore = tavern.puts;
+    const resolved = await api('POST', '/api/conflict/resolve', { path: 'characters/Alice', choices: { 'data.description': 'tavern' } });
+    assert.equal(resolved.result.result, 'up-to-date');
+    assert.equal(tavern.puts, putsBefore);
+    assert.equal(await readFile(join(dir, 'characters/Alice/description.md'), 'utf8'), 'T5');
     assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
 });
 
