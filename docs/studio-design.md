@@ -252,9 +252,9 @@ Studio 只调用伴侣程序；以下接口在实现 Studio 时加入，命令�
 | `GET /studio/events` | SSE 事件流：`target.connected/disconnected`、`item.local-changed`（文件监视）、`item.tavern-changed`、`item.status`（同步状态变化）、`item.warning`、`item.conflict` |
 | `GET /api/detect`、`POST /api/taverns` | （已实现）检测本机酒馆、选择接受哪类酒馆的连接 |
 | `GET /api/items` | 工作区资料项列表 + 每个绑定的状态（现有 `/api/status` 的细化） |
-| `GET /api/item?path=` | 读取一项的**结构化数据**（解码后的卡片 / 世界书 JSON）+ 工作区哈希 |
-| `PUT /api/item` | `{path, data, hash}` → 编码写入工作区文件；工作区哈希不符（文件在别处被改）返回 `conflict` |
-| `POST /api/item/entries` | 世界书条目级修改（大世界书避免整本往返）：`{path, hash, ops: [{op: 'set' \| 'create' \| 'delete', uid?, patch?}]}`，批量操作与组操作都是一组 ops；新建条目的 uid 由伴侣程序分配 |
+| `POST /api/item` | `{path}` → 一项的**结构化数据**（解码后的卡片 / 世界书 JSON）+ 工作区哈希；世界书另附新条目模板 `entryTemplate` |
+| `PUT /api/item` | `{path, data, hash}` → 编码写入工作区文件；工作区哈希不符（文件在别处被改）返回 `conflict`，`details.hash` 为当前哈希 |
+| `POST /api/item/entries` | 世界书条目级修改（大世界书避免整本往返）：`{path, hash, ops}`，op 为 `{op:'set', uid, patch, unset?}` / `{op:'create', entry?}` / `{op:'delete', uid}`；批量操作与组操作都是一组 ops，一次写入；新建条目套模板、uid 由伴侣程序分配并排在显示顺序最后 |
 | `GET /api/items/:path/conflict?target=` | 冲突详情：冲突槽位列表，每个槽位含工作区 / 酒馆 / 基准三方的值（`{value, present}`）与可读标签；整项冲突附两边不同的槽位 `differences` |
 | `POST /api/items/:path/resolve` | `{target, choices: {槽位: 'workspace' \| 'tavern' \| {value}}}` 逐槽位提交选择：写入工作区、以所见酒馆版本为基准并同步；必须覆盖全部冲突槽位 |
 | `GET /api/assets/avatar?target=&id=` | 角色头像缩略图；伴侣程序经新的协议消息 `asset.get` 请 Cellar Link 读取 `/thumbnail`，按目标 + 文件名 + 修改时间缓存 |

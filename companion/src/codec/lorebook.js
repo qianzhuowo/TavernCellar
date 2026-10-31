@@ -16,23 +16,63 @@ export const LOREBOOK_CODEC_VERSION = 2;
 const CODEC_VERSION = LOREBOOK_CODEC_VERSION;
 /** Always written to front matter, even when equal to the template (identity and what users look for first). */
 const ALWAYS_SHOWN = new Set(['uid', 'key', 'comment', 'content']);
-const ENTRY_FILE_RE = /^entries\/[^/]+\.md$/;
+const ENTRY_FILE_RE = /^entries\/(?:[^/]+\/)*[^/]+\.md$/;
 
 /** True for files the lorebook codec reads or writes (see CODECS.owns). */
 export function ownsLorebookFile(rel) {
     return rel === BOOK_FILE || rel === META_FILE || ENTRY_FILE_RE.test(rel);
 }
 
+// ---- entry groups (docs/studio-design.md §4.4) ----------------------------------------------------------------
+// A Cellar group lives on the entry as extensions.cellar.group ("世界背景/地理"); in the workspace it is the
+// sub-folder under entries/, and the folder is its only source there (front matter does not repeat it).
 
-function entryFileName(key, entry, used) {
+/** Folder segments for a group path, or null when it cannot be a folder losslessly (then it stays in front matter). */
+function groupFolders(group) {
+    if (typeof group !== 'string' || !group) return null;
+    const parts = group.split('/');
+    return parts.every(p => p && p !== '.' && p !== '..' && p === p.trim() && safeSegment(p, 80) === p) ? parts : null;
+}
+
+/** Group path of an entry file from its folder (entries/a/b/x.md -> "a/b"), or null at the top level. */
+function groupOfFile(name) {
+    const parts = name.split('/').slice(1, -1);
+    return parts.length ? parts.join('/') : null;
+}
+
+/** Removes extensions.cellar.group from a front matter copy, dropping objects it leaves empty. */
+function takeGroup(frontMatter) {
+    const ext = frontMatter.extensions;
+    if (!isPlainObject(ext) || !isPlainObject(ext.cellar)) return null;
+    const folders = groupFolders(ext.cellar.group);
+    if (!folders) return null;
+    delete ext.cellar.group;
+    if (!Object.keys(ext.cellar).length) delete ext.cellar;
+    if (!Object.keys(ext).length) delete frontMatter.extensions;
+    return folders;
+}
+
+/** Puts the folder's group back onto an entry (inverse of takeGroup). */
+function putGroup(entry, group, name) {
+    const ext = entry.extensions;
+    if (isPlainObject(ext) && isPlainObject(ext.cellar) && ext.cellar.group !== undefined) {
+        throw new Error(`${name}: 分组同时写在文件夹和文件头里；在工作区中用文件夹表示分组，请删掉文件头中的 extensions.cellar.group`);
+    }
+    if (ext !== undefined && !isPlainObject(ext)) throw new Error(`${name}: extensions 不是对象，无法记录分组`);
+    if (ext?.cellar !== undefined && !isPlainObject(ext.cellar)) throw new Error(`${name}: extensions.cellar 不是对象，无法记录分组`);
+    entry.extensions = { ...(ext ?? {}), cellar: { ...(ext?.cellar ?? {}), group } };
+}
+
+function entryFileName(key, entry, used, folders = null) {
     const idPart = Number.isInteger(entry.uid) && entry.uid >= 0 ? String(entry.uid).padStart(4, '0') : safeSegment(key, 20);
     const label = typeof entry.comment === 'string' && entry.comment.trim()
         ? entry.comment
         : (Array.isArray(entry.key) && typeof entry.key[0] === 'string' ? entry.key[0] : '');
     const slug = label.trim() ? safeSegment(label.replace(/\s+/g, ' '), 40) : '';
     const base = slug ? `${idPart}-${slug}` : idPart;
-    let name = `entries/${base}.md`;
-    for (let n = 2; used.has(name.toLowerCase()); n++) name = `entries/${base}~${n}.md`;
+    const dir = folders ? `entries/${folders.join('/')}` : 'entries';
+    let name = `${dir}/${base}.md`;
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${dir}/${base}~${n}.md`;
     used.add(name.toLowerCase());
     return name;
 }
@@ -80,7 +120,8 @@ export function decodeLorebook(book, { template = null } = {}) {
                 }
                 if (absent.length) meta.absent[key] = absent;
             }
-            const file = entryFileName(key, entry, used);
+            const folders = takeGroup(frontMatter);
+            const file = entryFileName(key, entry, used, folders);
             if (String(entry.uid) !== key) meta.keys[file] = key;
             meta.order.push(key);
             files[file] = serializeEntry(frontMatter, body);
@@ -154,6 +195,8 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
             throw new Error(`${name}: duplicate entry uid ${key}`);
         }
         if (isNew || !noContent.has(key)) entry.content = normalizeText(body, raw.has(key));
+        const group = groupOfFile(name);
+        if (group !== null) putGroup(entry, group, name);
         byKey.set(key, entry);
     }
 

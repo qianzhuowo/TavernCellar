@@ -361,3 +361,45 @@ test('invalid workspace files are not synced', async () => {
     const pulled = await api('POST', '/api/pull', { path: 'lorebooks/Book', force: true });
     assert.equal(pulled.result.result, 'pulled');
 });
+
+test('item API: read, write guarded by hash, entry ops with groups land in group folders', async () => {
+    const read = (await api('POST', '/api/item', { path: 'lorebooks/Book' })).result;
+    assert.equal(read.kind, 'lorebook');
+    assert.ok(read.data.entries['0']);
+    const stale = await api('PUT', '/api/item', { path: 'lorebooks/Book', data: read.data, hash: 'nope' });
+    assert.equal(stale.error.code, 'conflict');
+    assert.equal(stale.error.details.hash, read.hash);
+    const edited = structuredClone(read.data);
+    edited.entries['0'].content = 'edited in studio';
+    const put = (await api('PUT', '/api/item', { path: 'lorebooks/Book', data: edited, hash: read.hash })).result;
+    assert.match(await readFile(join(dir, 'lorebooks/Book/entries/0000-c.md'), 'utf8'), /edited in studio/);
+
+    const created = (await api('POST', '/api/item/entries', { path: 'lorebooks/Book', hash: put.hash, ops: [
+        { op: 'create', entry: { comment: '龙脊山脉', content: 'mountains', extensions: { cellar: { group: '地理' } } } },
+    ] })).result;
+    const uid = created.created[0];
+    assert.equal(uid, Math.max(...Object.values(read.data.entries).map(e => e.uid)) + 1);
+    const name = `lorebooks/Book/entries/地理/${String(uid).padStart(4, '0')}-龙脊山脉.md`;
+    assert.match(await readFile(join(dir, name), 'utf8'), /mountains/);
+
+    // A group move as one batch: both entries into 势力 and to the group's insertion position.
+    const moved = (await api('POST', '/api/item/entries', { path: 'lorebooks/Book', hash: created.hash, ops: [
+        { op: 'set', uid: 0, patch: { position: 4, extensions: { cellar: { group: '势力' } } } },
+        { op: 'set', uid, patch: { position: 4, extensions: { cellar: { group: '势力' } } } },
+    ] })).result;
+    const after = (await api('POST', '/api/item', { path: 'lorebooks/Book' })).result;
+    assert.equal(after.hash, moved.hash);
+    assert.deepEqual([after.data.entries['0'].position, after.data.entries[String(uid)].extensions], [4, { cellar: { group: '势力' } }]);
+    await readFile(join(dir, `lorebooks/Book/entries/势力/${String(uid).padStart(4, '0')}-龙脊山脉.md`), 'utf8');
+    await assert.rejects(readFile(join(dir, 'lorebooks/Book/entries/地理'), 'utf8'), 'empty group folder removed');
+
+    const ungrouped = (await api('POST', '/api/item/entries', { path: 'lorebooks/Book', hash: moved.hash, ops: [
+        { op: 'set', uid: 0, unset: ['extensions'] }, { op: 'delete', uid },
+    ] })).result;
+    const final = (await api('POST', '/api/item', { path: 'lorebooks/Book' })).result;
+    assert.equal(final.hash, ungrouped.hash);
+    assert.equal(final.data.entries[String(uid)], undefined);
+    assert.equal(final.data.entries['0'].extensions, undefined);
+    const bad = await api('POST', '/api/item/entries', { path: 'lorebooks/Book', hash: final.hash, ops: [{ op: 'set', uid: 999, patch: {} }] });
+    assert.equal(bad.error.code, 'not_found');
+});

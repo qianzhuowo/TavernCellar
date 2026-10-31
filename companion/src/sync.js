@@ -58,6 +58,71 @@ export class SyncEngine {
         return { data, hash: await hashData(data) };
     }
 
+    // ---- item editing (Studio editors, docs/studio-design.md §6) -----------------------------------------------
+
+    /** Structured data of a workspace item and its workspace hash; lorebooks also return the new-entry template. */
+    async readItemData(path) {
+        const item = this.requireItem(path);
+        const { data, hash } = await this.encodeItem(item);
+        const out = { path: item.path, kind: item.kind, data, hash };
+        if (item.kind === 'lorebook') out.entryTemplate = (await this.decodeOptions(item)).template ?? null;
+        return out;
+    }
+
+    /** Writes edited data to the workspace files when `hash` still matches them (else `conflict`: changed elsewhere). */
+    async writeItemData(path, { data, hash } = {}) {
+        const item = this.requireItem(path);
+        if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
+        return this.withLock(item.path, async () => {
+            const current = await this.encodeItem(item);
+            if (hash !== current.hash) throw new ProtocolError(ERR.CONFLICT, `${item.path} 在别处被修改了`, { hash: current.hash });
+            return { path: item.path, hash: await this.writeItem(item, data) };
+        });
+    }
+
+    /**
+     * Lorebook entry operations applied together (single edits, batch edits and group moves are all op lists):
+     * {op:'set', uid, patch, unset?} merges fields; {op:'create', entry?} adds an entry from the template with a new
+     * uid at the end of the display order; {op:'delete', uid}. `hash` guards against concurrent file edits.
+     */
+    async editEntries(path, { hash, ops } = {}) {
+        const item = this.requireItem(path);
+        if (item.kind !== 'lorebook') throw new ProtocolError(ERR.BAD_REQUEST, 'Only lorebooks have entries');
+        if (!Array.isArray(ops) || !ops.length) throw new ProtocolError(ERR.BAD_REQUEST, 'ops must be a non-empty array');
+        return this.withLock(item.path, async () => {
+            const current = await this.encodeItem(item);
+            if (hash !== current.hash) throw new ProtocolError(ERR.CONFLICT, `${item.path} 在别处被修改了`, { hash: current.hash });
+            const data = structuredClone(current.data);
+            const entries = (data.entries ??= {});
+            const template = (await this.decodeOptions(item)).template ?? {};
+            const created = [];
+            const values = () => Object.values(entries).filter(e => e && typeof e === 'object');
+            const keyOf = uid => {
+                const key = Object.keys(entries).find(k => entries[k]?.uid === uid) ?? (entries[String(uid)] ? String(uid) : null);
+                if (key === null) throw new ProtocolError(ERR.NOT_FOUND, `条目 uid ${uid} 不存在`);
+                return key;
+            };
+            for (const op of ops) {
+                if (op?.op === 'set') {
+                    if (op.patch !== undefined && (op.patch === null || typeof op.patch !== 'object')) throw new ProtocolError(ERR.BAD_REQUEST, 'patch must be an object');
+                    const entry = entries[keyOf(op.uid)];
+                    Object.assign(entry, structuredClone(op.patch ?? {}), { uid: entry.uid });
+                    for (const field of op.unset ?? []) if (field !== 'uid') delete entry[field];
+                } else if (op?.op === 'create') {
+                    const uid = Math.max(-1, ...values().map(e => (Number.isInteger(e.uid) ? e.uid : -1)), ...Object.keys(entries).filter(k => /^\d+$/.test(k)).map(Number)) + 1;
+                    const displayIndex = Math.max(-1, ...values().map(e => (Number.isInteger(e.displayIndex) ? e.displayIndex : -1))) + 1;
+                    entries[String(uid)] = { ...structuredClone(template), displayIndex, ...structuredClone(op.entry ?? {}), uid };
+                    created.push(uid);
+                } else if (op?.op === 'delete') {
+                    delete entries[keyOf(op.uid)];
+                } else {
+                    throw new ProtocolError(ERR.BAD_REQUEST, `Unknown entry op: ${op?.op}`);
+                }
+            }
+            return { path: item.path, hash: await this.writeItem(item, data), created };
+        });
+    }
+
     async writeItem(item, data) {
         const codec = codecFor(item.kind);
         await this.ws.writeItemFiles(item.path, codec.decode(data, await this.decodeOptions(item)), codec.owns);

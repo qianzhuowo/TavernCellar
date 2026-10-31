@@ -451,7 +451,10 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/sync': b => engine.sync(b.path, b),
         'POST /api/pull': b => engine.pull(b.path, b),
         'POST /api/conflict': b => engine.conflictDetails(b.path, b),
-        'POST /api/conflict/resolve': b => engine.resolveConflict(b.path, b),
+            'POST /api/conflict/resolve': b => engine.resolveConflict(b.path, b),
+            'POST /api/item': b => engine.readItemData(b.path),
+            'PUT /api/item': b => engine.writeItemData(b.path, b),
+            'POST /api/item/entries': b => engine.editEntries(b.path, b),
         'POST /api/auto-sync': b => engine.setAutoSync(b.path, b),
         'POST /api/layout': b => engine.setLayout(b.path, b),
     };

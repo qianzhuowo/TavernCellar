@@ -57,7 +57,8 @@ test('writing the tavern version back keeps user files in the item folder, delet
 test('codec ownership: lorebook owns book.json, meta and entries/*.md only', () => {
     const owns = CODECS.lorebook.owns;
     for (const rel of ['book.json', 'cellar-item.json', 'entries/0001-冰花.md']) assert.ok(owns(rel), rel);
-    for (const rel of ['notes.md', 'entries/sub/x.md', 'entries/readme.txt', 'research/a.md']) assert.equal(owns(rel), false, rel);
+    for (const rel of ['notes.md', 'entries/readme.txt', 'entries/sub/readme.txt', 'research/a.md']) assert.equal(owns(rel), false, rel);
+    assert.equal(owns('entries/sub/x.md'), true, 'group folders under entries/ hold entries');
 });
 
 test('writeItemFiles refuses to run without an ownership test', async () => {

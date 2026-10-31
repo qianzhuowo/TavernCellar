@@ -127,3 +127,52 @@ test('serializeEntry/parseEntry tolerate CRLF files and empty front matter', () 
     assert.deepEqual(parseEntry('---\n---\nx'), { frontMatter: {}, body: 'x' });
     assert.throws(() => parseEntry('---\n: : bad\n  - x\n---\n', 'f.md'), /f\.md: invalid YAML/);
 });
+
+// ---- entry groups: entries/<group>/ folders <-> extensions.cellar.group ----
+
+const grouped = () => ({
+    entries: {
+        0: entry(0, { extensions: { cellar: { group: '世界背景' } } }),
+        1: entry(1, { extensions: { cellar: { group: '世界背景/地理' }, other: { x: 1 } } }),
+        2: entry(2),
+        3: entry(3, { extensions: { cellar: { group: 'bad:name' } } }),
+        4: entry(4, { extensions: { cellar: { group: '角色', note: 'keep' } } }),
+    },
+});
+
+test('groups: folders round-trip losslessly and front matter does not repeat the group', () => {
+    const book = grouped();
+    const files = decodeLorebook(book);
+    const names = Object.keys(files).filter(n => n.startsWith('entries/')).sort();
+    assert.deepEqual(names, [
+        'entries/0002-Entry 2.md',
+        'entries/0003-Entry 3.md',
+        'entries/世界背景/0000-Entry 0.md',
+        'entries/世界背景/地理/0001-Entry 1.md',
+        'entries/角色/0004-Entry 4.md',
+    ]);
+    assert.equal(parseEntry(files['entries/世界背景/0000-Entry 0.md']).frontMatter.extensions, undefined);
+    assert.deepEqual(parseEntry(files['entries/世界背景/地理/0001-Entry 1.md']).frontMatter.extensions, { other: { x: 1 } });
+    assert.deepEqual(parseEntry(files['entries/角色/0004-Entry 4.md']).frontMatter.extensions, { cellar: { note: 'keep' } });
+    assert.deepEqual(parseEntry(files['entries/0003-Entry 3.md']).frontMatter.extensions, { cellar: { group: 'bad:name' } }, 'not a valid folder: stays in front matter');
+    assert.deepEqual(encodeLorebook(files), book);
+});
+
+test('groups: moving a file between folders changes its group; to the top level removes it', () => {
+    const files = decodeLorebook(grouped());
+    files['entries/角色/0002-Entry 2.md'] = files['entries/0002-Entry 2.md'];
+    delete files['entries/0002-Entry 2.md'];
+    files['entries/0000-Entry 0.md'] = files['entries/世界背景/0000-Entry 0.md'];
+    delete files['entries/世界背景/0000-Entry 0.md'];
+    const book = encodeLorebook(files);
+    assert.deepEqual(book.entries[2].extensions, { cellar: { group: '角色' } });
+    assert.equal(book.entries[0].extensions, undefined);
+    assert.deepEqual(Object.keys(book.entries), ['0', '1', '2', '3', '4'], 'entry order is kept');
+});
+
+test('groups: a group written both as folder and in front matter is an error', () => {
+    const files = decodeLorebook(grouped());
+    files['entries/角色/0003-Entry 3.md'] = files['entries/0003-Entry 3.md'];
+    delete files['entries/0003-Entry 3.md'];
+    assert.throws(() => encodeLorebook(files), /分组同时写在文件夹和文件头里/);
+});
