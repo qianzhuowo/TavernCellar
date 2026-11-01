@@ -130,7 +130,11 @@ function push(/** @type {boolean} */ force = false, /** @type {string[]|undefine
   const target = pushTarget.value;
   return act('push', async () => {
     const r = await api.pushVersion(selected.value, target, { force, paths });
-    pushed.value = { ...r, label: app.targetName(target) };
+    // A retry of some items (paths) updates their rows; the other rows of the same push stay.
+    const keep = paths && pushed.value && pushed.value.rev === r.rev && pushed.value.target === r.target
+      ? pushed.value.results.filter((/** @type {any} */ x) => !paths.includes(x.path)) : [];
+    const results = [...keep, ...r.results];
+    pushed.value = { ...r, results, label: app.targetName(target) };
     const bad = r.results.filter((/** @type {any} */ x) => x.result !== 'pushed').length;
     if (bad) throw new Error(`${bad} 项没有推送，见下方说明`);
   }, `已把 ${versionName(selected.value)} 推送到 ${app.targetName(target)}，并固定在这个版本`);

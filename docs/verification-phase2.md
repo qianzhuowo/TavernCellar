@@ -60,4 +60,21 @@ suite fail.
 | 5 | Pull from tt | ✅ `merged`: the tt edit (scenario) came in as「来自 TauriTavern：合并」, the workspace kept its newer personality line, the binding follows again; after syncing, ST and tt both have both edits |
 | 6 | Push the release again, then「跟随最新」in the Studio inspector, then sync | ✅ pin gone, status「本地有修改」; after sync tt has the latest content |
 
-Not verified live: pushing several items at once (covered by unit tests only; the test lorebook is not bound to tt).
+Not verified live at that point: pushing several items at once (verified below).
+
+## Pushing several items at once — ST 1.15.0 + TauriTavern 2.4.0, 2026-11-01, passed
+
+Both `TavernCellar_Test` and `TavernCellar_Test_WI` bound to tt for the run (the lorebook differed in five entries
+and was made identical with the workspace side), unbound again afterwards.
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Edit both items (personality line, entry 「银松镇」), record, tag `p2-multi`; edit both again, record | ✅ |
+| 2 | Studio history page: select `p2-multi`, TauriTavern,「推送到酒馆」 | ✅ two rows 「已推送，TauriTavern 固定在 p2-multi」; both pinned markers on the version (`docs/studio/history-push-multi-dark.png`) |
+| 3 | Read both from tt (lorebook from the backend, not the frontend cache) and from ST after syncing ST | ✅ tt: release lines only for card and entry; ST: release and later lines for both |
+| 4 | Edit only the entry inside tt, push `p2-multi` again | ✅ card 「已推送」, lorebook 「酒馆里有新的修改，未推送」 with「去同步页取回」/「覆盖酒馆的修改」; the tt edit is still there (`docs/studio/history-push-partial-dark.png`) |
+| 5 |「覆盖酒馆的修改」on that row | ✅ tt entry back to the release; both rows now 「已推送」 |
+| 6 | Edit the entry in tt again, pull: the same entry changed on both sides | ✅ conflict on 「银松镇」 only; merged by hand (workspace text + the tt line); after syncing both taverns hold the same card and entry |
+
+Bug found and fixed: retrying one item (「覆盖酒馆的修改」) replaced the whole result list, so the rows of the other
+items of that push disappeared. A retry now updates only its own rows.
