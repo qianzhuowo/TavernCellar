@@ -83,7 +83,7 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 
 状态标记：⬜ 未开始　🟨 进行中　✅ 已完成
 
-### 阶段 1：骨架 + 连接 + 取出/同步最小闭环 🟨
+### 阶段 1：骨架 + 连接 + 取出/同步最小闭环 ✅（tt 2026-10-29、ST 2026-11-01 实机通过）
 
 - 仓库骨架：插件（根目录）、`shared/`、`companion/`、`docs/`、`test/`。
 - 协议 v1：握手（最初用配对令牌，2026-10-29 改为按来源准入）、`catalog.list`、`item.get`、`item.put`（带 `baseHash`）、`watch.set`、`item.changed`。
@@ -103,7 +103,7 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 - 酒馆端改动作为外部变更记录；冲突以标记状态保存，不阻塞操作。
 - **验收**：随时同步与手动同步两种模式各自符合预期；已部署指针准确反映各酒馆当前的版本；冲突可见且可解决。
 
-### 阶段 3 前置：拆卡升级与按字段同步 🟨（功能已完成，tt 实机已验证；ST 实机待做，见 `docs/verification-phase3.md`）
+### 阶段 3 前置：拆卡升级与按字段同步 ✅（tt 与 ST 实机均已验证，见 `docs/verification-phase3.md`）
 
 借鉴自 tt-card-bridge（2026-10-30 调研）。该项目没有许可证，**只借鉴思路，不复制代码**。各项都必须保持我们的无损往返要求（`encode(decode(x))` 深度相等）。
 
@@ -213,8 +213,8 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 | 项 | 状态 | 说明 / 备选 |
 |---|---|---|
 | tt WebView 能否连 `ws://127.0.0.1` | 已验证可连（阶段 1，tt 2.4.0） | 备选方案（本机 HTTP 长轮询）不再需要 |
-| 角色写入用 `edit` 还是 `merge-attributes` | 已定：`merge-attributes`（tt 已验证，ST 待验证） | 数组整体替换；删除字段无法同步，宿主保留的字段会回写工作区 |
-| 刷新当前打开的角色时与酒馆自动保存互相覆盖 | tt 已验证：编辑器打开时同步，表单随之刷新（ST 待验证） | 见 `docs/verification-phase1.md` |
+| 角色写入用 `edit` 还是 `merge-attributes` | 已定：`merge-attributes`（tt、ST 均已验证） | 数组整体替换；删除字段无法同步，宿主保留的字段会回写工作区 |
+| 刷新当前打开的角色时与酒馆自动保存互相覆盖 | tt、ST 均已验证：编辑器打开时同步，表单随之刷新 | 见 `docs/verification-phase1.md` |
 | 插件目录在 ST 的 public 下，`companion/node_modules` 会被当作静态文件提供 | 已知 | 阶段 6 把插件与伴侣程序分开发布 |
 | 多用户 ST（非 default-user） | 待定 | 在线模式下由酒馆的登录状态天然隔离；离线模式需要用户指定目录 |
 | 酒馆升级后字段变化 | 持续关注 | 字段以源码定义为准；未识别字段原样保留 |

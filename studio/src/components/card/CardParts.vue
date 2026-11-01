@@ -12,11 +12,11 @@ const props = defineProps({ item: { type: Object, required: true } });
 const app = useApp();
 const ui = useUi();
 
-/** Framework ids from companion/src/codec/frameworks.js -> what the user installs in the tavern. */
+/** Framework ids from companion/src/codec/frameworks.js -> the tavern plugin that runs it (TavernCellar never does). */
 const FRAMEWORK = {
-  tavern_helper: { name: '酒馆助手', need: '需要在酒馆中安装酒馆助手（JS-Slash-Runner）' },
-  mvu: { name: 'MVU 变量框架', need: '依赖酒馆助手及 MVU 脚本' },
-  xiaobaix: { name: '小白X', need: '需要在酒馆中安装小白X（LittleWhiteBox）' }
+  tavern_helper: { name: '酒馆助手', need: '对应插件：酒馆助手（JS-Slash-Runner）' },
+  mvu: { name: 'MVU 变量框架', need: '对应插件：酒馆助手 + MVU 脚本' },
+  xiaobaix: { name: '小白X', need: '对应插件：小白X（LittleWhiteBox）' }
 };
 const frameworks = computed(() => (props.item.frameworks || []).map((f) => ({ ...f, ...(FRAMEWORK[f.id] || { name: f.name, need: '' }) })));
 
@@ -50,8 +50,9 @@ async function toggle(/** @type {string} */ part, /** @type {boolean} */ split) 
 
 <template>
   <section class="insp-sec">
-    <h4>依赖的脚本框架</h4>
+    <h4>卡片使用的脚本框架</h4>
     <div v-if="!frameworks.length" class="faint" style="font-size: var(--fs-sm)">未发现脚本框架。</div>
+    <div v-else class="faint parts-hint">这张卡内含这些框架的脚本或数据，在酒馆中需要安装对应插件才能生效；TavernCellar 只原样保存，不运行它们。</div>
     <div v-for="fw in frameworks" :key="fw.id" class="fw-row">
       <Icon name="puzzle" size="sm" />
       <div class="grow">

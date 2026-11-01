@@ -78,7 +78,16 @@ Observed: the first sync after tt saved the card warns `Tavern normalized the sa
 - With *close to tray* enabled, WM_CLOSE only hides the window. The graceful-exit event cannot be emitted from the
   page while hidden (`failed to send message to the webview`); use the tray menu *Exit*, or stop the test instance.
 
-## SillyTavern 1.15.0 — pending
+## SillyTavern 1.15.0 — 2026-11-01, passed
 
-ST (`127.0.0.1:8000`) was not running during this session. Same checklist to be run with a temporary browser
-profile and `--remote-debugging-port`.
+Run together with the phase-3-prep checks (see `docs/verification-phase3.md` for the environment). On top of
+checkout / sync / merge / conflict covered there:
+
+| Check | Result |
+| --- | --- |
+| Edit in ST's lorebook save path (`saveWorldInfo`) → auto pull into workspace | ✅ |
+| Edit in ST's character editor (debounced form save) → auto pull | ✅ within ~3 s |
+| Auto-sync on file save with the character editor open → editor field and in-memory card refresh | ✅ |
+| Two ST tabs connected: the newer tab takes over the target, no reconnect loop | ✅ |
+
+Not re-run on ST: offline write-back (ST must be stopped) and reconnect after a companion restart.

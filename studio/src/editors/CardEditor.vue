@@ -180,7 +180,7 @@ function toggleAdv() {
             <Icon name="user" size="sm" />{{ f('creator') || '未填写创作者' }}
             <span>·</span>{{ versionLabel }}
             <template v-if="world"><span>·</span><Icon name="book" size="sm" />{{ world }}</template>
-            <template v-if="frameworks"><span>·</span><span class="ce-fw" :title="'这张卡依赖的脚本框架，详见检查栏'"><Icon name="puzzle" size="sm" />需要 {{ frameworks }}</span></template>
+            <template v-if="frameworks"><span>·</span><span class="ce-fw" :title="'这张卡内含这些框架的脚本或数据，在酒馆中需要安装对应插件才能生效；TavernCellar 只原样保存，不运行它们'"><Icon name="puzzle" size="sm" />卡内使用：{{ frameworks }}</span></template>
           </div>
         </div>
       </div>

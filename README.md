@@ -5,7 +5,7 @@
 - **Cellar Link**（本仓库根目录）：酒馆内的薄插件，作为第三方扩展安装，只负责连接本地伴侣程序并读写酒馆数据。
 - **TavernCellar 伴侣程序**（`companion/`）：本地 Node 程序，命令 `cellar`。把资料取出成可读的 Markdown / JSON 文件放进工作区，保存后同步回酒馆，并检测双向冲突。
 
-> 状态：第 1 阶段（连接 + 取出 / 同步最小闭环）。TauriTavern 2.4.0 实机验证已通过，SillyTavern 实机验证待做，见 [docs/verification-phase1.md](docs/verification-phase1.md)。
+> 状态：第 1 阶段（连接 + 取出 / 同步）与「阶段 3 前置」（拆卡与按字段同步）已在 TauriTavern 2.4.0 与 SillyTavern 1.15.0 实机验证，见 [docs/verification-phase1.md](docs/verification-phase1.md)、[docs/verification-phase3.md](docs/verification-phase3.md)。
 
 ## 快速开始
 
