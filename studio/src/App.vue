@@ -10,6 +10,7 @@ import TabBar from './components/TabBar.vue';
 import Inspector from './components/Inspector.vue';
 import StatusBar from './components/StatusBar.vue';
 import Toasts from './components/Toasts.vue';
+import Shortcuts from './components/Shortcuts.vue';
 import Wizard from './screens/Wizard.vue';
 import Library from './screens/Library.vue';
 import Settings from './screens/Settings.vue';
@@ -109,6 +110,7 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
       <Inspector v-if="hasInspector" :path="ui.route.arg" />
     </div>
     <StatusBar />
+    <Shortcuts />
   </div>
 
   <div v-if="app.ready && hasInspector && ui.inspectorDrawer" class="drawer-scrim insp-scrim" @click="ui.inspectorDrawer = false" />

@@ -6,16 +6,18 @@
 .lib { max-width: 1240px; }
 .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: var(--sp-4); }
 .cat-card {
+  position: relative;
   display: flex; flex-direction: column; text-align: left; padding: 0; cursor: pointer;
   background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden;
   transition: transform .15s var(--ease), border-color .15s, box-shadow .15s;
 }
 .cat-card:hover { border-color: var(--line-strong); transform: translateY(-2px); box-shadow: var(--shadow-2); }
-.cat-thumb { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; }
-.cat-thumb::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 80% at 30% 20%, rgba(255,255,255,.14), transparent 60%); }
+.cat-thumb { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; border-radius: 0; text-shadow: none; }
+.cat-thumb::after { content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: radial-gradient(120% 80% at 30% 20%, rgba(255,255,255,.14), transparent 60%); }
+.cat-thumb:has(.avatar-img.on)::after { display: none; }
 .cat-initial { font-size: 44px; font-weight: 700; color: rgba(255,255,255,.88); text-shadow: 0 2px 8px rgba(0,0,0,.3); }
 .in-ws {
-  position: absolute; top: 8px; right: 8px; z-index: 1;
+  position: absolute; top: 8px; right: 8px; z-index: 2;
   display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px; border-radius: var(--r-pill);
   font-size: var(--fs-xs); font-weight: 600; color: #fff; background: var(--chip-shade); backdrop-filter: blur(4px);
   border: 1px solid rgba(255,255,255,.18);
@@ -61,6 +63,10 @@
 .set-label { flex: 0 0 220px; }
 .set-label .faint { font-size: var(--fs-xs); margin-top: 3px; line-height: 1.5; }
 .set-ctl { flex: 1; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
+.set-sample { font-family: var(--font-body); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.set-keys { margin: 0; grid-template-columns: max-content 1fr; row-gap: 6px; }
+.set-keys dt { white-space: nowrap; }
+.set-keys dd { text-align: left; color: var(--text-2); }
 .set-sub { border-top: 1px solid var(--line); padding: var(--sp-3) 0; }
 .set-sub-h { display: flex; align-items: center; font-size: var(--fs-sm); color: var(--text-2); font-weight: 600; margin-bottom: var(--sp-2); }
 .set-note { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); margin-top: var(--sp-2); }

@@ -21,6 +21,7 @@ import { saveConfig } from './config.js';
 import { Workspace } from './workspace/workspace.js';
 import { OFFLINE_SYNC_MODES, detectTtDataRoot, offlineSyncMode, resolveLocations } from './taverns/locations.js';
 import { OfflineLink } from './taverns/offline.js';
+import { AssetCache } from './assets.js';
 
 export const SERVER_NAME = 'TavernCellar';
 export const SERVER_VERSION = '0.1.0';
@@ -92,6 +93,7 @@ function tokenMatches(expected, given) {
 
 const SESSION_COOKIE = 'cellar_session';
 export const EVENTS_PATH = '/studio/events';
+export const AVATAR_PATH = '/api/assets/avatar';
 
 function readCookie(req, name) {
     for (const part of String(req.headers.cookie ?? '').split(';')) {
@@ -101,8 +103,11 @@ function readCookie(req, name) {
     return undefined;
 }
 
-const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh' };
-const UI_RULES = { theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false], messageLang: ['zh', 'en'] };
+const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh', font: 'sans', fontSize: 15, wordCount: true, externalEditor: 'system' };
+const UI_RULES = {
+    theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false], messageLang: ['zh', 'en'],
+    font: ['sans', 'serif', 'mono'], fontSize: [13, 14, 15, 16, 17, 18, 20], wordCount: [true, false], externalEditor: ['system', 'vscode'],
+};
 
 /** Heartbeat: a frozen tavern tab keeps its socket open but runs no JavaScript, so only an app-level ping reveals it. */
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -312,6 +317,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     const sessionId = randomBytes(24).toString('hex');
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
+    const assets = new AssetCache(targets);
     engine.onHistory = () => emit('status', { reason: 'history' });
     await engine.upgradeLayouts();
     await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
@@ -436,6 +442,20 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         req.on('close', () => { clearInterval(ping); eventClients.delete(res); });
     }
 
+    /** GET /api/assets/avatar?target=&id= : image bytes for <img src>, cached per tavern + file (see assets.js). */
+    async function sendAvatar(req, res) {
+        const query = new URL(req.url, 'http://127.0.0.1').searchParams;
+        const { mime, body, etag } = await assets.get(query.get('target') ?? '', 'avatar', query.get('id') ?? '');
+        const headers = { 'Cache-Control': 'private, max-age=300', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+        if (req.headers['if-none-match'] === etag) {
+            res.writeHead(304, headers);
+            res.end();
+            return;
+        }
+        res.writeHead(200, { ...headers, 'Content-Type': mime, 'Content-Length': body.length });
+        res.end(body);
+    }
+
     const routes = {
         'GET /api/settings': () => settings(),
         'PUT /api/settings': b => setSettings(b),
@@ -492,6 +512,10 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
             // Control API: no CORS by design. See authorize().
             authorize(req);
             const path = pathname;
+            if (req.method === 'GET' && path === AVATAR_PATH) {
+                await sendAvatar(req, res);
+                return;
+            }
             const handler = routes[`${req.method} ${path}`];
             if (!handler) throw new ProtocolError(ERR.NOT_FOUND, `No route ${req.method} ${path}`);
             const body = req.method === 'POST' || req.method === 'PUT' ? await readJsonBody(req) : {};
@@ -533,6 +557,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
                 },
                 onEvent: async (link, msg) => {
                     if (msg.type === MSG.ITEM_CHANGED) {
+                        if (msg.payload?.kind === 'character') assets.invalidate(link.target.id, msg.payload.id);
                         await engine.onItemChanged(link.target.id, msg.payload ?? {});
                         emit('status', { reason: 'tavern-changed', target: link.target.id });
                     }

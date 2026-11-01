@@ -9,6 +9,16 @@ import { entryOpsBetween, clone } from './entryOps.js';
 
 const SAVE_DELAY = 600;
 
+/** Open editors by item path: lets global shortcuts (Ctrl+S) write pending edits right away. */
+/** @type {Map<string, () => Promise<void>>} */
+const openEditors = new Map();
+
+/** Writes the pending edits of an open editor and waits for them; resolves at once when that item is not open. @param {string} path */
+export async function flushItem(path) {
+  const flush = openEditors.get(path);
+  if (flush) await flush();
+}
+
 
 /**
  * @param {import('vue').Ref<string>} pathRef
@@ -123,14 +133,30 @@ export function useItem(pathRef) {
     }
   }
 
+  /** Writes pending edits now and waits for any write in flight (Ctrl+S, before syncing). */
+  async function flush() {
+    for (let i = 0; i < 200 && (dirty.value || saving.value) && !externalChange.value; i++) {
+      if (saving.value) await new Promise((r) => setTimeout(r, 30));
+      else await save();
+    }
+  }
+
   // Reload when the workspace hash moves without us (files edited elsewhere or a pull wrote them).
   watch(() => app.item(pathRef.value)?.hash, (h) => {
     if (!h || !hash.value || h === hash.value || saving.value) return;
     if (dirty.value) externalChange.value = true;
     else load();
   });
-  watch(pathRef, () => { if (dirty.value) save(); load(); }, { immediate: true });
-  onBeforeUnmount(() => { if (dirty.value) save(); });
+  watch(pathRef, (p, old) => {
+    if (old && openEditors.get(old) === flush) openEditors.delete(old);
+    openEditors.set(p, flush);
+    if (dirty.value) save();
+    load();
+  }, { immediate: true });
+  onBeforeUnmount(() => {
+    if (openEditors.get(pathRef.value) === flush) openEditors.delete(pathRef.value);
+    if (dirty.value) save();
+  });
 
   return { data, hash, entryTemplate, loading, saving, dirty, error, externalChange, version, load, touch, save, entryOps };
 }

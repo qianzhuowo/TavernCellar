@@ -505,7 +505,7 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
 
         <div class="lb-tools">
           <div class="lb-tools-row">
-            <div class="search grow"><Icon name="search" size="sm" /><input v-model="q" class="input" placeholder="搜索标题、关键字、内容" /></div>
+            <div class="search grow"><Icon name="search" size="sm" /><input v-model="q" class="input" data-find placeholder="搜索标题、关键字、内容（Ctrl+F）" /></div>
             <button class="btn primary" title="新建条目" @click="createEntry"><Icon name="plus" size="sm" />新建</button>
           </div>
           <div class="lb-tools-row filters">

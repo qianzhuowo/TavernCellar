@@ -146,7 +146,7 @@ const delayOn = computed(() => Boolean(e.value.delayUntilRecursion));
     </div>
 
     <div class="field ent-content">
-      <label>内容<span class="hint">{{ (e.content ?? '').length }} 字</span></label>
+      <label>内容<span class="hint wc">{{ (e.content ?? '').length }} 字</span></label>
       <textarea class="textarea" spellcheck="false" :value="e.content ?? ''" @input="set('content', val($event))" />
     </div>
 

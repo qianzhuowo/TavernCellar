@@ -79,10 +79,12 @@ test('studio session: page sets an HttpOnly cookie; API and events accept it onl
 
         // settings: defaults, validation, partial update
         const s = JSON.parse((await get(p, '/api/settings', 'GET', { Cookie: cookie })).body).result;
-        assert.deepEqual(s.ui, { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh' });
-        const put = await get(p, '/api/settings', 'PUT', { Cookie: cookie, Origin: same }, { ui: { theme: 'light', wizardDone: true } });
-        assert.deepEqual(JSON.parse(put.body).result.ui, { theme: 'light', density: 'comfortable', wizardDone: true, messageLang: 'zh' });
+        assert.deepEqual(s.ui, { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh', font: 'sans', fontSize: 15, wordCount: true, externalEditor: 'system' });
+        const put = await get(p, '/api/settings', 'PUT', { Cookie: cookie, Origin: same }, { ui: { theme: 'light', wizardDone: true, font: 'serif', fontSize: 17 } });
+        assert.deepEqual(JSON.parse(put.body).result.ui, { theme: 'light', density: 'comfortable', wizardDone: true, messageLang: 'zh', font: 'serif', fontSize: 17, wordCount: true, externalEditor: 'system' });
         assert.equal((await get(p, '/api/settings', 'PUT', { Cookie: cookie }, { ui: { theme: 'pink' } })).status, 400);
+        assert.equal((await get(p, '/api/settings', 'PUT', { Cookie: cookie }, { ui: { fontSize: 99 } })).status, 400);
+        assert.equal((await get(p, '/api/settings', 'PUT', { Cookie: cookie }, { ui: { externalEditor: 'calc.exe' } })).status, 400, 'no arbitrary commands');
 
         // workspace switch
         const next = join(root, 'ws2');

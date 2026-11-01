@@ -7,7 +7,7 @@ import CardParts from './card/CardParts.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
-import { desktop, joinPath, openNative, copyPathToast } from '../lib/desktop.js';
+import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
 const props = defineProps({ path: { type: String, required: true } });
@@ -15,6 +15,7 @@ const app = useApp();
 const ui = useUi();
 const item = computed(() => app.item(props.path));
 const abs = computed(() => joinPath(app.workspace, props.path));
+const editor = computed(() => app.settings?.ui?.externalEditor || 'system');
 /** @type {Record<string, string>} */
 const busy = reactive({});
 
@@ -120,8 +121,9 @@ async function copyPath() {
         <div class="insp-btns">
           <template v-if="desktop.available">
             <button class="btn sm" @click="openNative('showInFolder', abs, ui.toast)"><Icon name="folderOpen" size="sm" />在资源管理器中显示</button>
-            <button class="btn sm" title="用系统默认程序打开这个文件夹" @click="openNative('openInEditor', abs, ui.toast)"><Icon name="external" size="sm" />打开文件夹</button>
+            <button v-if="editor !== 'vscode'" class="btn sm" title="用系统默认程序打开这个文件夹（可在设置中改为 VS Code）" @click="openExternalEditor(abs, editor, ui.toast)"><Icon name="external" size="sm" />打开文件夹</button>
           </template>
+          <button v-if="editor === 'vscode'" class="btn sm" title="在 VS Code 中打开这个文件夹" @click="openExternalEditor(abs, editor, ui.toast)"><Icon name="code" size="sm" />在 VS Code 中打开</button>
           <button class="btn sm" :title="abs" @click="copyPath"><Icon name="copy" size="sm" />复制路径</button>
         </div>
         <dl class="kv" style="margin-top: 10px">

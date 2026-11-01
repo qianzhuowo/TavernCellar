@@ -2,6 +2,7 @@
 import { ref, onMounted, nextTick } from 'vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
+import Toggle from '../components/Toggle.vue';
 import TavernList from '../components/TavernList.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
@@ -13,6 +14,7 @@ const ui = useUi();
 const editingWs = ref(false);
 const wsDir = ref('');
 const busy = ref(false);
+const FONT_SIZES = [13, 14, 15, 16, 17, 18, 20];
 
 onMounted(async () => {
   app.refreshTaverns();
@@ -104,6 +106,46 @@ function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/w
         <div class="set-label"><div>提示语言</div><div class="faint">同步、取出时伴侣程序与酒馆给出的提示</div></div>
         <div class="set-ctl">
           <Seg :model-value="app.settings.ui.messageLang" :options="[{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }]" @update:model-value="(v) => app.saveUi({ messageLang: v })" />
+        </div>
+      </div>
+    </section>
+
+    <section id="set-text" class="set-sec card">
+      <h3><Icon name="code" />编辑器</h3>
+      <div class="set-row">
+        <div class="set-label"><div>正文字体</div><div class="faint">角色描述、开场白、条目内容等长文本</div></div>
+        <div class="set-ctl">
+          <Seg :model-value="app.settings.ui.font" :options="[{ value: 'sans', label: '无衬线' }, { value: 'serif', label: '衬线' }, { value: 'mono', label: '等宽' }]" @update:model-value="(v) => app.saveUi({ font: v })" />
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><div>正文字号</div></div>
+        <div class="set-ctl">
+          <select class="select" style="width: 110px" :value="app.settings.ui.fontSize" @change="app.saveUi({ fontSize: Number(/** @type {any} */ ($event.target).value) })">
+            <option v-for="n in FONT_SIZES" :key="n" :value="n">{{ n }} px</option>
+          </select>
+          <span class="set-sample" :style="{ fontSize: app.settings.ui.fontSize + 'px' }">酒窖里很安静。The cellar is quiet.</span>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><div>显示字数</div><div class="faint">文本框下方的字数统计</div></div>
+        <div class="set-ctl"><Toggle :model-value="app.settings.ui.wordCount" @update:model-value="(v) => app.saveUi({ wordCount: v })" /></div>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><div>外部编辑器</div><div class="faint">检查栏「文件位置」里打开资料项文件夹的方式；VS Code 需要已安装</div></div>
+        <div class="set-ctl">
+          <Seg :model-value="app.settings.ui.externalEditor" :options="[{ value: 'system', label: '系统默认' }, { value: 'vscode', label: 'VS Code' }]" @update:model-value="(v) => app.saveUi({ externalEditor: v })" />
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><div>快捷键</div></div>
+        <div class="set-ctl">
+          <dl class="kv set-keys">
+            <dt><kbd>Ctrl</kbd>+<kbd>P</kbd></dt><dd>快速打开资料项或页面</dd>
+            <dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>立即写入工作区；手动同步的酒馆有本地修改时询问是否同步</dd>
+            <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></dt><dd>把当前资料项同步到全部可达的酒馆（不含固定的绑定）</dd>
+            <dt><kbd>Ctrl</kbd>+<kbd>F</kbd></dt><dd>聚焦当前页面的搜索框（资料库、世界书条目）</dd>
+          </dl>
         </div>
       </div>
     </section>

@@ -6,7 +6,7 @@ import { Star } from 'lucide-vue-next';
 import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { hueOf, initialOf } from '../lib/status.js';
+import Avatar from '../components/Avatar.vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
 import CardText from '../components/card/CardText.vue';
@@ -78,10 +78,6 @@ const frameworks = computed(() => (item.value?.frameworks || []).map((/** @type 
 const name = computed(() => f('name') || '');
 /** "1.3" -> "v1.3"; versions that already carry a v ("V1.3") are shown as written */
 const versionLabel = computed(() => { const v = String(f('character_version') || '').trim(); return !v ? 'v—' : /^v/i.test(v) ? v : 'v' + v; });
-const avatarStyle = computed(() => {
-  const h = hueOf(name.value || props.path);
-  return { background: `linear-gradient(150deg, hsl(${h} 42% 46%), hsl(${(h + 40) % 360} 46% 26%))` };
-});
 const tags = computed(() => (Array.isArray(f('tags')) ? f('tags') : []));
 const greetings = computed(() => (Array.isArray(f('alternate_greetings')) ? f('alternate_greetings') : []));
 const fav = computed(() => { const v = f('extensions.fav'); return v === true || v === 'true'; });
@@ -149,7 +145,7 @@ function toggleAdv() {
 
       <div class="ce-head">
         <div class="ce-avatar">
-          <div class="avatar" :style="avatarStyle">{{ initialOf(name || '?') }}</div>
+          <Avatar :name="name || '?'" :target="binding?.target || ''" :file="binding?.id || ''" :lazy="false" />
           <span class="faint">换头像请在酒馆中操作</span>
         </div>
         <div class="ce-meta">

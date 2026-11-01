@@ -32,6 +32,18 @@ export async function openNative(name, p, toast) {
   return false;
 }
 
+/**
+ * Opens a workspace folder in the external editor chosen in settings: 'vscode' uses VS Code's vscode://file/ link
+ * (VS Code handles it; nothing is executed by Studio), 'system' the default app of the desktop shell.
+ * @param {string} p absolute path @param {string} editor @param {(msg: string, icon?: string) => void} toast
+ */
+export async function openExternalEditor(p, editor, toast) {
+  if (editor !== 'vscode') return openNative('openInEditor', p, toast);
+  const url = 'vscode://file/' + p.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/').replace(/^([A-Za-z])%3A/, '$1:');
+  window.open(url, '_blank');
+  return true;
+}
+
 /** @param {string} text @returns {Promise<boolean>} */
 export async function copyText(text) {
   try {

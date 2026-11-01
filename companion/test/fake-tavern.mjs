@@ -34,6 +34,12 @@ export class FakeTavern {
 
     async handle({ type, payload }) {
         if (type === MSG.WATCH_SET) { this.watch = payload.items; return {}; }
+        if (type === MSG.ASSET_GET) {
+            this.assetGets = (this.assetGets ?? 0) + 1;
+            const bytes = this.assets?.[payload.id];
+            if (!bytes) throw new ProtocolError(ERR.NOT_FOUND, payload.id);
+            return { type: payload.type, id: payload.id, mime: 'image/jpeg', data: Buffer.from(bytes).toString('base64') };
+        }
         const items = this.store[payload.kind];
         if (type === MSG.CATALOG_LIST) {
             const all = [...items.keys()].map(id => ({ id, name: id }));

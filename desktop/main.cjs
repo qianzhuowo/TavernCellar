@@ -105,13 +105,15 @@ function createWindow() {
         webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
     });
     const allowed = url => url.startsWith(studioUrl);
+    /** Links Studio may hand to the OS: web pages, and VS Code's own "open this path" URL (no command is run here). */
+    const external = url => /^https?:\/\//.test(url) || /^vscode:\/\/file\/[A-Za-z]:\//.test(url);
     win.webContents.on('will-navigate', (event, url) => {
         if (allowed(url)) return;
         event.preventDefault();
-        if (/^https?:\/\//.test(url)) shell.openExternal(url);
+        if (external(url)) shell.openExternal(url);
     });
     win.webContents.setWindowOpenHandler(({ url }) => {
-        if (/^https?:\/\//.test(url)) shell.openExternal(url);
+        if (external(url)) shell.openExternal(url);
         return { action: 'deny' };
     });
     win.webContents.on('before-input-event', (event, input) => {

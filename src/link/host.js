@@ -3,7 +3,7 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ERR, MSG, ProtocolError, assertItemRef, assertKind } from '../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../shared/protocol.js';
 import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
 
 const ctx = () => SillyTavern.getContext();
@@ -117,6 +117,24 @@ function listLorebooks() {
     return (world_names ?? []).map(name => ({ id: name, name }));
 }
 
+// ---- assets ---------------------------------------------------------------
+
+function bytesToBase64(bytes) {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+}
+
+/** Avatar thumbnail through the tavern's own thumbnail URL (ST and tt both expose getThumbnailUrl). */
+async function readAsset({ type, id }) {
+    const response = await fetch(ctx().getThumbnailUrl(type, id), { cache: 'no-cache' });
+    if (!response.ok) throw await responseError(response, `Reading ${type} ${id}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > ASSET_MAX_BYTES) throw new ProtocolError(ERR.BAD_REQUEST, `${type} ${id} is larger than ${ASSET_MAX_BYTES} bytes`);
+    const mime = (response.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+    return { type, id, mime, data: bytesToBase64(bytes) };
+}
+
 // ---- host -----------------------------------------------------------------
 
 export class Host {
@@ -156,6 +174,7 @@ export class Host {
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
             case MSG.WATCH_SET: return this.setWatch(payload);
+            case MSG.ASSET_GET: assertAssetRef(payload); return readAsset(payload);
             default: throw new ProtocolError(ERR.BAD_REQUEST, `Unknown request type: ${type}`);
         }
     }

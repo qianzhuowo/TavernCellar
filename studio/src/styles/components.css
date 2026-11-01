@@ -97,6 +97,7 @@ kbd {
 }
 .field-foot .spacer { flex: 1; }
 .wc { font-variant-numeric: tabular-nums; }
+[data-wordcount="off"] .wc { display: none; }
 
 /* ---------- Toggle switch ---------- */
 .toggle { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); cursor: pointer; user-select: none; }
@@ -207,10 +208,16 @@ kbd {
 
 /* ---------- Avatar ---------- */
 .avatar {
+  position: relative;
   display: grid; place-items: center; border-radius: var(--r-lg);
   color: rgba(255,255,255,.92); font-weight: 700; flex: none; overflow: hidden;
   text-shadow: 0 1px 2px rgba(0,0,0,.3);
 }
+.avatar-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center top;
+  opacity: 0; transition: opacity .15s var(--ease);
+}
+.avatar-img.on { opacity: 1; }
 
 /* ---------- Drawer / toast / empty ---------- */
 .drawer-scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 60; }
@@ -230,3 +237,27 @@ kbd {
 .empty { text-align: center; padding: var(--sp-10) var(--sp-6); color: var(--text-3); }
 .empty svg { width: 36px; height: 36px; stroke-width: 1.3; margin-bottom: var(--sp-3); }
 .empty h3 { margin: 0 0 6px; color: var(--text-2); font-size: var(--fs-lg); font-weight: 600; }
+/* ---------- Quick open (Ctrl+P) / sync prompt (Ctrl+S) ---------- */
+.qo-scrim { z-index: 70; }
+.qo {
+  position: fixed; top: 12vh; left: 50%; transform: translateX(-50%); z-index: 71;
+  width: 560px; max-width: 92vw; max-height: 64vh; display: flex; flex-direction: column;
+  background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+.qo-input { display: flex; align-items: center; gap: 8px; padding: var(--sp-3); border-bottom: 1px solid var(--line); }
+.qo-input .input { flex: 1; border-color: transparent; background: transparent; font-size: var(--fs-md); }
+.qo-list { overflow: auto; padding: 4px; }
+.qo-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--r-md);
+  background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit;
+}
+.qo-row.on { background: var(--bg-3); }
+.qo-label { flex: none; }
+.qo-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); text-align: right; }
+.qo-empty { padding: var(--sp-4); text-align: center; }
+.qo-confirm { padding: var(--sp-4); gap: var(--sp-2); width: 440px; }
+.qo-head { display: flex; align-items: center; gap: 8px; }
+.qo-confirm p { margin: 0; }
+.qo-targets { margin: 0; padding-left: 1.4em; }
+.qo-foot { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }

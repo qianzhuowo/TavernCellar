@@ -23,6 +23,7 @@ const SETTINGS_NAV = [
   { id: 'ws', icon: 'folder', label: '工作区' },
   { id: 'conn', icon: 'plug', label: '连接' },
   { id: 'editor', icon: 'palette', label: '外观' },
+  { id: 'text', icon: 'code', label: '编辑器' },
   { id: 'app', icon: 'box', label: '关于' }
 ];
 

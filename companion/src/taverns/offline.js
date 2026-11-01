@@ -11,7 +11,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ERR, MSG, ProtocolError, assertItemRef, assertKind } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
 import { readCardText, writeCard } from './png.js';
 
@@ -27,6 +27,14 @@ function safeFileName(id) {
         throw new ProtocolError(ERR.BAD_REQUEST, `Invalid item id: ${id}`);
     }
     return id;
+}
+
+/** Thumbnails keep the card's .png name but are usually JPEG: tell by the bytes. */
+export function imageMime(bytes) {
+    if (bytes[0] === 0x89 && bytes[1] === 0x50) return 'image/png';
+    if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+    if (bytes.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+    return 'application/octet-stream';
 }
 
 async function writeAtomic(file, content) {
@@ -67,6 +75,7 @@ export class OfflineLink {
             case MSG.CATALOG_LIST: return this.catalog(payload);
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
+            case MSG.ASSET_GET: return this.asset(payload);
             default: throw new ProtocolError(ERR.BAD_REQUEST, `Unknown request type: ${type}`);
         }
     }
@@ -169,6 +178,25 @@ export class OfflineLink {
         const start = Math.max(0, Number(offset) || 0);
         const count = Math.min(500, Math.max(1, Number(limit) || 50));
         return { total: items.length, items: items.slice(start, start + count) };
+    }
+
+    // ---- assets -------------------------------------------------------------
+
+    /**
+     * Avatar thumbnail without the tavern: the thumbnail it generated earlier when that is not older than the card,
+     * else the card itself when small enough. Never generates or writes thumbnails (the tavern owns that folder).
+     */
+    async asset(payload) {
+        assertAssetRef(payload);
+        const { type, id } = payload;
+        const original = join(this.charactersDir(), safeFileName(id));
+        const thumb = join(this.location.userDir, 'thumbnails', 'avatar', safeFileName(id));
+        const [o, t] = await Promise.all([stat(original).catch(() => null), stat(thumb).catch(() => null)]);
+        if (!o) throw new ProtocolError(ERR.NOT_FOUND, `${type} ${id} not found`);
+        const file = t && t.mtimeMs >= o.mtimeMs && t.size <= ASSET_MAX_BYTES ? thumb : o.size <= ASSET_MAX_BYTES ? original : null;
+        if (!file) throw new ProtocolError(ERR.NOT_FOUND, `${type} ${id} has no thumbnail small enough to read offline`);
+        const bytes = await readFile(file);
+        return { type, id, mime: imageMime(bytes), data: bytes.toString('base64') };
     }
 
     // ---- write --------------------------------------------------------------

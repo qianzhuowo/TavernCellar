@@ -19,8 +19,24 @@ export const MSG = Object.freeze({
     ITEM_PUT: 'item.put',
     WATCH_SET: 'watch.set',
     PING: 'ping',
+    ASSET_GET: 'asset.get',
     ITEM_CHANGED: 'item.changed',
 });
+
+/** Asset types `asset.get` serves (only character avatar thumbnails for now). */
+export const ASSET_TYPES = Object.freeze(['avatar']);
+/** Largest asset `asset.get` returns, in bytes (before base64). */
+export const ASSET_MAX_BYTES = 512 * 1024;
+
+/** Validates an `asset.get` payload: a known type and an id that names one file (no path parts). */
+export function assertAssetRef(payload) {
+    if (!payload || typeof payload !== 'object') throw new ProtocolError(ERR.BAD_REQUEST, 'Missing payload');
+    if (!ASSET_TYPES.includes(payload.type)) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown asset type: ${payload.type}`);
+    const id = payload.id;
+    if (typeof id !== 'string' || !id || id === '.' || id === '..' || /[\\/:*?"<>|\u0000-\u001f]/.test(id)) {
+        throw new ProtocolError(ERR.BAD_REQUEST, `Invalid asset id: ${id}`);
+    }
+}
 
 export const ERR = Object.freeze({
     UNAUTHORIZED: 'unauthorized',

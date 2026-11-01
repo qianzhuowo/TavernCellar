@@ -63,3 +63,30 @@ Studio in a second headless Edge (CDP 9334); both profiles deleted afterwards. S
 Observed: opening a card that carries regex scripts makes ST ask whether to enable them (「此角色含有内置正则脚本」);
 the popup blocks `selectCharacterById` until answered. Answered 「否」 so ST's settings were not changed.
 Cleanup as on tt (scripts and regex emptied; three variables remain because `merge-attributes` cannot delete keys).
+
+## Studio S5 polish — ST 1.15.0 + TauriTavern 2.4.0, 2026-11-01, passed
+
+`cd companion && npm test`: 109 / 109 (new suite `assets`: avatar route through `asset.get`, cache + `ETag` / 304,
+dropped when the tavern reports an edit of that character, session required, path parts and unknown targets refused;
+offline `asset.get` uses the tavern's thumbnail when not older than the card, else the card). Mutation: removing the
+cache invalidation on `item.changed` makes the suite fail. `studio`: `npm run build` passes.
+
+Environment: the user's running ST over a temporary headless Edge (CDP 9335); tt started with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9336` after copying only the plugin files
+(`index.js`, `manifest.json`, `style.css`, `src/`, `shared/`) into its `extensions/third-party/TavernCellar`;
+companion with the isolated `CELLAR_HOME` `p3st-home` and workspace `p3st-ws`; Studio in headless Edge (CDP 9334).
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | `GET /api/assets/avatar` for the test card and three other cards, ST and tt | ✅ 200 `image/png` (ST thumbnails 6–12 KB, tt 28–69 KB), first fetch ≤ 285 ms, revalidation 304 |
+| 2 | Studio library, ST and tt | ✅ every visible card shows the tavern's avatar (screenshot not kept: it shows the user's own cards) |
+| 3 | Card editor header and sync matrix | ✅ the test card's avatar; lorebook rows keep their initial (`docs/studio/character-avatar-dark.png`) |
+| 4 | tt closed, its data folder set as a location, avatars from the offline link | ✅ 200 for two cards, 404 for a missing one; location removed afterwards |
+| 5 | Edit the description, `Ctrl+S` | ✅ prompt「已写入工作区。同步到酒馆？」listing SillyTavern (manual sync, local edit);「先不同步」closes it |
+| 6 | `Ctrl+S` again,「同步」 | ✅ ST has the new text; then the test text was removed from the workspace and synced back |
+| 7 | `Ctrl+P`, type `wi`, Enter | ✅ only `TavernCellar_Test_WI` listed; opens its tab |
+| 8 | `Ctrl+F` in the lorebook editor | ✅ focuses the entry search box |
+| 9 | Settings → 编辑器: serif, 18 px | ✅ `data-font=serif`, `--fs-editor: 18px`, saved in `config.json` (`docs/studio/settings-editor-dark.png`); restored afterwards |
+
+Not verified live: `Ctrl+Shift+S` with two taverns bound to one item (covered only by the same code path as #6);
+「在 VS Code 中打开」(depends on VS Code's URL handler being registered); the desktop build was not repackaged.

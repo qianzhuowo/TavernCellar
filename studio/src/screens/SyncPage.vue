@@ -3,12 +3,13 @@
 // item's binding to that tavern. Sync / pull / auto-sync / unbind share their logic with the inspector (lib/syncOps).
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import Icon from '../components/Icon.vue';
+import Avatar from '../components/Avatar.vue';
 import Toggle from '../components/Toggle.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import {
-  uiStatus, isConflict, itemName, hueOf, initialOf, relTime,
+  uiStatus, isConflict, itemName, relTime,
   HOST, STATUS, MODE_DOT, MODE_LABEL, MODE_TIP, OFF_MODE, STALE_HINT
 } from '../lib/status.js';
 import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
@@ -41,10 +42,6 @@ const issueCount = computed(() => app.items.filter(hasIssue).length);
 
 const KIND = { character: { label: '角色', icon: 'user' }, lorebook: { label: '世界书', icon: 'book' } };
 const kindOf = (/** @type {string} */ k) => KIND[k] || { label: k, icon: 'box' };
-const avatarStyle = (/** @type {string} */ name) => {
-  const h = hueOf(name);
-  return { background: `linear-gradient(135deg, hsl(${h} 55% 52%), hsl(${(h + 40) % 360} 60% 40%))` };
-};
 
 // ---- per-cell actions ----------------------------------------------------
 /** @type {Record<string, string>} key path|target -> running op */
@@ -258,7 +255,7 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
               <tr :class="{ 'sx-has-warn': r.warned.length }">
                 <th scope="row" class="sx-sticky sx-item">
                   <a class="item-cell" :href="hrefOf('item:' + r.it.path)">
-                    <span class="avatar sx-av" :style="avatarStyle(r.name)">{{ initialOf(r.name) }}</span>
+                    <Avatar class="sx-av" :name="r.name" :target="r.it.kind === 'character' ? (r.it.bindings?.[0]?.target || '') : ''" :file="r.it.kind === 'character' ? (r.it.bindings?.[0]?.id || '') : ''" />
                     <span class="sx-item-text">
                       <span class="item-name sx-ellip" :title="r.name">{{ r.name }}</span>
                       <span class="faint sx-item-sub"><Icon :name="kindOf(r.it.kind).icon" size="sm" />{{ kindOf(r.it.kind).label }} · <span class="mono">{{ r.it.path }}/</span></span>

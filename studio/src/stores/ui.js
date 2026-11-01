@@ -88,12 +88,15 @@ export const useUi = defineStore('ui', {
       this.toasts = [{ id, text, icon: icon || 'check' }];
       setTimeout(() => { this.toasts = this.toasts.filter((t) => t.id !== id); }, icon === 'alert' ? 4200 : 2600);
     },
-    /** @param {{theme?:string, density?:string}} [ui] */
+    /** @param {{theme?:string, density?:string, font?:string, fontSize?:number, wordCount?:boolean}} [ui] */
     applyPrefs(ui) {
       if (!ui) return;
       const r = document.documentElement;
       if (ui.theme) { r.dataset.theme = ui.theme; ls.set('cs.theme', ui.theme); try { localStorage.setItem('cs.theme', ui.theme); } catch (e) { /* ignore */ } }
       if (ui.density) r.dataset.density = ui.density;
+      if (ui.font) r.dataset.font = ui.font;
+      if (ui.fontSize) r.style.setProperty('--fs-editor', ui.fontSize + 'px');
+      if (ui.wordCount !== undefined) r.dataset.wordcount = ui.wordCount ? 'on' : 'off';
     }
   }
 });

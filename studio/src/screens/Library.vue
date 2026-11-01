@@ -2,10 +2,11 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
+import Avatar from '../components/Avatar.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
-import { hueOf, initialOf, relTime, STALE_HINT } from '../lib/status.js';
+import { initialOf, relTime, STALE_HINT } from '../lib/status.js';
 
 const app = useApp();
 const ui = useUi();
@@ -43,11 +44,6 @@ async function take(/** @type {any} */ e, /** @type {boolean} */ thenOpen) {
   if (p && thenOpen) { preview.value = null; ui.openItem(p); }
 }
 
-const thumbStyle = (/** @type {string} */ name) => {
-  const h = hueOf(name);
-  return { background: `linear-gradient(150deg, hsl(${h} 42% 46%), hsl(${(h + 40) % 360} 46% 26%))` };
-};
-
 onMounted(() => {
   lib.reload();
   io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting) && lib.hasMore && !lib.loading) lib.loadMore(); }, { rootMargin: '400px' });
@@ -69,7 +65,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
         <Seg :model-value="lib.kind" :options="[{ value: 'character', label: '角色' }, { value: 'lorebook', label: '世界书' }]" @update:model-value="lib.setKind" />
         <label class="search">
           <Icon name="search" size="sm" />
-          <input class="input" :value="lib.query" placeholder="搜索名称" @input="onQuery(/** @type {any} */ ($event.target).value)" />
+          <input class="input" data-find :value="lib.query" placeholder="搜索名称" @input="onQuery(/** @type {any} */ ($event.target).value)" />
         </label>
         <select v-model="lib.sort" class="select" style="width: 120px">
           <option v-if="lib.kind === 'character'" value="recent">最近聊天</option>
@@ -94,10 +90,10 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
     <!-- characters -->
     <div v-if="lib.kind === 'character' && lib.shown.length" class="cat-grid">
       <div v-for="e in lib.shown" :key="e.id" class="cat-card" tabindex="0" :title="e.name" @click="open(e)" @keydown.enter="open(e)">
-        <div class="cat-thumb" :style="thumbStyle(e.name)">
+        <Avatar class="cat-thumb" :name="e.name" :target="lib.target" :file="e.id">
           <span class="cat-initial">{{ initialOf(e.name) }}</span>
-          <span v-if="e.checkedOut" class="in-ws"><Icon name="check" size="sm" />已在工作区</span>
-        </div>
+        </Avatar>
+        <span v-if="e.checkedOut" class="in-ws"><Icon name="check" size="sm" />已在工作区</span>
         <div class="cat-info">
           <div class="cat-name">{{ e.name }}</div>
           <div v-if="e.tags && e.tags.length" class="cat-tags"><span v-for="t in e.tags.slice(0, 2)" :key="t" class="chip tag">{{ t }}</span></div>
@@ -130,7 +126,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
         <div class="drawer-head"><span class="faint">预览 · 只读</span><span class="grow" /><button class="icon-btn" @click="preview = null"><Icon name="x" size="sm" /></button></div>
         <div class="drawer-body">
           <div class="pv-hero">
-            <div class="avatar pv-avatar" :style="thumbStyle(preview.name)">{{ initialOf(preview.name) }}</div>
+            <Avatar class="pv-avatar" :name="preview.name" :target="lib.target" :file="preview.id" :lazy="false" />
             <div>
               <h2>{{ preview.name }}</h2>
               <div v-if="preview.tags && preview.tags.length" class="cat-tags"><span v-for="t in preview.tags" :key="t" class="chip tag">{{ t }}</span></div>
@@ -141,7 +137,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
             <dt>文件</dt><dd class="mono" :title="preview.id">{{ preview.id }}</dd>
             <dt>来源</dt><dd>{{ cur && (cur.live ? 'Cellar Link' : '数据目录（离线）') }}</dd>
           </dl>
-          <div class="dt-note faint"><Icon name="info" size="sm" /><div>描述、开场白与头像预览将在后续版本提供。取出后可在工作区中查看。</div></div>
+          <div class="dt-note faint"><Icon name="info" size="sm" /><div>描述与开场白预览将在后续版本提供。取出后可在工作区中查看。</div></div>
         </div>
         <div class="drawer-foot">
           <button class="btn ghost" @click="preview = null">关闭</button>

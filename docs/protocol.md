@@ -51,12 +51,14 @@
 | `item.put` | `{ kind, id, data, baseHash }` | `{ kind, id, hash, data, warnings: [] }` |
 | `watch.set` | `{ items: [{ kind, id }] }` | `{ count }` |
 | `ping` | `{}` | `{}` |
+| `asset.get` | `{ type: 'avatar', id }` | `{ type, id, mime, data }`（`data` 为 base64，原始大小上限 512KB） |
 
 - `kind`：`character`（id 为头像文件名，如 `Alice.png`）或 `lorebook`（id 为世界书名称）。
 - `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
 - `watch.set` 整体替换监视列表。
+- `asset.get` 读取角色头像缩略图，`id` 为头像文件名（不允许路径成分）。Cellar Link 通过酒馆自身的 `getThumbnailUrl('avatar', id)` 读取（ST 与 tt 同一条路径）；离线时伴侣程序读取酒馆生成过的 `thumbnails/avatar/<id>`（不早于卡片时），否则在不超过上限时读取卡片 PNG 本身，从不生成或写入缩略图。旧插件对该消息返回 `bad_request`，Studio 显示首字头像。
 - `ping` 是心跳：伴侣程序每 15 秒发送一次，10 秒内没有响应就把该酒馆标记为无响应（`/api/status` 中 `targets[].responsive = false`），之后的请求立即失败（`timeout`），不再逐个等待 30 秒；下一次心跳得到响应时自动恢复。原因是浏览器会冻结后台标签页：WebSocket 仍然连着，但页面脚本不运行。插件在已连接期间持有 Web Lock（`tavern-cellar-link`）以避免被冻结。
 
 ## 5. 插件 → 伴侣程序的事件
@@ -108,5 +110,6 @@
 | `/api/sync` | `{ path, target?, force? }` | 工作区 → 酒馆 |
 | `/api/pull` | `{ path, target?, force? }` | 酒馆 → 工作区 |
 | `/api/auto-sync` | `{ path, target?, enabled }` | 切换随时同步 |
+| `GET /api/assets/avatar?target=&id=` | — | 头像图片本身（供 `<img>` 使用）；按酒馆 + 文件名缓存 10 分钟，酒馆报告该角色被修改时失效；带 `ETag` |
 
 `target` 可以是 targetId，也可以是唯一前缀；只连接了一个目标时可省略。
