@@ -80,3 +80,10 @@ screenshots/
 *.key
 *.p12
 *.pfx
+# npm / git credentials (an .npmrc may hold an auth token)
+.npmrc
+.git-credentials
+
+# Temp files from editors and test scripts
+*.tmp
+.tmp-*/
