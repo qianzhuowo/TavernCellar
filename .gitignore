@@ -87,3 +87,13 @@ screenshots/
 # Temp files from editors and test scripts
 *.tmp
 .tmp-*/
+
+# Live-test artifacts that could land outside .tmp/: settings backups, CDP scratch, crash dumps, Electron profiles
+*.cellar-*.tmp
+*__settings.json
+*.dmp
+edge-*/
+DevToolsActivePort
+# Cellar Studio portable / local install trees accidentally created inside the repo
+/Cellar Studio/
+/CellarStudio/

@@ -65,6 +65,8 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 
 ## 4. 源码事实依据（做出上述设计的原因）
 
+以下路径指 ST / tt 上游源码（不在本仓库）。
+
 | 事实 | 出处 | 影响 |
 |---|---|---|
 | 前端在内存里持有角色、世界书，保存时整份覆盖写入 | ST `public/scripts/world-info.js:884` 的 `worldInfoCache`；`src/endpoints/characters.js` 中的 `/edit`；`src/endpoints/worldinfo.js` 中的 `/edit` | 外部改了文件，前端不刷新就会被自动保存覆盖 → 必须由页面内的插件负责刷新 |
