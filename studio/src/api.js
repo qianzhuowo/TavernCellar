@@ -99,7 +99,9 @@ export const api = {
   // Editors (S2/S3): structured item data guarded by the workspace hash.
   item: (path) => call('POST', '/api/item', { path }),
   putItem: (path, data, hash) => call('PUT', '/api/item', { path, data, hash }),
-  editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops })
+  editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops }),
+  /** Character parts kept in card.json instead of their own files. @param {string} path @param {string[]} exclude */
+  setLayout: (path, exclude) => call('POST', '/api/layout', { path, exclude })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */

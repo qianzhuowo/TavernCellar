@@ -144,6 +144,11 @@ Cellar Studio 是 TavernCellar 面向用户的图形界面：**一个窗口完�
 | 世界书 | 主要知识书（`extensions.world`）：下拉选择工作区中的世界书与该卡所在酒馆中的世界书，可清除；选中的书不在工作区时提供"一起取出"，已在工作区时可跳转。绑定写进卡片，随卡片同步 |
 | 其他字段 | 只读折叠区：列出卡片中 Studio 没有专门表单的字段（如 `extensions` 下其他插件的数据），说明"原样保留，可在 card.json 中编辑" |
 
+**脚本框架与文件拆分**（检查栏，仅角色卡）
+
+- 「依赖的脚本框架」：列出伴侣程序识别到的框架（酒馆助手 / MVU / 小白X）、依据，以及需要在酒馆中安装什么；角色头部同时显示一行"需要 …"，检查栏收起时也看得到。
+- 「文件拆分」：六个勾选项（正文字段、其他开场、角色正则、酒馆助手脚本、酒馆助手变量、内嵌世界书），对应资料项 `layout.exclude`；取消勾选即并回 `card.json`。只移动文件，伴侣程序在内容哈希会变时拒绝，同步状态不变。
+
 - 每个文本框底部显示字数（阶段 5 有了 Cellar Link 的分词器后改为"词符"数）。
 - 文本框可"展开编辑器"占满编辑区，支持 `{{char}}`、`{{user}}` 等宏的高亮（CodeMirror 阶段）。
 - 宿主在 `merge-attributes` 语义下无法删除字段：清空某字段时提示"酒馆会保留原值以外的内容……"，与伴侣程序的警告一致。
@@ -260,6 +265,7 @@ Studio 只调用伴侣程序；以下接口在实现 Studio 时加入，命令�
 | `POST /api/items/:path/resolve` | `{target, choices: {槽位: 'workspace' \| 'tavern' \| {value}}}` 逐槽位提交选择：写入工作区、以所见酒馆版本为基准并同步；必须覆盖全部冲突槽位 |
 | `GET /api/assets/avatar?target=&id=` | 角色头像缩略图；伴侣程序经新的协议消息 `asset.get` 请 Cellar Link 读取 `/thumbnail`，按目标 + 文件名 + 修改时间缓存 |
 | `GET/PUT /api/settings`、`POST /api/workspace` | 设置、工作区切换 |
+| `POST /api/layout` | `{path, exclude}` 修改角色卡哪些部分留在 `card.json`（见 workspace-format 选择性拆出）；状态中的 `layout`、`frameworks` 供检查栏显示 |
 
 协议变更：增加 `asset.get` 消息（插件读取头像缩略图并以 base64 返回，单次大小上限 512KB）；`PROTOCOL_VERSION` 保持 1，新消息对旧插件返回 `bad_request` 时界面显示占位头像。
 

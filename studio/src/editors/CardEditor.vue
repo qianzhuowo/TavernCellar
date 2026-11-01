@@ -73,6 +73,7 @@ function set(path, value) {
 
 const item = computed(() => app.item(props.path));
 const binding = computed(() => item.value?.bindings?.[0] || null);
+const frameworks = computed(() => (item.value?.frameworks || []).map((/** @type {any} */ x) => x.name).join('、'));
 
 const name = computed(() => f('name') || '');
 /** "1.3" -> "v1.3"; versions that already carry a v ("V1.3") are shown as written */
@@ -179,6 +180,7 @@ function toggleAdv() {
             <Icon name="user" size="sm" />{{ f('creator') || '未填写创作者' }}
             <span>·</span>{{ versionLabel }}
             <template v-if="world"><span>·</span><Icon name="book" size="sm" />{{ world }}</template>
+            <template v-if="frameworks"><span>·</span><span class="ce-fw" :title="'这张卡依赖的脚本框架，详见检查栏'"><Icon name="puzzle" size="sm" />需要 {{ frameworks }}</span></template>
           </div>
         </div>
       </div>

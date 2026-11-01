@@ -44,6 +44,7 @@
 .ce-fav.on { color: var(--st-local); border-color: color-mix(in srgb, var(--st-local) 40%, transparent); background: var(--st-local-bg); }
 .ce-fav.on svg { fill: currentColor; }
 .ce-sub { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); flex-wrap: wrap; }
+.ce-fw { display: inline-flex; align-items: center; gap: 4px; color: var(--st-warn); cursor: help; }
 
 /* ---------- text fields ---------- */
 .ce-tf .textarea { min-height: 64px; overflow: hidden; }

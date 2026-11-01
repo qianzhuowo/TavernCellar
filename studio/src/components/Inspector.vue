@@ -3,6 +3,7 @@ import { computed, reactive } from 'vue';
 import Icon from './Icon.vue';
 import Toggle from './Toggle.vue';
 import StatusBadge from './StatusBadge.vue';
+import CardParts from './card/CardParts.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach } from '../lib/syncOps.js';
@@ -99,6 +100,8 @@ async function copyPath() {
         <h4>读取错误</h4>
         <div class="sync-note err"><Icon name="alert" size="sm" />{{ item.error }}</div>
       </section>
+
+      <CardParts v-if="item.kind === 'character'" :item="item" />
 
       <section class="insp-sec">
         <h4>文件位置</h4>

@@ -8,6 +8,7 @@ import { Workspace } from './workspace/workspace.js';
 import { startServer, STUDIO_PATH } from './server.js';
 import { detectTaverns } from './detect.js';
 import { detectTtDataRoot, resolveLocations } from './taverns/locations.js';
+import { CHARACTER_PARTS } from './codec/character.js';
 
 const USAGE = `TavernCellar 伴侣程序
 
@@ -31,8 +32,11 @@ const USAGE = `TavernCellar 伴侣程序
   cellar status                         查看已连接的酒馆与工作区各项状态
   cellar catalog <character|lorebook> [搜索词] [--target ID] [--offset N] [--limit N]
                                         浏览酒馆中的资料（只取摘要）
-  cellar checkout <character|lorebook> <id> [--target ID]
+  cellar checkout <character|lorebook> <id> [--target ID] [--with-world] [--keep 部分,部分]
                                         取出到工作区（角色 id 为头像文件名，如 Alice.png）
+                                        --with-world 一起取出角色绑定的世界书；--keep 见 cellar layout
+  cellar layout <项路径> [--keep 部分,部分]   角色卡哪些部分留在 card.json（不写 --keep = 全部拆出）
+                                        部分: ${CHARACTER_PARTS.join(', ')}
   cellar sync <项路径> [--target ID] [--force]    把工作区修改同步到酒馆
   cellar pull <项路径> [--target ID] [--force]    把酒馆中的内容取回工作区
   cellar auto <项路径> <on|off> [--target ID]     切换随时同步
@@ -51,6 +55,12 @@ function parseArgs(argv) {
         } else positional.push(arg);
     }
     return { positional, flags };
+}
+
+/** `--keep regex,scripts` -> ['regex', 'scripts']; the companion rejects unknown names. */
+function parseParts(value) {
+    if (value === true) return [];
+    return String(value).split(',').map(s => s.trim()).filter(Boolean);
 }
 
 async function api(config, method, path, body) {
@@ -303,7 +313,13 @@ async function main() {
         case 'checkout': {
             const [kind, id] = positional;
             if (!kind || !id) throw new Error('用法: cellar checkout <character|lorebook> <id>');
-            print(await api(config, 'POST', '/api/checkout', { target, kind, id }));
+            print(await api(config, 'POST', '/api/checkout', { target, kind, id, withWorld: Boolean(flags['with-world']), ...(flags.keep !== undefined ? { exclude: parseParts(flags.keep) } : {}) }));
+            return;
+        }
+        case 'layout': {
+            const [path] = positional;
+            if (!path) throw new Error('用法: cellar layout <项路径> [--keep 部分,部分]');
+            print(await api(config, 'POST', '/api/layout', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), exclude: flags.keep === undefined ? [] : parseParts(flags.keep) }));
             return;
         }
         case 'sync':
