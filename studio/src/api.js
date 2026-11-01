@@ -108,7 +108,11 @@ export const api = {
   recordVersion: (message) => call('POST', '/api/history/commit', { message }),
   tagVersion: (name, rev) => call('POST', '/api/history/tag', { name, rev }),
   diffVersions: (from, to, path) => call('POST', '/api/history/diff', { from, to, path }),
-  restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path })
+    restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path }),
+    /** Deploy a version to one tavern and pin the bindings there; the workspace is not changed. */
+    pushVersion: (rev, target, { paths, force } = {}) => call('POST', '/api/push', { rev, target, paths, force }),
+    /** End a pin: the binding follows the workspace again. */
+    follow: (path, target) => call('POST', '/api/follow', { path, target })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */

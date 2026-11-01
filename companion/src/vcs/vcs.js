@@ -237,6 +237,17 @@ export class Vcs {
     /** Commit id for a full / abbreviated oid, a tag or a ref name. */
     resolve(rev) { return this.serial(() => this.#resolveLocked(rev)); }
 
+    /** Tag names on a commit (made here or with git; lightweight or annotated). */
+    tagsAt(oid) {
+        return this.serial(async () => {
+            const names = [];
+            for (const name of await git.listTags(this.#opts())) {
+                if (await this.#resolveLocked(name).catch(() => null) === oid) names.push(name);
+            }
+            return names.sort();
+        });
+    }
+
     async #resolveLocked(rev) {
         if (!rev) return null;
         const direct = await this.#ref(rev) ?? await this.#ref(`refs/tags/${rev}`);

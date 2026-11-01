@@ -62,3 +62,21 @@ desktop/release/
 # Ad-hoc screenshots and scratch scripts from manual testing
 screenshots/
 *.local.*
+# scratch images dropped in the repo root (doc screenshots live in docs/studio/)
+/*.png
+/*.jpg
+
+# Merge / patch leftovers and backups
+*.orig
+*.rej
+*.bak
+
+# Other package-manager caches
+.pnpm-store/
+.yarn/
+
+# Local keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx

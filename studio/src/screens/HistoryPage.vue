@@ -112,6 +112,31 @@ const record = () => act('record', async () => {
 }, '已记录版本');
 const tag = () => act('tag', async () => { await api.tagVersion(tagName.value.trim(), selected.value); tagName.value = ''; }, '已打标签');
 
+// ---- push a version to one tavern (docs/versioning.md §3): the workspace stays, the bindings get pinned ----
+const pushTarget = ref('');
+/** {target, results, name} of the last push, shown under the header (failures need a decision) */
+const pushed = ref(/** @type {any} */ (null));
+/** taverns with at least one item that exists in the selected version */
+const pushTargets = computed(() => {
+  const ids = new Set();
+  for (const it of app.items) for (const b of it.bindings || []) ids.add(b.target);
+  return app.targets.filter((/** @type {any} */ t) => ids.has(t.id) && (t.live || t.offline));
+});
+watch(pushTargets, (list) => {
+  if (!list.some((/** @type {any} */ t) => t.id === pushTarget.value)) pushTarget.value = list.length ? list[0].id : '';
+}, { immediate: true });
+const pushedText = { pushed: '已推送', 'tavern-changed': '酒馆里有新的修改，未推送', failed: '失败' };
+function push(/** @type {boolean} */ force = false, /** @type {string[]|undefined} */ paths = undefined) {
+  const target = pushTarget.value;
+  return act('push', async () => {
+    const r = await api.pushVersion(selected.value, target, { force, paths });
+    pushed.value = { ...r, label: app.targetName(target) };
+    const bad = r.results.filter((/** @type {any} */ x) => x.result !== 'pushed').length;
+    if (bad) throw new Error(`${bad} 项没有推送，见下方说明`);
+  }, `已把 ${versionName(selected.value)} 推送到 ${app.targetName(target)}，并固定在这个版本`);
+}
+watch(selected, () => { pushed.value = null; });
+
 function restore(/** @type {string} */ path) {
   if (armedRestore.value !== path) { armedRestore.value = path; return; }
   armedRestore.value = '';
@@ -134,7 +159,7 @@ onMounted(load);
     <div class="page-head">
       <div>
         <h2><Icon name="history" />版本历史</h2>
-        <p class="muted">修改会自动进入「草稿」。写上说明并「记录版本」，就能随时对比、恢复。标记了酒馆名的版本，就是该酒馆里现在的样子。</p>
+        <p class="muted">修改会自动进入「草稿」。写上说明并「记录版本」，就能随时对比、恢复，或把某个版本推送到一个酒馆。标记了酒馆名的版本，就是该酒馆里现在的样子；带 📌 的表示该酒馆固定在那个版本。</p>
       </div>
       <div class="page-actions">
         <select v-model="filter" class="input vh-filter" aria-label="只看某一项">
@@ -175,7 +200,7 @@ onMounted(load);
             <span class="vh-meta faint"><span class="mono">{{ short(v.id) }}</span> · {{ relTime(v.time) }}</span>
             <span class="vh-tags">
               <span v-for="t in v.tags" :key="t" class="badge vh-tag"><Icon name="tag" size="sm" />{{ t }}</span>
-              <span v-for="d in deployedAt(v.id)" :key="d.target + d.path" class="badge vh-dep" :class="{ earlier: d.earlier }" :title="d.earlier ? `${d.label} 中的 ${itemName(d.path)} 是这个版本较早的状态（${short(d.rev)}），之后又有修改` : `${d.label} 中的 ${itemName(d.path)} 是这个版本`">{{ d.label }} · {{ itemName(d.path) }}{{ d.earlier ? '（较早状态）' : '' }}</span>
+              <span v-for="d in deployedAt(v.id)" :key="d.target + d.path" class="badge vh-dep" :class="{ earlier: d.earlier, pinned: d.pinned }" :title="(d.pinned ? `${d.label} 中的 ${itemName(d.path)} 固定在这个版本，工作区的新修改不会同步过去。` : '') + (d.earlier ? `${d.label} 中的 ${itemName(d.path)} 是这个版本较早的状态（${short(d.rev)}），之后又有修改` : `${d.label} 中的 ${itemName(d.path)} 是这个版本`)"><Icon v-if="d.pinned" name="pin" size="sm" />{{ d.label }} · {{ itemName(d.path) }}{{ d.earlier ? '（较早状态）' : '' }}</span>
             </span>
             <span class="vh-items faint">{{ v.items.filter(isItemPath).map(itemName).join('、') || '（工作区设置）' }}</span>
           </button>
@@ -197,6 +222,26 @@ onMounted(load);
           <div class="vh-tagbox">
             <input v-model="tagName" class="input" placeholder="标签名，如 v1.0" @keydown.enter="tagName.trim() && tag()" />
             <button class="btn" :disabled="!!busy || !tagName.trim()" @click="tag"><Icon name="tag" size="sm" />打标签</button>
+          </div>
+          <div v-if="pushTargets.length" class="vh-pushbox" title="把这个版本写到所选酒馆（只包括绑定了该酒馆的项），工作区不变；之后这些项在该酒馆固定在此版本，直到改为跟随最新">
+            <select v-model="pushTarget" class="input" aria-label="推送到哪个酒馆">
+              <option v-for="t in pushTargets" :key="t.id" :value="t.id">{{ app.targetName(t.id) }}</option>
+            </select>
+            <button class="btn primary" :disabled="!!busy || !pushTarget" @click="push()"><Icon name="upload" size="sm" />推送到酒馆</button>
+          </div>
+        </div>
+
+        <div v-if="pushed && pushed.rev === sel.id" class="vh-pushed">
+          <div v-for="x in pushed.results" :key="x.path" class="vh-pushed-row" :class="x.result">
+            <Icon :name="x.result === 'pushed' ? 'check' : 'alert'" size="sm" />
+            <strong>{{ itemName(x.path) }}</strong>
+            <span>{{ pushedText[x.result] || x.result }}{{ x.result === 'pushed' ? `，${pushed.label} 固定在 ${pushed.name}` : '' }}</span>
+            <span v-if="x.result === 'failed'" class="faint">{{ x.error }}</span>
+            <span class="grow" />
+            <template v-if="x.result === 'tavern-changed'">
+              <a class="btn sm" :href="hrefOf({ name: 'sync' })">去同步页取回</a>
+              <button class="btn sm danger" :disabled="!!busy" @click="push(true, [x.path])">覆盖酒馆的修改</button>
+            </template>
           </div>
         </div>
 

@@ -469,6 +469,8 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/history/tag': b => engine.tagVersion(b),
         'POST /api/history/diff': b => engine.diffVersions(b),
         'POST /api/history/restore': b => engine.restoreVersion(b),
+        'POST /api/push': b => engine.pushVersion(b),
+        'POST /api/follow': b => engine.follow(b.path, b),
     };
 
     const server = createServer(async (req, res) => {

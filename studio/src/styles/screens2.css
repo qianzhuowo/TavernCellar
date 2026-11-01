@@ -167,6 +167,14 @@
 .vh-cmp .input { max-width: 220px; }
 .vh-tagbox { display: flex; gap: 6px; }
 .vh-tagbox .input { width: 140px; }
+.vh-pushbox { display: flex; gap: 6px; }
+.vh-pushbox .input { width: 150px; }
+.vh-pushed { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
+.vh-pushed-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; background: var(--ok-soft, var(--accent-soft)); }
+.vh-pushed-row.tavern-changed, .vh-pushed-row.failed { background: var(--warn-soft, var(--accent-soft)); }
+.vh-pushed-row .grow { flex: 1; }
+.vh-dep.pinned { font-weight: 600; }
+.vh-dep .ic { margin-right: 2px; }
 .vh-ditem { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
 .vh-ditem:last-child { border-bottom: 0; }
 .vh-ditem-h { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); }

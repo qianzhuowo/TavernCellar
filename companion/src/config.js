@@ -9,6 +9,11 @@ export function cellarHome() {
     return process.env.CELLAR_HOME || join(homedir(), '.tavern-cellar');
 }
 
+/** Default workspace: Documents/TavernCellar (outside any tavern's data folder). */
+export function defaultWorkspaceDir() {
+    return join(homedir(), 'Documents', 'TavernCellar');
+}
+
 export function configPath() {
     return join(cellarHome(), 'config.json');
 }

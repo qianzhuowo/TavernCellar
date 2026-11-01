@@ -8,16 +8,15 @@
 // The companion is ESM and is loaded with import() in loadCompanion().
 const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, shell } = require('electron');
 const { appendFile, mkdir } = require('node:fs/promises');
-const { homedir } = require('node:os');
 const { isAbsolute, join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const here = __dirname;
-let STUDIO_PATH, startServer, cellarHome, loadConfig, saveConfig, Workspace;
+let STUDIO_PATH, startServer, cellarHome, defaultWorkspaceDir, loadConfig, saveConfig, Workspace;
 async function loadCompanion() {
     const load = rel => import(pathToFileURL(join(here, '..', rel)).href);
     ({ STUDIO_PATH, startServer } = await load('companion/src/server.js'));
-    ({ cellarHome, loadConfig, saveConfig } = await load('companion/src/config.js'));
+    ({ cellarHome, defaultWorkspaceDir, loadConfig, saveConfig } = await load('companion/src/config.js'));
     ({ Workspace } = await load('companion/src/workspace/workspace.js'));
 }
 const ICON = join(here, 'assets', 'icon.png');
@@ -52,7 +51,7 @@ async function startCompanion() {
         log(`a companion already runs on port ${config.port}; using it`);
         return;
     }
-    const dir = config.workspace ?? join(homedir(), 'TavernCellar');
+    const dir = config.workspace ?? defaultWorkspaceDir();
     const workspace = await Workspace.init(dir);
     if (!config.workspace) {
         config.workspace = workspace.root;

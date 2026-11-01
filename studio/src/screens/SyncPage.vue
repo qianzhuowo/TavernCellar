@@ -11,7 +11,7 @@ import {
   uiStatus, isConflict, itemName, hueOf, initialOf, relTime,
   HOST, STATUS, MODE_DOT, MODE_LABEL, MODE_TIP, OFF_MODE, STALE_HINT
 } from '../lib/status.js';
-import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
 import { api, errorText } from '../api.js';
 import { warningText } from '../lib/warnings.js';
 
@@ -69,6 +69,11 @@ async function unbind(/** @type {string} */ path, /** @type {any} */ b) {
   armed.value = '';
   busy[k] = 'unbind';
   try { await unbindBinding(app, ui, path, b); } finally { delete busy[k]; }
+}
+async function follow(/** @type {string} */ path, /** @type {any} */ b) {
+  const k = keyOf(path, b);
+  busy[k] = 'follow';
+  try { await followBinding(app, ui, path, b); } finally { delete busy[k]; }
 }
 
 // ---- bind an unbound cell to a tavern item (the way back from unbind) -------
@@ -296,16 +301,20 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                         <span v-if="v.mode === 'stale'" class="cell-sub">{{ STALE_HINT }}</span>
                         <span v-else-if="v.mode === 'offline'" class="cell-sub">{{ v.sub }}</span>
                         <span v-if="b.waiting" class="cell-hint"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</span>
+                        <span v-if="b.pinned" class="cell-hint sx-pin" :title="PIN_TIP"><Icon name="pin" size="sm" />{{ pinText(b.pinned) }}</span>
                         <span v-if="b.tavernError" class="sx-err"><Icon name="alert" size="sm" /><span>{{ b.tavernError }}</span></span>
                       </div>
 
                       <div class="cell-ops">
                         <button v-if="v.conflict" class="btn sm primary" @click="ui.openConflict(r.it.path)"><Icon name="alert" size="sm" />处理冲突</button>
                         <template v-else>
-                          <button class="btn sm" :disabled="!v.canSync || !!busy[keyOf(r.it.path, b)] || bulk.running" :title="!v.reach ? MODE_TIP[v.mode] : !v.canSync ? '没有本地修改需要同步' : '把工作区的修改写入酒馆'" @click="run(r.it.path, b, 'sync')">
+                          <button v-if="b.pinned" class="btn sm" :disabled="!!busy[keyOf(r.it.path, b)] || bulk.running" title="取消固定；之后工作区的修改按正常方式同步到这个酒馆" @click="follow(r.it.path, b)">
+                            <Icon :name="busy[keyOf(r.it.path, b)] === 'follow' ? 'spin' : 'refresh'" size="sm" />跟随最新
+                          </button>
+                          <button v-else class="btn sm" :disabled="!v.canSync || !!busy[keyOf(r.it.path, b)] || bulk.running" :title="!v.reach ? MODE_TIP[v.mode] : !v.canSync ? '没有本地修改需要同步' : '把工作区的修改写入酒馆'" @click="run(r.it.path, b, 'sync')">
                             <Icon :name="busy[keyOf(r.it.path, b)] === 'sync' ? 'spin' : 'upload'" size="sm" />同步
                           </button>
-                          <button class="btn sm" :disabled="!v.canPull || !!busy[keyOf(r.it.path, b)] || bulk.running" :title="!v.reach ? MODE_TIP[v.mode] : !v.canPull ? '酒馆没有新的修改' : '从酒馆取回，覆盖工作区'" @click="run(r.it.path, b, 'pull')">
+                          <button class="btn sm" :disabled="!v.canPull || !!busy[keyOf(r.it.path, b)] || bulk.running" :title="!v.reach ? MODE_TIP[v.mode] : !v.canPull ? '酒馆没有新的修改' : b.pinned ? '把酒馆里在推送版本之后的修改合并进工作区，并改为跟随最新' : '从酒馆取回，覆盖工作区'" @click="run(r.it.path, b, 'pull')">
                             <Icon :name="busy[keyOf(r.it.path, b)] === 'pull' ? 'spin' : 'download'" size="sm" />取回
                           </button>
                         </template>
@@ -332,8 +341,8 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                           :model-value="!!b.autoSync"
                           sync
                           label="随时同步"
-                          :disabled="!!busy[keyOf(r.it.path, b)] || v.mode === 'closed'"
-                          :title="v.mode === 'closed' ? MODE_TIP.closed : '工作区或酒馆一有修改就自动同步（冲突除外）'"
+                          :disabled="!!busy[keyOf(r.it.path, b)] || v.mode === 'closed' || !!b.pinned"
+                          :title="v.mode === 'closed' ? MODE_TIP.closed : b.pinned ? '固定在某个版本时不自动同步' : '工作区或酒馆一有修改就自动同步（冲突除外）'"
                           @update:model-value="(on) => auto(r.it.path, b, on)"
                         />
                       </div>

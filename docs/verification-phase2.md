@@ -37,7 +37,27 @@ Bugs found during the live run and fixed (each has a test):
 
 Not verified live:
 
-- TauriTavern. The version code does not touch Cellar Link or the tavern side; tt sync paths are the same as in the
-  phase-3-prep run.
 - A large lorebook (thousands of entry files): snapshot speed not measured.
 - Using git / jj on the workspace at the same time as the companion (covered only by the "user's own commit" test).
+
+## Pushing versions — ST 1.15.0 + TauriTavern 2.4.0, 2026-11-01, passed
+
+Same isolated companion and workspace; this time both taverns connected at once (ST page in headless Edge, tt
+over WebView2 CDP with the current Cellar Link files). `TavernCellar_Test` was bound to tt for the run
+(identical after a whole-item resolve with the workspace side) and unbound again afterwards.
+
+`npm test`: 107 / 107 (new suite `push`: 8 tests — push + pin, skipped by sync / auto-sync, tavern edit only noted,
+force over it, pull from a pinned tavern merges since the version and follows, follow, error cases, a tag made with
+`git tag -a`). Two mutations (drop the pin check in auto-sync; pull tavern edits for pinned bindings) each make the
+suite fail.
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Record a version, tag `p2-release`; keep writing in the workspace (personality line), record again | ✅ |
+| 2 | Studio history page: select `p2-release`, choose TauriTavern, 「推送到酒馆」 | ✅ 「TavernCellar_Test 已推送，TauriTavern 固定在 p2-release」; the timeline shows the pinned tt marker on that version (`docs/studio/history-push-dark.png`) |
+| 3 | tt has the release, ST has the newer line; `sync --target <tt>` | ✅ refused:「固定在版本 …；先改为跟随最新」 |
+| 4 | Edit the card inside tt while pinned | ✅ status「酒馆有修改」, workspace untouched; sync matrix shows「固定在 p2-release，工作区已更新」with「跟随最新」/「取回」(`docs/studio/sync-pinned-dark.png`) |
+| 5 | Pull from tt | ✅ `merged`: the tt edit (scenario) came in as「来自 TauriTavern：合并」, the workspace kept its newer personality line, the binding follows again; after syncing, ST and tt both have both edits |
+| 6 | Push the release again, then「跟随最新」in the Studio inspector, then sync | ✅ pin gone, status「本地有修改」; after sync tt has the latest content |
+
+Not verified live: pushing several items at once (covered by unit tests only; the test lorebook is not bound to tt).

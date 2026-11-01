@@ -72,6 +72,27 @@ export async function unbindBinding(app, ui, path, b) {
 export const canReach = (/** @type {string} */ mode) => mode === 'online' || mode === 'offline';
 
 /**
+ * Ends a pin (docs/versioning.md §3): the binding follows the workspace again; auto-sync bindings sync right away.
+ * @param {any} app @param {any} ui @param {string} path @param {any} b
+ * @returns {Promise<boolean>}
+ */
+export async function followBinding(app, ui, path, b) {
+  try {
+    const r = /** @type {any} */ (await api.follow(path, b.target));
+    ui.toast(r.error ? `已改为跟随最新，但同步失败：${r.error}` : r.sync ? '已改为跟随最新并同步' : '已改为跟随最新', r.error ? 'alert' : 'check');
+    await app.refreshStatus();
+    return true;
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    return false;
+  }
+}
+
+/** One-line description of a pinned binding, e.g. "固定在 v1.0，工作区已更新". */
+export const pinText = (/** @type {any} */ p) => `固定在 ${p.name}${p.ahead ? '，工作区已更新' : ''}`;
+export const PIN_TIP = '这个酒馆停在推送的版本，工作区的新修改不会同步过去；「跟随最新」后恢复正常同步';
+
+/**
  * Binds an existing workspace item to a tavern item (the way back from unbind). Identical data comes back in sync;
  * different data is a whole-item conflict, which opens the conflict page.
  * @param {any} app @param {any} ui @param {string} path @param {string} target @param {string} id

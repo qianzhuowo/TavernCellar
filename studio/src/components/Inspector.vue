@@ -6,7 +6,7 @@ import StatusBadge from './StatusBadge.vue';
 import CardParts from './card/CardParts.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { runBindingOp, setAutoSync, canReach } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
@@ -42,6 +42,11 @@ async function setAuto(/** @type {any} */ b, /** @type {boolean} */ on) {
   try { await setAutoSync(app, ui, props.path, b, on); } finally { delete busy[b.target]; }
 }
 
+async function follow(/** @type {any} */ b) {
+  busy[b.target] = 'follow';
+  try { await followBinding(app, ui, props.path, b); } finally { delete busy[b.target]; }
+}
+
 async function copyPath() {
   await copyPathToast(abs.value, ui.toast);
 }
@@ -66,7 +71,11 @@ async function copyPath() {
           <div v-if="app.modeOf(b) === 'stale'" class="sync-note warn"><Icon name="alert" size="sm" />{{ STALE_HINT }}</div>
           <div v-if="b.waiting" class="sync-note"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</div>
           <div v-if="b.tavernError" class="sync-note err"><Icon name="alert" size="sm" />{{ b.tavernError }}</div>
-          <a v-if="b.deployed" class="sync-note sync-dep" href="#/history" title="在版本历史中查看"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
+          <div v-if="b.pinned" class="sync-note sync-pin" :title="PIN_TIP">
+            <Icon name="pin" size="sm" /><span class="grow">{{ pinText(b.pinned) }}</span>
+            <button class="btn sm" :disabled="!!busy[b.target]" @click="follow(b)">跟随最新</button>
+          </div>
+          <a v-else-if="b.deployed" class="sync-note sync-dep" href="#/history" title="在版本历史中查看"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
           <div v-if="isConflict(uiStatus(b.status))" class="sync-note err">
             <Icon name="alert" size="sm" /><span class="grow">两边都改了同一处</span>
             <a v-if="ui.route.name !== 'conflict'" href="#" @click.prevent="ui.openConflict(props.path)">处理冲突</a>
@@ -76,15 +85,16 @@ async function copyPath() {
               sync
               :model-value="b.autoSync"
               label="随时同步"
-              :disabled="!!busy[b.target]"
-              title="修改后自动同步到此酒馆"
+              :disabled="!!busy[b.target] || !!b.pinned"
+              :title="b.pinned ? '固定在某个版本时不自动同步' : '修改后自动同步到此酒馆'"
               @update:model-value="(v) => setAuto(b, v)"
             />
             <span class="grow" />
-            <button class="btn sm" :disabled="!canAct(b) || !!busy[b.target]" title="从酒馆取回，覆盖工作区" @click="run(b, 'pull')">
+            <button class="btn sm" :disabled="!canAct(b) || !!busy[b.target]" :title="b.pinned ? '把酒馆里在推送版本之后的修改合并进工作区，并改为跟随最新' : '从酒馆取回，覆盖工作区'" @click="run(b, 'pull')">
               <Icon :name="busy[b.target] === 'pull' ? 'spin' : 'download'" size="sm" />取回
             </button>
             <button
+              v-if="!b.pinned"
               class="btn sm"
               :class="{ primary: uiStatus(b.status) === 'local' }"
               :disabled="!canAct(b) || !!busy[b.target]"

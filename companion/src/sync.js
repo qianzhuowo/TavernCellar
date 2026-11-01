@@ -249,7 +249,7 @@ export class SyncEngine {
         const results = [];
         for (const item of [...this.ws.manifest.items]) {
             for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
-                if (!binding.autoSync || (onlyTargetId && targetId !== onlyTargetId)) continue;
+                if (!binding.autoSync || binding.pin || (onlyTargetId && targetId !== onlyTargetId)) continue;
                 const conn = this.#writableConn(targetId);
                 if (!conn) continue;
                 const result = await this.withLock(item.path, async () => {
@@ -360,6 +360,9 @@ export class SyncEngine {
     async sync(path, { target: targetSpec, force = false } = {}) {
         const item = this.requireItem(path);
         const { targetId, binding, link } = this.resolveBinding(item, targetSpec);
+        if (binding.pin) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `${path} 在这个酒馆固定在版本 ${binding.pin.slice(0, 8)}；要同步最新内容，先改为跟随最新`, { pinned: binding.pin });
+        }
         return this.withLock(path, () => this.#syncLocked(item, targetId, binding, link, force));
     }
 
@@ -461,6 +464,14 @@ export class SyncEngine {
         const item = this.requireItem(path);
         const { targetId, binding, link } = this.resolveBinding(item, targetSpec);
         return this.withLock(path, async () => {
+            if (binding.pin) {
+                // Pinned: pulling takes the tavern's edits made after the pinned version into the workspace, and the
+                // binding follows the workspace again. An unchanged tavern has nothing to give (the workspace is ahead).
+                const remote = await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id });
+                const state = this.ws.getSyncState(item.path, targetId) ?? {};
+                if (remote.hash === state.base && !force) return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash, pinned: binding.pin };
+                await this.#unpin(item, targetId);
+            }
             await this.#beforeExternal();
             const state = this.ws.getSyncState(item.path, targetId) ?? {};
             const local = await this.encodeItem(item).catch(() => null); // unreadable files count as local changes
@@ -556,6 +567,14 @@ export class SyncEngine {
             const local = await this.encodeItem(item).catch(() => null);
             const remote = await conn.link.request(MSG.ITEM_GET, { kind, id: binding.id });
             if (remote.hash === state.base) return;
+            if (binding.pin) {
+                // Pinned: the workspace is not this tavern's source right now. Only note the change; the user pulls
+                // it in or pushes the pinned version again (docs/versioning.md §3).
+                this.ws.setSyncState(item.path, targetId, { tavern: remote.hash });
+                await this.ws.saveState();
+                this.log(`tavern change on pinned ${item.path} <- ${targetId}: kept in the tavern, not pulled`);
+                return;
+            }
             await this.#beforeExternal();
             if (local && local.hash === state.base) {
                 await this.writeItem(item, remote.data);
@@ -588,7 +607,7 @@ export class SyncEngine {
             }
             for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
                 const state = this.ws.getSyncState(path, targetId) ?? {};
-                if (!binding.autoSync || local.hash === state.base || state.conflict) continue;
+                if (!binding.autoSync || binding.pin || local.hash === state.base || state.conflict) continue;
                 // Live link, or the tavern's files when it is closed and set to write offline; 'wait' pushes on connect.
                 const conn = this.#writableConn(targetId);
                 if (!conn) continue;
@@ -776,9 +795,9 @@ export class SyncEngine {
         const deployed = [];
         for (const item of this.ws.manifest.items) {
             if (path && item.path !== path) continue;
-            for (const targetId of Object.keys(item.bindings ?? {})) {
+            for (const [targetId, binding] of Object.entries(item.bindings ?? {})) {
                 const rev = await vcs.getDeployed(targetId, item.path);
-                if (rev) deployed.push({ path: item.path, target: targetId, label: this.#targetLabel(targetId), rev });
+                if (rev) deployed.push({ path: item.path, target: targetId, label: this.#targetLabel(targetId), rev, ...(binding.pin ? { pinned: true } : {}) });
             }
         }
         const versions = await vcs.log({ path, limit: Math.min(Math.max(Number(limit) || 100, 1), 500) });
@@ -897,6 +916,91 @@ export class SyncEngine {
         return result;
     }
 
+    // ---- deploying versions (docs/versioning.md §3) -----------------------------------------------------
+
+    /** The binding follows the workspace again. */
+    async #unpin(item, targetId) {
+        delete item.bindings[targetId].pin;
+        this.ws.setSyncState(item.path, targetId, { pinHash: undefined });
+        await this.ws.saveManifest();
+        await this.ws.saveState();
+    }
+
+    /**
+     * Pushes a version to one tavern: every item of that version bound to the tavern (or only `paths`) is written
+     * as it was in the version, the workspace is left alone, and the binding is pinned there. Each write is checked
+     * against the base hash like any sync: a tavern changed since the last agreement is reported, not overwritten,
+     * unless `force`.
+     */
+    async pushVersion({ rev, target: targetSpec, paths, force = false } = {}) {
+        const vcs = await this.versions();
+        let id;
+        try { id = await vcs.resolve(rev ?? 'HEAD'); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
+        const { target } = this.targets.resolve(targetSpec);
+        const bound = this.ws.manifest.items.filter(item => item.bindings?.[target.id]);
+        let items;
+        if (paths?.length) {
+            items = paths.map(p => {
+                const item = this.requireItem(p);
+                if (!item.bindings?.[target.id]) throw new ProtocolError(ERR.BAD_REQUEST, `${p} 没有绑定这个酒馆`);
+                return item;
+            });
+        } else {
+            items = [];
+            for (const item of bound) if (await vcs.readItemAt(id, item.path)) items.push(item);
+            if (!items.length) throw new ProtocolError(ERR.BAD_REQUEST, `版本 ${id.slice(0, 8)} 里没有绑定了这个酒馆的项`);
+        }
+        this.#assertCanWrite(target.id);
+        const results = [];
+        for (const item of items) {
+            results.push(await this.withLock(item.path, () => this.#pushItem(vcs, id, item, target.id, force)).catch(error => ({
+                path: item.path, result: error.code === ERR.CONFLICT ? 'tavern-changed' : 'failed', error: error.message,
+            })));
+        }
+        this.onHistory();
+        const names = await vcs.tagsAt(id);
+        return { rev: id, name: names[0] ?? id.slice(0, 8), target: target.id, results };
+    }
+
+    async #pushItem(vcs, id, item, targetId, force) {
+        const binding = item.bindings[targetId];
+        const { link } = this.targets.tryGet(targetId) ?? {};
+        if (!link) throw new ProtocolError(ERR.NOT_CONNECTED, `Target ${targetId} is not connected`);
+        const version = await this.#dataAt(vcs, id, item.path, item.kind);
+        if (!version.present) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 在版本 ${id.slice(0, 8)} 中不存在`);
+        if (!version.data) throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${version.error}`);
+        const state = this.ws.getSyncState(item.path, targetId) ?? {};
+        const baseHash = force ? (await link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id })).hash : state.base;
+        const result = await link.request(MSG.ITEM_PUT, { kind: item.kind, id: binding.id, data: version.data, baseHash });
+        await this.#agree(item, targetId, result.data ?? version.data, result.hash);
+        binding.pin = id;
+        this.ws.setSyncState(item.path, targetId, { pinHash: await hashData(version.data), ...(result.warnings?.length ? { warnings: result.warnings, warnedAt: new Date().toISOString() } : {}) });
+        await this.ws.saveManifest();
+        await this.ws.saveState();
+        await vcs.setDeployed(targetId, item.path, id);
+        this.log(`pushed ${item.path} @ ${id.slice(0, 8)} -> ${targetId}`);
+        return { path: item.path, result: 'pushed', hash: result.hash, warnings: result.warnings ?? [] };
+    }
+
+    /** Ends a pin: the binding follows the workspace; auto-sync bindings sync right away. */
+    async follow(path, { target: targetSpec } = {}) {
+        const item = this.requireItem(path);
+        const bound = Object.keys(item.bindings ?? {});
+        const targetId = targetSpec ? bound.find(id => id === targetSpec || id.startsWith(targetSpec)) : (bound.length === 1 ? bound[0] : null);
+        if (!targetId) throw new ProtocolError(ERR.BAD_REQUEST, `Specify which binding of ${path} to change`);
+        return this.withLock(path, async () => {
+            const binding = item.bindings[targetId];
+            if (!binding.pin) return { path, target: targetId, result: 'following' };
+            await this.#unpin(item, targetId);
+            this.log(`${path} -> ${targetId} follows the workspace again`);
+            const conn = binding.autoSync ? this.#writableConn(targetId) : null;
+            if (!conn) return { path, target: targetId, result: 'following' };
+            const synced = await this.#syncLocked(item, targetId, binding, conn.link, false)
+                .catch(error => ({ result: 'failed', error: error.message }));
+            return { path, target: targetId, result: 'following', sync: synced.result, ...(synced.error ? { error: synced.error } : {}) };
+        });
+    }
+
     // ---- status ------------------------------------------------------------
 
     async status() {
@@ -935,11 +1039,14 @@ export class SyncEngine {
                         tavernError = e.message;
                     }
                 }
-                const localChanged = !error && localHash !== state.base;
+                const pinned = binding.pin ? { rev: binding.pin, name: (vcs && (await vcs.tagsAt(binding.pin).catch(() => []))[0]) || binding.pin.slice(0, 8), ahead: !error && localHash !== state.pinHash } : null;
+                // Pinned: the workspace moving on is not "unsynced"; only a tavern edit counts.
+                const localChanged = !pinned && !error && localHash !== state.base;
                 const tavernChanged = Boolean(tavernHash) && tavernHash !== state.base;
                 let status = 'in-sync';
                 if (state.conflict) status = 'conflict';
-                else if (error) status = 'invalid';
+                else if (error && !pinned) status = 'invalid';
+                else if (pinned) status = tavernChanged ? 'tavern-changes' : 'in-sync';
                 else if (localChanged && tavernChanged && tavernHash !== localHash) status = 'both-changed';
                 else if (localChanged && tavernHash !== localHash) status = 'local-changes';
                 else if (tavernChanged && tavernHash !== localHash) status = 'tavern-changes';
@@ -949,6 +1056,7 @@ export class SyncEngine {
                     target: targetId, id: binding.id, autoSync: binding.autoSync,
                     connected: Boolean(liveConn), offline: !liveConn && Boolean(conn), status,
                     ...(deployed ? { deployed } : {}),
+                    ...(pinned ? { pinned } : {}),
                     ...(offlineSync ? { offlineSync } : {}),
                     // Local edits held back until the tavern starts (mode 'wait').
                     ...(offlineSync === 'wait' && (status === 'local-changes' || status === 'both-changed') ? { waiting: true } : {}),

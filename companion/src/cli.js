@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /** cellar — TavernCellar companion CLI. Run `cellar help` for usage. */
-import { resolve, join } from 'node:path';
-import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { configPath, loadConfig, saveConfig } from './config.js';
+import { configPath, defaultWorkspaceDir, loadConfig, saveConfig } from './config.js';
 import { Workspace } from './workspace/workspace.js';
 import { startServer, STUDIO_PATH } from './server.js';
 import { detectTaverns } from './detect.js';
@@ -47,7 +46,10 @@ const USAGE = `TavernCellar 伴侣程序
   cellar commit "说明"                    记录版本（写说明并结束草稿）
   cellar tag <名称> [版本]                给版本打标签（默认最新版本）
   cellar diff <版本A> [版本B] [项路径]     按字段对比两个版本（版本B 默认最新）
-  cellar restore <版本> <项路径>          把一项恢复成某个版本（之后同步到酒馆）
+  cellar restore <版本> <项路径>          把工作区里的一项恢复成某个版本（之后同步到酒馆）
+  cellar push <版本|标签> [项...] --target <酒馆> [--force]
+                                         把某个版本推送到一个酒馆并固定在那里（工作区不动）
+  cellar follow <项路径> [--target <酒馆>]  取消固定，改为跟随最新
   版本可以写编号前几位、标签名或 HEAD
 
 配置文件: ${configPath()}`;
@@ -96,7 +98,7 @@ function formatHistory({ versions, deployed }) {
         const marks = [
             v.draft ? '@ 草稿' : '',
             ...v.tags.map(t => `标签 ${t}`),
-            ...deployed.filter(d => d.rev === v.id || d.shownAt === v.id).map(d => `${d.label} 已部署 ${d.path}${d.earlier ? `（较早状态 ${d.rev.slice(0, 8)}）` : ''}`),
+            ...deployed.filter(d => d.rev === v.id || d.shownAt === v.id).map(d => `${d.label} ${d.pinned ? '固定在此' : '已部署'} ${d.path}${d.earlier ? `（较早状态 ${d.rev.slice(0, 8)}）` : ''}`),
         ].filter(Boolean);
         const when = new Date(v.time).toLocaleString();
         return `${v.id.slice(0, 8)}  ${when}  ${v.message}${marks.length ? `  [${marks.join('；')}]` : ''}\n          ${v.items.filter(p => p.includes('/')).join('、') || '（无资料项变化）'}`;
@@ -208,7 +210,7 @@ async function main() {
 
     switch (command) {
         case 'init': {
-            const dir = resolve(positional[0] ?? config.workspace ?? 'TavernCellar');
+            const dir = resolve(positional[0] ?? config.workspace ?? defaultWorkspaceDir());
             const ws = await Workspace.init(dir);
             config.workspace = ws.root;
             await saveConfig(config);
@@ -238,7 +240,7 @@ async function main() {
             }
             let dir = config.workspace;
             if (!dir) {
-                dir = join(homedir(), 'TavernCellar');
+                dir = defaultWorkspaceDir();
                 console.log(`尚未设置工作区，使用默认目录 ${dir}（可用 cellar init <目录> 更改）`);
             }
             const ws = await Workspace.init(dir);
@@ -400,6 +402,25 @@ async function main() {
             if (!rev || !path) throw new Error('用法: cellar restore <版本> <项路径>');
             const r = await api(config, 'POST', '/api/history/restore', { rev, path: path.replace(/\\/g, '/').replace(/\/$/, '') });
             console.log(`${r.path} 已恢复到 ${r.rev.slice(0, 8)}；用 cellar sync ${r.path} 同步到酒馆`);
+            return;
+        }
+        case 'push': {
+            const [rev, ...paths] = positional;
+            if (!rev || !target) throw new Error('用法: cellar push <版本|标签> [项路径...] --target <酒馆> [--force]');
+            const r = await api(config, 'POST', '/api/push', { rev, target, paths: paths.length ? paths.map(p => p.replace(/\\/g, '/').replace(/\/$/, '')) : undefined, force: Boolean(flags.force) });
+            console.log(`推送 ${r.name}（${r.rev.slice(0, 8)}）到 ${r.target.slice(0, 8)}`);
+            for (const x of r.results) {
+                const text = x.result === 'pushed' ? `已推送，固定在 ${r.name}` : x.result === 'tavern-changed' ? `未推送：酒馆里有新的修改（可先取回，或用 --force 覆盖）` : `失败：${x.error}`;
+                console.log(`  ${x.path}  ${text}`);
+            }
+            if (r.results.some(x => x.result !== 'pushed')) process.exitCode = 1;
+            return;
+        }
+        case 'follow': {
+            const [path] = positional;
+            if (!path) throw new Error('用法: cellar follow <项路径> [--target <酒馆>]');
+            const r = await api(config, 'POST', '/api/follow', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target });
+            console.log(`${r.path} 在 ${r.target.slice(0, 8)} 改为跟随最新${r.sync ? `（同步：${r.sync}${r.error ? ` ${r.error}` : ''}）` : ''}`);
             return;
         }
         case 'help':
