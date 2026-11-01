@@ -19,6 +19,9 @@ const dotClass = (/** @type {string} */ m) => MODE_DOT[m] || 'off';
     <a v-if="app.conflictCount" class="si" href="#/sync" style="color: var(--st-conflict)">
       <Icon name="alert" size="sm" />{{ app.conflictCount }} 项冲突
     </a>
+    <a v-if="app.draftCount" class="si" href="#/history" title="有修改还没记录为版本">
+      <Icon name="history" size="sm" />草稿：{{ app.draftCount }} 项未记录
+    </a>
     <span class="spacer" />
     <span class="si hide-narrow faint" :title="app.workspace"><Icon name="folder" size="sm" />{{ app.items.length }} 个资料项</span>
     <span class="si hide-narrow faint">127.0.0.1:{{ app.port }}</span>

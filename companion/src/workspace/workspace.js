@@ -7,6 +7,7 @@ import { mkdir, readdir, readFile, rm, rename, writeFile } from 'node:fs/promise
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { safeSegment } from '../codec/text.js';
 import { codecFor } from '../codec/index.js';
+import { Vcs } from '../vcs/vcs.js';
 
 export const MANIFEST_FILE = 'cellar.json';
 const INTERNAL_DIR = '.cellar';
@@ -57,6 +58,12 @@ export class Workspace {
 
     internal(...parts) {
         return join(this.root, INTERNAL_DIR, ...parts);
+    }
+
+    /** Version history of this workspace (docs/versioning.md); call `await vcs.ready()` before use. */
+    get vcs() {
+        this._vcs ??= new Vcs(this.root, { ignore: isIgnoredName });
+        return this._vcs;
     }
 
     /** Resolves an item-relative "/" path inside the workspace; rejects escapes. */

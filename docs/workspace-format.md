@@ -6,10 +6,13 @@
 
 ```
 <工作区>/
-├─ cellar.json                 工作区清单（提交进版本库）
+├─ cellar.json                 工作区清单（进入版本记录）
+├─ .git/                       版本记录（伴侣程序第一次打开时创建，见 docs/versioning.md）
+├─ .gitattributes              `* -text`：git 不改换行
 ├─ .gitignore                  默认忽略 .cellar/
-├─ .cellar/                    伴侣程序内部状态（不提交）
+├─ .cellar/                    伴侣程序内部状态（不进版本记录）
 │   ├─ state.json              每项、每个目标的基准哈希与冲突状态
+│   ├─ base/<项路径>/<targetId>.json      两边一致时的数据快照（按槽位合并用）
 │   ├─ templates/worldinfo-entry.json   酒馆提供的世界书条目模板
 │   └─ conflicts/<项路径>/<targetId>.json  冲突时保存的酒馆版本
 ├─ characters/<名称>/          角色卡
@@ -40,7 +43,7 @@
 }
 ```
 
-一项可以绑定多个目标（第 1 阶段由取出操作创建绑定，多目标绑定命令放到第 2 阶段）。
+一项可以绑定多个目标：取出时创建绑定，也可以在 Studio 的同步矩阵中绑定到其他酒馆（`POST /api/bind`）。
 
 ## 3. 角色卡
 

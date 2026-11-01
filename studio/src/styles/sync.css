@@ -94,3 +94,5 @@
 .sx-pick-row:hover:not(:disabled) { background: var(--row-hover); }
 .sx-pick-row:disabled { color: var(--text-3); cursor: default; }
 .sx-pick-empty { font-size: var(--fs-sm); padding: 4px 8px; }
+.sync-dep { color: var(--text-2); text-decoration: none; }
+.sync-dep:hover { color: var(--accent-text); }

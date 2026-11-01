@@ -66,6 +66,7 @@ async function copyPath() {
           <div v-if="app.modeOf(b) === 'stale'" class="sync-note warn"><Icon name="alert" size="sm" />{{ STALE_HINT }}</div>
           <div v-if="b.waiting" class="sync-note"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</div>
           <div v-if="b.tavernError" class="sync-note err"><Icon name="alert" size="sm" />{{ b.tavernError }}</div>
+          <a v-if="b.deployed" class="sync-note sync-dep" href="#/history" title="在版本历史中查看"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
           <div v-if="isConflict(uiStatus(b.status))" class="sync-note err">
             <Icon name="alert" size="sm" /><span class="grow">两边都改了同一处</span>
             <a v-if="ui.route.name !== 'conflict'" href="#" @click.prevent="ui.openConflict(props.path)">处理冲突</a>

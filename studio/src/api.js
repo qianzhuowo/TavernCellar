@@ -101,7 +101,14 @@ export const api = {
   putItem: (path, data, hash) => call('PUT', '/api/item', { path, data, hash }),
   editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops }),
   /** Character parts kept in card.json instead of their own files. @param {string} path @param {string[]} exclude */
-  setLayout: (path, exclude) => call('POST', '/api/layout', { path, exclude })
+  setLayout: (path, exclude) => call('POST', '/api/layout', { path, exclude }),
+  /** Version history (docs/versioning.md). @param {{path?: string, limit?: number}} [q] */
+  history: (q = {}) => call('POST', '/api/history', q),
+  describeDraft: (message) => call('POST', '/api/history/describe', { message }),
+  recordVersion: (message) => call('POST', '/api/history/commit', { message }),
+  tagVersion: (name, rev) => call('POST', '/api/history/tag', { name, rev }),
+  diffVersions: (from, to, path) => call('POST', '/api/history/diff', { from, to, path }),
+  restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */

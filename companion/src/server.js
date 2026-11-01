@@ -312,7 +312,9 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     const sessionId = randomBytes(24).toString('hex');
     const targets = new TargetRegistry();
     const engine = new SyncEngine({ workspace, targets, log });
+    engine.onHistory = () => emit('status', { reason: 'history' });
     await engine.upgradeLayouts();
+    await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
     let port = config.port;
     let stopWatching = () => {};
@@ -397,9 +399,11 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
             throw new ProtocolError(ERR.BAD_REQUEST, `Cannot use ${dir} as a workspace: ${error.message}`);
         }
         stopWatching();
+        engine.stopSnapshots();
         workspace = next;
         engine.ws = next;
         engine.local.clear();
+        await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
         stopWatching = startWatching();
         config.workspace = next.root;
         await persistConfig(config);
@@ -459,6 +463,12 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/unbind': b => engine.unbind(b.path, b),
         'POST /api/bind': b => engine.bind(b.path, b),
         'POST /api/layout': b => engine.setLayout(b.path, b),
+        'POST /api/history': b => engine.history(b),
+        'POST /api/history/describe': b => engine.describeDraft(b),
+        'POST /api/history/commit': b => engine.recordVersion(b),
+        'POST /api/history/tag': b => engine.tagVersion(b),
+        'POST /api/history/diff': b => engine.diffVersions(b),
+        'POST /api/history/restore': b => engine.restoreVersion(b),
     };
 
     const server = createServer(async (req, res) => {
@@ -535,7 +545,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     });
     port = server.address().port;
     await refreshOffline();
-    const startWatching = () => (watch ? watchWorkspace(workspace, path => engine.onFilesChanged(path).finally(() => emit('status', { reason: 'files', path })), log) : () => {});
+    const startWatching = () => (watch ? watchWorkspace(workspace, path => engine.onFilesChanged(path).finally(() => { engine.scheduleSnapshot(); emit('status', { reason: 'files', path }); }), log) : () => {});
     stopWatching = startWatching();
     log(`TavernCellar listening on 127.0.0.1:${server.address().port}, workspace ${workspace.root}`);
 
@@ -547,6 +557,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         sessionId,
         async close() {
             stopWatching();
+            engine.stopSnapshots();
             for (const res of eventClients) res.end();
             eventClients.clear();
             for (const client of wss.clients) client.terminate();

@@ -41,6 +41,15 @@ const USAGE = `TavernCellar 伴侣程序
   cellar pull <项路径> [--target ID] [--force]    把酒馆中的内容取回工作区
   cellar auto <项路径> <on|off> [--target ID]     切换随时同步
 
+版本记录（工作区是 git 仓库，修改自动进入草稿 @）:
+  cellar log [项路径] [--limit N]           版本列表，标出各酒馆已部署的版本
+  cellar describe "说明"                  给草稿写说明
+  cellar commit "说明"                    记录版本（写说明并结束草稿）
+  cellar tag <名称> [版本]                给版本打标签（默认最新版本）
+  cellar diff <版本A> [版本B] [项路径]     按字段对比两个版本（版本B 默认最新）
+  cellar restore <版本> <项路径>          把一项恢复成某个版本（之后同步到酒馆）
+  版本可以写编号前几位、标签名或 HEAD
+
 配置文件: ${configPath()}`;
 
 function parseArgs(argv) {
@@ -80,6 +89,30 @@ async function api(config, method, path, body) {
 }
 
 class NotRunningError extends Error {}
+
+function formatHistory({ versions, deployed }) {
+    if (!versions.length) return '（还没有版本）';
+    return versions.map(v => {
+        const marks = [
+            v.draft ? '@ 草稿' : '',
+            ...v.tags.map(t => `标签 ${t}`),
+            ...deployed.filter(d => d.rev === v.id || d.shownAt === v.id).map(d => `${d.label} 已部署 ${d.path}${d.earlier ? `（较早状态 ${d.rev.slice(0, 8)}）` : ''}`),
+        ].filter(Boolean);
+        const when = new Date(v.time).toLocaleString();
+        return `${v.id.slice(0, 8)}  ${when}  ${v.message}${marks.length ? `  [${marks.join('；')}]` : ''}\n          ${v.items.filter(p => p.includes('/')).join('、') || '（无资料项变化）'}`;
+    }).join('\n');
+}
+
+function formatDiff({ from, to, items }) {
+    const show = s => (s.present ? JSON.stringify(s.value).slice(0, 120) : '（无）');
+    const lines = [`${from?.slice(0, 8) ?? '（空）'} -> ${to.slice(0, 8)}`];
+    if (!items.length) lines.push('没有差异');
+    for (const item of items) {
+        lines.push(`\n${item.path}  ${{ added: '新增', removed: '删除', changed: '修改', unreadable: `无法读取：${item.error}` }[item.status]}`);
+        for (const s of item.slots) lines.push(s.eolOnly ? `  ${s.label}（只有换行符不同）` : `  ${s.label}\n    - ${show(s.from)}\n    + ${show(s.to)}`);
+    }
+    return lines.join('\n');
+}
 
 const HOST_NAMES = { st: 'SillyTavern', tt: 'TauriTavern' };
 
@@ -333,6 +366,40 @@ async function main() {
             const [path, mode] = positional;
             if (!path || !['on', 'off'].includes(mode)) throw new Error('用法: cellar auto <项路径> <on|off>');
             print(await api(config, 'POST', '/api/auto-sync', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target, enabled: mode === 'on' }));
+            return;
+        }
+        case 'log': {
+            const path = positional[0]?.replace(/\\/g, '/').replace(/\/$/, '');
+            const h = await api(config, 'POST', '/api/history', { path, limit: Number(flags.limit ?? 30) });
+            console.log(formatHistory(h));
+            return;
+        }
+        case 'describe':
+        case 'commit': {
+            const message = positional.join(' ');
+            if (command === 'commit' && !message) throw new Error('用法: cellar commit "说明"');
+            const r = await api(config, 'POST', `/api/history/${command}`, { message });
+            console.log(r.id ? `${command === 'commit' ? '已记录版本' : '草稿说明已更新'} ${r.id.slice(0, 8)}` : '没有修改');
+            return;
+        }
+        case 'tag': {
+            const [name, rev] = positional;
+            if (!name) throw new Error('用法: cellar tag <名称> [版本]');
+            const r = await api(config, 'POST', '/api/history/tag', { name, rev });
+            console.log(`标签 ${r.name} -> ${r.id.slice(0, 8)}`);
+            return;
+        }
+        case 'diff': {
+            const [from, to, path] = positional;
+            if (!from) throw new Error('用法: cellar diff <版本A> [版本B] [项路径]');
+            console.log(formatDiff(await api(config, 'POST', '/api/history/diff', { from, to: to || undefined, path: path?.replace(/\\/g, '/').replace(/\/$/, '') })));
+            return;
+        }
+        case 'restore': {
+            const [rev, path] = positional;
+            if (!rev || !path) throw new Error('用法: cellar restore <版本> <项路径>');
+            const r = await api(config, 'POST', '/api/history/restore', { rev, path: path.replace(/\\/g, '/').replace(/\/$/, '') });
+            console.log(`${r.path} 已恢复到 ${r.rev.slice(0, 8)}；用 cellar sync ${r.path} 同步到酒馆`);
             return;
         }
         case 'help':

@@ -10,7 +10,7 @@
  */
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
-import { codecFor } from './codec/index.js';
+import { CODECS, codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
 import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
@@ -39,6 +39,9 @@ export class SyncEngine {
         this.locks = new Map();
         /** @type {Map<string, {status: string, error?: string}>} last workspace evaluation per item */
         this.local = new Map();
+        /** Called after the version history changed (server: tells Studio to refresh). */
+        this.onHistory = () => {};
+        this.snapshotTimer = null;
     }
 
     /** Runs fn exclusively for one item path. */
@@ -334,11 +337,13 @@ export class SyncEngine {
         const path = this.ws.allocateItemPath(kind, id);
         const item = { path, kind, bindings: { [target.id]: { id, autoSync: false } }, ...(exclude?.length ? { layout: { exclude } } : {}) };
         return this.withLock(path, async () => {
+            await this.#beforeExternal();
             this.ws.manifest.items.push(item);
             const written = await this.writeItem(item, remote.data);
             await this.#agree(item, target.id, remote.data, remote.hash);
             await this.ws.saveManifest();
             await this.ws.saveState();
+            await this.#deployed(item, target.id, 'checkout');
             await this.pushWatchList(target.id);
             const warnings = [];
             if (written !== remote.hash) {
@@ -394,6 +399,7 @@ export class SyncEngine {
         // Kept until the next agreement so the sync matrix can show them (e.g. fields the tavern kept).
         if (warnings.length) this.ws.setSyncState(item.path, targetId, { warnings, warnedAt: new Date().toISOString() });
         await this.ws.saveState();
+        await this.#deployed(item, targetId, 'sync');
         this.log(`synced ${item.path} -> ${targetId}${warnings.length ? ` (${warnings.length} warning(s))` : ''}`);
         return { path: item.path, target: targetId, result: 'synced', hash: result.hash, warnings };
     }
@@ -412,13 +418,19 @@ export class SyncEngine {
         if (local && local.hash === remote.hash) {
             await this.#agree(item, targetId, remote.data, remote.hash);
             await this.ws.saveState();
+            await this.#deployed(item, targetId, 'sync');
             return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash };
         }
         const base = await this.ws.loadBase(item.path, targetId);
         // The snapshot is the agreed tavern version, or the advanced base saved by a merge that left conflicts.
         const baseUsable = local && base !== undefined && (await hashData(base)) === (state.mergeBase ?? state.base);
         const { data, conflicts, base: nextBase } = baseUsable ? merge3(item.kind, base, local.data, remote.data) : { data: local?.data, conflicts: ['*'] };
-        if (baseUsable && (await hashData(data)) !== local.hash) await this.writeItem(item, data);
+        if (baseUsable && (await hashData(data)) !== local.hash) {
+            // Tavern edits come into the workspace: the user's draft is finished first, the tavern part is a version of its own.
+            await this.#beforeExternal();
+            await this.writeItem(item, data);
+            await this.#recordExternal(item, targetId);
+        }
         if (conflicts.length) {
             if (baseUsable) {
                 await this.ws.saveBase(item.path, targetId, nextBase);
@@ -432,6 +444,7 @@ export class SyncEngine {
         await this.ws.saveState();
         this.log(`merged ${item.path} with ${targetId}`);
         const mergedHash = await hashData(data);
+        if (mergedHash === remote.hash) await this.#deployed(item, targetId, 'pull');
         if (mergedHash === remote.hash || !push) return { path: item.path, target: targetId, result: 'merged', hash: mergedHash, pending: mergedHash !== remote.hash };
         const pushed = await this.#syncLocked(item, targetId, binding, link, false, attempt);
         return { ...pushed, result: 'merged', merged: true };
@@ -448,6 +461,7 @@ export class SyncEngine {
         const item = this.requireItem(path);
         const { targetId, binding, link } = this.resolveBinding(item, targetSpec);
         return this.withLock(path, async () => {
+            await this.#beforeExternal();
             const state = this.ws.getSyncState(item.path, targetId) ?? {};
             const local = await this.encodeItem(item).catch(() => null); // unreadable files count as local changes
             if (!force && local?.hash !== state.base) {
@@ -459,6 +473,7 @@ export class SyncEngine {
             await this.writeItem(item, remote.data);
             await this.#agree(item, targetId, remote.data, remote.hash);
             await this.ws.saveState();
+            await this.#deployed(item, targetId, 'pull');
             this.log(`pulled ${item.path} <- ${targetId}`);
             return { path: item.path, target: targetId, result: 'pulled', hash: remote.hash };
         });
@@ -486,6 +501,7 @@ export class SyncEngine {
         return this.withLock(path, async () => {
             delete item.bindings[targetId];
             await this.ws.forgetSync(item.path, targetId);
+            await this.ws.vcs.dropDeployed(targetId, item.path).catch(() => {});
             await this.ws.saveManifest();
             await this.ws.saveState();
             await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
@@ -515,6 +531,7 @@ export class SyncEngine {
             if (local && local.hash === remote.hash) {
                 await this.#agree(item, target.id, remote.data, remote.hash);
                 await this.ws.saveState();
+                await this.#deployed(item, target.id, 'sync');
                 this.log('bound ' + item.path + ' to ' + target.id + ' (' + id + '), in sync');
                 return { path: item.path, target: target.id, result: 'in-sync', hash: remote.hash };
             }
@@ -539,10 +556,12 @@ export class SyncEngine {
             const local = await this.encodeItem(item).catch(() => null);
             const remote = await conn.link.request(MSG.ITEM_GET, { kind, id: binding.id });
             if (remote.hash === state.base) return;
+            await this.#beforeExternal();
             if (local && local.hash === state.base) {
                 await this.writeItem(item, remote.data);
                 await this.#agree(item, targetId, remote.data, remote.hash);
                 await this.ws.saveState();
+                await this.#deployed(item, targetId, 'pull');
                 this.log(`tavern change pulled: ${item.path} <- ${targetId}`);
             } else {
                 // Both sides changed: merge; auto-sync items push the merge back right away.
@@ -672,10 +691,217 @@ export class SyncEngine {
         });
     }
 
+    // ---- version history (docs/versioning.md) -------------------------------------------------------------
+
+    /** The workspace history, initialized on first use (an existing workspace gets its first version then). */
+    async versions() {
+        const vcs = this.ws.vcs;
+        await vcs.ready();
+        if (vcs.takeCreated()) {
+            // First version of a workspace that already had bindings: in-sync ones are deployed at it.
+            const head = await vcs.resolve('HEAD');
+            for (const item of this.ws.manifest.items) {
+                const local = await this.encodeItem(item).catch(() => null);
+                for (const targetId of Object.keys(item.bindings ?? {})) {
+                    const state = this.ws.getSyncState(item.path, targetId);
+                    if (local && state?.base === local.hash && !state.conflict) await vcs.setDeployed(targetId, item.path, head);
+                }
+            }
+        }
+        return vcs;
+    }
+
+    #targetLabel(targetId) {
+        return this.ws.manifest.targets?.[targetId]?.label ?? targetId.slice(0, 8);
+    }
+
+    /**
+     * Workspace and tavern now hold the same data: record it and point the deployed ref at that version.
+     * 'sync' keeps it in the draft; 'pull' / 'checkout' record a version of their own. History problems are logged,
+     * never fail the sync.
+     */
+    async #deployed(item, targetId, how) {
+        try {
+            const vcs = await this.versions();
+            const label = this.#targetLabel(targetId);
+            let oid = how === 'pull' ? await vcs.record(`来自 ${label}：取回 ${item.path}`)
+                : how === 'checkout' ? await vcs.record(`从 ${label} 取出 ${item.path}`)
+                    : await vcs.snapshot();
+            oid ??= await vcs.resolve('HEAD');
+            await vcs.setDeployed(targetId, item.path, oid);
+            this.onHistory();
+        } catch (error) {
+            this.log(`version history: ${error.message}`);
+        }
+    }
+
+    /** Before tavern content is written into the workspace: the user's draft becomes a version of its own. */
+    async #beforeExternal() {
+        try {
+            await (await this.versions()).endDraft();
+        } catch (error) {
+            this.log(`version history: ${error.message}`);
+        }
+    }
+
+    /** Tavern edits merged into the workspace (not yet agreed with the tavern as a whole): their own version. */
+    async #recordExternal(item, targetId) {
+        try {
+            await (await this.versions()).record(`来自 ${this.#targetLabel(targetId)}：合并 ${item.path}`);
+            this.onHistory();
+        } catch (error) {
+            this.log(`version history: ${error.message}`);
+        }
+    }
+
+    /** Debounced draft snapshot after file changes (watcher). */
+    scheduleSnapshot(delayMs = 1500) {
+        clearTimeout(this.snapshotTimer);
+        this.snapshotTimer = setTimeout(() => {
+            this.snapshotTimer = null;
+            this.versions().then(vcs => vcs.snapshot()).then(() => this.onHistory(), error => this.log(`version history: ${error.message}`));
+        }, delayMs);
+        this.snapshotTimer.unref?.();
+    }
+
+    stopSnapshots() {
+        clearTimeout(this.snapshotTimer);
+        this.snapshotTimer = null;
+    }
+
+    /** Draft, versions (optionally only those touching `path`) and where each binding is deployed. */
+    async history({ path, limit = 100 } = {}) {
+        const vcs = await this.versions();
+        await vcs.snapshot();
+        const deployed = [];
+        for (const item of this.ws.manifest.items) {
+            if (path && item.path !== path) continue;
+            for (const targetId of Object.keys(item.bindings ?? {})) {
+                const rev = await vcs.getDeployed(targetId, item.path);
+                if (rev) deployed.push({ path: item.path, target: targetId, label: this.#targetLabel(targetId), rev });
+            }
+        }
+        const versions = await vcs.log({ path, limit: Math.min(Math.max(Number(limit) || 100, 1), 500) });
+        // A deployed draft that was amended afterwards is not in the list: show it on the version it became
+        // (same parent), marked as an earlier state unless only the description changed.
+        const ids = new Set(versions.map(v => v.id));
+        for (const d of deployed) {
+            if (ids.has(d.rev)) continue;
+            const parent = await vcs.parentOf(d.rev).catch(() => undefined);
+            const later = versions.find(v => (v.parents[0] ?? null) === parent);
+            if (later) {
+                d.shownAt = later.id;
+                // Only the description changed since: same content, so the tavern has exactly this version.
+                if (!(await vcs.sameContent(d.rev, later.id).catch(() => false))) d.earlier = true;
+            }
+        }
+        return { draft: await vcs.draftInfo(), versions, deployed };
+    }
+
+    async describeDraft({ message } = {}) {
+        const oid = await (await this.versions()).describe(String(message ?? ''));
+        this.onHistory();
+        return { id: oid };
+    }
+
+    /** "记录版本": the draft gets its description and is finished. */
+    async recordVersion({ message } = {}) {
+        const oid = await (await this.versions()).commit(String(message ?? ''));
+        if (!oid) throw new ProtocolError(ERR.BAD_REQUEST, '没有新的修改可以记录');
+        this.log(`recorded version ${oid.slice(0, 8)}`);
+        this.onHistory();
+        return { id: oid };
+    }
+
+    async tagVersion({ name, rev } = {}) {
+        if (typeof name !== 'string' || !/^[^\s~^:?*[\\]+$/.test(name) || name.includes('..')) throw new ProtocolError(ERR.BAD_REQUEST, '标签名不能含空格和 ~^:?*[\\ 符号');
+        const vcs = await this.versions();
+        let oid;
+        try {
+            oid = await vcs.tag(name, rev);
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, error.code === 'AlreadyExistsError' ? `标签 ${name} 已存在` : error.message);
+        }
+        this.onHistory();
+        return { name, id: oid };
+    }
+
+    /** Item data of a version (null when the item is absent there or cannot be read). */
+    async #dataAt(vcs, rev, path, kind) {
+        const files = await vcs.readItemAt(rev, path);
+        if (!files) return { present: false, data: null };
+        try {
+            const options = kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
+            return { present: true, data: codecFor(kind).encode(files, options) };
+        } catch (error) {
+            return { present: true, data: null, error: error.message };
+        }
+    }
+
+    /**
+     * Field-level differences between two versions (`to` defaults to the newest), per item, with the same slots and
+     * labels as the conflict view. `path` limits it to one item.
+     */
+    async diffVersions({ from, to = 'HEAD', path } = {}) {
+        const vcs = await this.versions();
+        let fromId = null;
+        let toId;
+        try {
+            fromId = from ? await vcs.resolve(from) : null;
+            toId = await vcs.resolve(to);
+        } catch (error) {
+            throw new ProtocolError(ERR.NOT_FOUND, error.message);
+        }
+        const kindOf = p => this.ws.getItem(p)?.kind ?? Object.entries(CODECS).find(([, c]) => p.startsWith(`${c.folder}/`))?.[0];
+        const paths = (path ? [path] : await vcs.changedItems(fromId, toId)).filter(kindOf);
+        const items = [];
+        for (const p of paths) {
+            const kind = kindOf(p);
+            const [a, b] = await Promise.all([fromId ? this.#dataAt(vcs, fromId, p, kind) : { present: false, data: null }, this.#dataAt(vcs, toId, p, kind)]);
+            const status = !a.present && b.present ? 'added' : a.present && !b.present ? 'removed' : 'changed';
+            if (a.error || b.error) { items.push({ path: p, kind, status: 'unreadable', error: a.error ?? b.error, slots: [] }); continue; }
+            const sa = slotsOf(kind, a.data ?? {}), sb = slotsOf(kind, b.data ?? {});
+            const side = (m, s) => ({ value: m.has(s) ? m.get(s) : null, present: m.has(s) });
+            const slots = [...new Set([...sa.keys(), ...sb.keys()])].filter(s => !s.endsWith('.$') && !same(sa.get(s), sb.get(s)))
+                .map(s => {
+                    const x = sa.get(s), y = sb.get(s);
+                    // e.g. the tavern's editor saved CRLF: a real change, but nothing visible in a text diff
+                    const eolOnly = typeof x === 'string' && typeof y === 'string' && x.replace(/\r\n/g, '\n') === y.replace(/\r\n/g, '\n');
+                    return { slot: s, label: slotLabel(s, y ?? x), from: side(sa, s), to: side(sb, s), ...(eolOnly ? { eolOnly } : {}) };
+                });
+            if (slots.length || status !== 'changed') items.push({ path: p, kind, status, slots });
+        }
+        return { from: fromId, to: toId, items };
+    }
+
+    /**
+     * Puts an item's files back as they were in a version (the user's other files in the folder stay). Nothing is
+     * sent: the item then shows local changes and syncs the usual way (auto-sync items right away).
+     */
+    async restoreVersion({ rev, path } = {}) {
+        const item = this.requireItem(path);
+        const vcs = await this.versions();
+        let id;
+        try { id = await vcs.resolve(rev); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
+        const files = await vcs.readItemAt(id, item.path);
+        if (!files) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 在版本 ${id.slice(0, 8)} 中不存在`);
+        const result = await this.withLock(item.path, async () => {
+            const options = item.kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
+            try { codecFor(item.kind).encode(files, options); } catch (error) { throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${error.message}`); }
+            await this.ws.writeItemFiles(item.path, files, codecFor(item.kind).owns);
+            return { path: item.path, rev: id, hash: (await this.encodeItem(item)).hash };
+        });
+        await vcs.snapshot();
+        this.log(`restored ${item.path} to version ${id.slice(0, 8)}`);
+        this.onHistory();
+        return result;
+    }
+
     // ---- status ------------------------------------------------------------
 
     async status() {
         const items = [];
+        const vcs = await this.versions().catch(error => { this.log(`version history: ${error.message}`); return null; });
         for (const item of this.ws.manifest.items) {
             let localHash = null;
             let frameworks;
@@ -718,9 +944,11 @@ export class SyncEngine {
                 else if (localChanged && tavernHash !== localHash) status = 'local-changes';
                 else if (tavernChanged && tavernHash !== localHash) status = 'tavern-changes';
                 const offlineSync = this.targets.offlineMode(targetId);
+                const deployed = vcs ? await vcs.getDeployed(targetId, item.path).catch(() => null) : null;
                 return {
                     target: targetId, id: binding.id, autoSync: binding.autoSync,
                     connected: Boolean(liveConn), offline: !liveConn && Boolean(conn), status,
+                    ...(deployed ? { deployed } : {}),
                     ...(offlineSync ? { offlineSync } : {}),
                     // Local edits held back until the tavern starts (mode 'wait').
                     ...(offlineSync === 'wait' && (status === 'local-changes' || status === 'both-changed') ? { waiting: true } : {}),
@@ -737,6 +965,8 @@ export class SyncEngine {
             // every tavern that ever connected to this workspace (names for bindings whose tavern is not reachable)
             knownTargets: Object.entries(this.ws.manifest.targets ?? {}).map(([id, t]) => ({ id, host: t.host, label: t.label })),
             items,
+            // the draft as last snapshotted (the watcher snapshots shortly after file changes)
+            draft: vcs ? await vcs.draftInfo().catch(() => null) : null,
         };
     }
 }

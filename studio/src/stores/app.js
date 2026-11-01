@@ -105,6 +105,8 @@ export const useApp = defineStore('app', {
 
     dirtyCount() { return this.items.filter((i) => i.bindings.some((b) => isDirty(uiStatus(b.status)))).length; },
     conflictCount() { return this.items.filter((i) => i.bindings.some((b) => isConflict(uiStatus(b.status)))).length; },
+    /** items changed in the version-history draft (not yet recorded as a version) */
+    draftCount: (s) => ((s.status && s.status.draft && s.status.draft.items) || []).filter((/** @type {string} */ p) => p.includes('/')).length,
 
     /** @returns {(path: string) => any} */
     item() { return (path) => this.items.find((i) => i.path === path) || null; },

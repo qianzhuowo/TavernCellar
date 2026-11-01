@@ -12,7 +12,9 @@ const props = defineProps({
   targetLabel: { type: String, default: '' },
   /** lorebook entry template: fields that differ only by SillyTavern's default-filling fold away; null = no folding */
   noiseTemplate: { type: Object, default: null },
-  foldNoise: { type: Boolean, default: false }
+  foldNoise: { type: Boolean, default: false },
+  /** column titles when the sides are not workspace / tavern (version history: {workspace: '此版本', tavern: '之前'}) */
+  sides: { type: Object, default: null }
 });
 const r = computed(() => props.slotView);
 const kind = computed(() => kindOf(r.value));
@@ -35,7 +37,7 @@ const fields = computed(() => (showNoise.value ? allFields.value : allFields.val
     </div>
 
     <div class="cf-side ws">
-      <div class="cf-side-h"><Icon name="folder" size="sm" />工作区</div>
+      <div class="cf-side-h"><Icon :name="sides ? 'history' : 'folder'" size="sm" />{{ sides ? sides.workspace : '工作区' }}</div>
       <div v-if="!r.workspace.present" class="cf-text faint">（无 / 已删除）</div>
       <template v-else-if="kind === 'object'">
         <div v-for="f in fields" :key="f.key" class="cf-kv">
@@ -48,7 +50,7 @@ const fields = computed(() => (showNoise.value ? allFields.value : allFields.val
     </div>
 
     <div class="cf-side tv">
-      <div class="cf-side-h"><Icon name="wine" size="sm" />酒馆{{ targetLabel ? ' · ' + targetLabel : '' }}</div>
+      <div class="cf-side-h"><Icon :name="sides ? 'history' : 'wine'" size="sm" />{{ sides ? sides.tavern : '酒馆' + (targetLabel ? ' · ' + targetLabel : '') }}</div>
       <div v-if="!r.tavern.present" class="cf-text faint">（无 / 已删除）</div>
       <template v-else-if="kind === 'object'">
         <div v-for="f in fields" :key="f.key" class="cf-kv">
