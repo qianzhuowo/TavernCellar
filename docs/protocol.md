@@ -53,7 +53,8 @@
 | `ping` | `{}` | `{}` |
 | `asset.get` | `{ type: 'avatar', id }` | `{ type, id, mime, data }`（`data` 为 base64，原始大小上限 512KB） |
 
-- `kind`：`character`（id 为头像文件名，如 `Alice.png`）或 `lorebook`（id 为世界书名称）。
+- `kind`：`character`（id 为头像文件名，如 `Alice.png`）、`lorebook`（id 为世界书名称）或 `regex`（id 只能是 `global`，即酒馆的全局正则 `extension_settings.regex`，数据为 `{ scripts }`；`catalog.list` 只返回这一项并带 `count`）。插件在 `hello.capabilities.kinds` 中声明支持的类型。
+- `regex` 的 `item.put` 只接受 `{ scripts: [对象...] }`；写入后插件按 Cellar Link 设置「同步全局正则后」处理酒馆的正则面板：`lock`（默认）锁住面板里的旧列表并提示，刷新页面或正则面板重绘后解除，不发任何酒馆事件；`event` 发出 `MAIN_API_CHANGED` 让正则扩展立即重绘，其他监听该事件的扩展也会当作切换了 API。面板的每一行按下标绑定渲染时的对象，不处理的话在旧行上操作会把旧正则写回。
 - `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
@@ -65,7 +66,7 @@
 
 | type | payload | 触发 |
 |---|---|---|
-| `item.changed` | `{ kind, id, hash }` | 监视列表中的项触发了 `CHARACTER_EDITED` / `WORLDINFO_UPDATED` |
+| `item.changed` | `{ kind, id, hash }` | 监视列表中的项触发了 `CHARACTER_EDITED` / `WORLDINFO_UPDATED`；全局正则在 `SETTINGS_UPDATED` 后且列表确实变化时 |
 
 ## 6. 错误码
 

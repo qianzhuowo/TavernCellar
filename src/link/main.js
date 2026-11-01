@@ -33,6 +33,7 @@ function getSettings() {
     init('url', DEFAULT_URL);
     init('label', detectHost() === 'tt' ? 'TauriTavern' : 'SillyTavern');
     init('targetId', randomId());
+    init('regexRefresh', 'lock');
     if (changed) ctx().saveSettingsDebounced();
     return s;
 }
@@ -62,6 +63,12 @@ function renderPanel() {
       <input id="tavern_cellar_url" class="text_pole" type="text" spellcheck="false">
       <label for="tavern_cellar_label">本酒馆名称</label>
       <input id="tavern_cellar_label" class="text_pole" type="text">
+      <label for="tavern_cellar_regex_refresh">同步全局正则后</label>
+      <select id="tavern_cellar_regex_refresh" class="text_pole">
+        <option value="lock">锁定旧列表，刷新页面后再编辑</option>
+        <option value="event">自动刷新正则面板</option>
+      </select>
+      <small id="tavern_cellar_regex_refresh_hint" class="tavern-cellar-muted"></small>
       <div class="tavern-cellar-status-row">
         <span id="tavern_cellar_status_text"></span>
         <div id="tavern_cellar_reconnect" class="menu_button menu_button_icon"><i class="fa-solid fa-rotate"></i><span>重新连接</span></div>
@@ -96,8 +103,20 @@ export function init() {
             $dot.attr('data-status', status).attr('title', text);
         },
     });
-    hostAdapter = new Host(client);
+    hostAdapter = new Host(client, { regexRefresh: () => settings.regexRefresh });
     hostAdapter.attachEvents();
+
+    const REGEX_REFRESH_HINT = {
+        lock: '新正则立即生效。正则面板里的旧列表会被锁住并提示，刷新页面后才能再编辑。不触发任何酒馆事件，最安全。',
+        event: '正则面板立即显示新内容。做法是发出「切换了 API」事件，其他监听这个事件的扩展（如预设相关的定时任务）也会当作你切换了 API 并做出反应。',
+    };
+    const showRegexHint = () => $('#tavern_cellar_regex_refresh_hint').text(REGEX_REFRESH_HINT[settings.regexRefresh] ?? '');
+    $('#tavern_cellar_regex_refresh').val(settings.regexRefresh).on('change', function () {
+        settings.regexRefresh = $(this).val() === 'event' ? 'event' : 'lock';
+        ctx().saveSettingsDebounced();
+        showRegexHint();
+    });
+    showRegexHint();
 
     $('#tavern_cellar_enabled').prop('checked', settings.enabled).on('change', function () {
         settings.enabled = this.checked;

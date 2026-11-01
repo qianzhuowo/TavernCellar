@@ -9,7 +9,9 @@ export const LINK_PATH = '/link';
 export const HELLO_TIMEOUT_MS = 5000;
 export const REQUEST_TIMEOUT_MS = 30000;
 
-export const KINDS = Object.freeze(['character', 'lorebook']);
+export const KINDS = Object.freeze(['character', 'lorebook', 'regex']);
+/** The only id of kind 'regex': the tavern's global regex list (extension_settings.regex). */
+export const GLOBAL_REGEX_ID = 'global';
 
 export const MSG = Object.freeze({
     HELLO: 'hello',

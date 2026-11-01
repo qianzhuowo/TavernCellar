@@ -4,6 +4,7 @@ import Icon from './Icon.vue';
 import Toggle from './Toggle.vue';
 import StatusBadge from './StatusBadge.vue';
 import CardParts from './card/CardParts.vue';
+import { kindOf } from '../lib/kinds.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
@@ -127,7 +128,7 @@ async function copyPath() {
           <button class="btn sm" :title="abs" @click="copyPath"><Icon name="copy" size="sm" />复制路径</button>
         </div>
         <dl class="kv" style="margin-top: 10px">
-          <dt>类型</dt><dd>{{ item.kind === 'character' ? '角色卡' : '世界书' }}</dd>
+          <dt>类型</dt><dd>{{ kindOf(item.kind).type }}</dd>
           <dt>绑定</dt><dd>{{ item.bindings.length }} 个酒馆</dd>
         </dl>
       </section>

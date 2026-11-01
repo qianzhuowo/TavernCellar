@@ -124,11 +124,31 @@ function assembleLorebook(m) {
     return book;
 }
 
+function regexSlots(data) {
+    const m = new Map();
+    for (const [k, v] of Object.entries(data)) {
+        if (k === 'scripts' && objectList(v)) putList(m, 'regex', v, 'id');
+        else m.set(`rx.${k}`, v);
+    }
+    return m;
+}
+
+function assembleRegex(m) {
+    const data = {};
+    for (const [slot, v] of m) {
+        if (slot === 'regex.$order') data.scripts = takeList(m, 'regex');
+        else if (slot.startsWith('rx.')) data[slot.slice(3)] = v;
+    }
+    return data;
+}
+
 export function slotsOf(kind, data) {
+    if (kind === 'regex') return regexSlots(data);
     return kind === 'lorebook' ? lorebookSlots(data) : characterSlots(data);
 }
 
 export function assemble(kind, slots) {
+    if (kind === 'regex') return assembleRegex(slots);
     return kind === 'lorebook' ? assembleLorebook(slots) : assembleCharacter(slots);
 }
 

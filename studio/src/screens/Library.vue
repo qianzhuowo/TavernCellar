@@ -7,6 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { initialOf, relTime, STALE_HINT } from '../lib/status.js';
+import { LIB_KINDS, kindOf } from '../lib/kinds.js';
 
 const app = useApp();
 const ui = useUi();
@@ -24,7 +25,7 @@ const sub = computed(() => {
   const t = cur.value;
   if (!t) return '';
   const parts = [app.targetName(t.id)];
-  if (lib.total || !lib.loading) parts.push(lib.total + (lib.kind === 'character' ? ' 个角色' : ' 本世界书'));
+  if (lib.total || !lib.loading) parts.push(lib.kind === 'regex' ? '全局正则' : lib.total + (lib.kind === 'character' ? ' 个角色' : ' 本世界书'));
   return parts.join(' · ');
 });
 
@@ -62,12 +63,12 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
         <p class="muted">{{ sub || '选择一个酒馆浏览' }}</p>
       </div>
       <div class="page-actions">
-        <Seg :model-value="lib.kind" :options="[{ value: 'character', label: '角色' }, { value: 'lorebook', label: '世界书' }]" @update:model-value="lib.setKind" />
+        <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="lib.setKind" />
         <label class="search">
           <Icon name="search" size="sm" />
           <input class="input" data-find :value="lib.query" placeholder="搜索名称" @input="onQuery(/** @type {any} */ ($event.target).value)" />
         </label>
-        <select v-model="lib.sort" class="select" style="width: 120px">
+        <select v-if="lib.kind !== 'regex'" v-model="lib.sort" class="select" style="width: 120px">
           <option v-if="lib.kind === 'character'" value="recent">最近聊天</option>
           <option value="name">名称</option>
           <option value="default">酒馆顺序</option>
@@ -83,8 +84,8 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
     </div>
     <div v-else-if="lib.error" class="banner" :class="stale ? 'warn' : 'conflict'"><Icon name="alert" /><div class="grow"><b v-if="stale">酒馆无响应</b><template v-else>读取失败：</template>{{ stale ? ' · ' : '' }}{{ lib.error }}</div><button class="btn sm" :disabled="lib.loading" @click="lib.reload()"><Icon :name="lib.loading ? 'spin' : 'refresh'" size="sm" />重试</button></div>
     <div v-else-if="!lib.loading && !lib.shown.length" class="empty">
-      <Icon :name="lib.kind === 'character' ? 'user' : 'book'" />
-      <h3>{{ lib.query || lib.tag ? '没有匹配的结果' : '这个酒馆里还没有' + (lib.kind === 'character' ? '角色' : '世界书') }}</h3>
+      <Icon :name="kindOf(lib.kind).icon" />
+      <h3>{{ lib.query || lib.tag ? '没有匹配的结果' : '这个酒馆里还没有' + kindOf(lib.kind).label }}</h3>
     </div>
 
     <!-- characters -->
@@ -110,6 +111,17 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
         <a v-if="e.checkedOut" class="in-ws static" :href="'#/item/' + encodeURIComponent(e.checkedOut)"><Icon name="check" size="sm" />已在工作区</a>
         <button v-else class="btn sm" :disabled="lib.busy[e.id]" @click="take(e, false)"><Icon :name="lib.busy[e.id] ? 'spin' : 'download'" size="sm" />取出</button>
       </div>
+    </div>
+
+    <!-- global regex: one list per tavern -->
+    <div v-if="lib.kind === 'regex' && lib.shown.length" class="book-list card">
+      <div v-for="e in lib.shown" :key="e.id" class="book-row">
+        <Icon name="regex" />
+        <div class="grow">{{ e.name }}<span class="faint"> · {{ e.count ?? 0 }} 条</span></div>
+        <a v-if="e.checkedOut" class="in-ws static" :href="'#/item/' + encodeURIComponent(e.checkedOut)"><Icon name="check" size="sm" />已在工作区</a>
+        <button v-else class="btn sm" :disabled="lib.busy[e.id]" @click="take(e, true)"><Icon :name="lib.busy[e.id] ? 'spin' : 'download'" size="sm" />取出</button>
+      </div>
+      <div class="dt-note faint rx-lib-note"><Icon name="info" size="sm" /><div>全局正则保存在酒馆设置里，每个酒馆一份。取出后在工作区按条编辑；同步时只替换这份列表，不改其他设置。</div></div>
     </div>
 
     <div ref="sentinel" class="load-more faint">

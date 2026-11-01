@@ -7,6 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { uiStatus, itemName, HOST } from '../lib/status.js';
+import { LIB_KINDS } from '../lib/kinds.js';
 
 const app = useApp();
 const ui = useUi();
@@ -16,7 +17,8 @@ const mode = computed(() => (ui.route.name === 'library' ? 'library' : ui.route.
 
 const groups = computed(() => [
   { key: 'character', title: '角色', icon: 'user', items: app.items.filter((i) => i.kind === 'character') },
-  { key: 'lorebook', title: '世界书', icon: 'book', items: app.items.filter((i) => i.kind === 'lorebook') }
+  { key: 'lorebook', title: '世界书', icon: 'book', items: app.items.filter((i) => i.kind === 'lorebook') },
+  { key: 'regex', title: '正则', icon: 'regex', items: app.items.filter((i) => i.kind === 'regex') }
 ]);
 
 const SETTINGS_NAV = [
@@ -27,6 +29,8 @@ const SETTINGS_NAV = [
   { id: 'app', icon: 'box', label: '关于' }
 ];
 
+/** A global regex item is named after its tavern: every tavern has exactly one. */
+const regexName = (/** @type {any} */ it) => '全局正则' + (it.bindings?.length === 1 ? ' · ' + app.targetName(it.bindings[0].target) : '');
 const hostMark = (/** @type {string} */ id) => { const t = app.target(id); return t.host ? HOST[t.host].mark : '?'; };
 const sourceLabel = (/** @type {any} */ t) => app.targetName(t.id) + (t.live ? '' : ' (离线)');
 function jump(/** @type {string} */ id) {
@@ -51,7 +55,7 @@ function jump(/** @type {string} */ id) {
         </div>
         <div class="field">
           <label>类型</label>
-          <Seg :model-value="lib.kind" :options="[{ value: 'character', label: '角色' }, { value: 'lorebook', label: '世界书' }]" @update:model-value="lib.setKind" />
+          <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="lib.setKind" />
         </div>
         <div v-if="lib.tags.length" class="field">
           <label>标签</label>
@@ -99,7 +103,7 @@ function jump(/** @type {string} */ id) {
               :href="hrefOf('item:' + it.path)"
               :title="it.path"
             >
-              <span class="name">{{ itemName(it.path) }}</span>
+              <span class="name">{{ it.kind === 'regex' ? regexName(it) : itemName(it.path) }}</span>
               <span class="badges">
                 <StatusBadge v-if="it.error" status="invalid" icon-only :title="it.error" />
                 <StatusBadge
@@ -114,9 +118,6 @@ function jump(/** @type {string} */ id) {
             </a>
             <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a href="#/library">去资料库取出</a></div>
           </template>
-        </div>
-        <div class="tree-group">
-          <div class="tg-head"><Icon name="chevRight" size="sm" /><Icon name="regex" size="sm" />正则<span class="count">阶段 4 开放</span></div>
         </div>
         <div class="tree-group">
           <div class="tg-head"><Icon name="chevRight" size="sm" /><Icon name="sliders" size="sm" />预设<span class="count">阶段 4 开放</span></div>

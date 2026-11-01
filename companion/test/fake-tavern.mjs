@@ -8,6 +8,7 @@ export class FakeTavern {
         this.store = {
             character: new Map([['Alice.png', { name: 'Alice', data: { name: 'Alice', description: 'orig', alternate_greetings: [], extensions: {} } }]]),
             lorebook: new Map([['Book', { entries: { 0: { uid: 0, key: ['k'], comment: 'c', content: 'body' } } }]]),
+            regex: new Map([['global', { scripts: [{ id: 'r1', scriptName: 'R1', findRegex: '/a/', replaceString: 'b', placement: [2], disabled: false }] }]]),
         };
         this.watch = [];
         this.puts = 0;

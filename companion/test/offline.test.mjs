@@ -119,6 +119,22 @@ test('offline: both sides changed shows both-changed and sync refuses', async ()
     assert.equal((await statusOf()).status, 'conflict');
 });
 
+test('offline: global regex lives in settings.json; sync replaces only extension_settings.regex', async () => {
+    const settingsFile = join(dataRoot, 'default-user', 'settings.json');
+    const before = { main_api: 'openai', extension_settings: { tavernCellar: { targetId: TARGET, label: 'Test tt' }, regex: [{ id: 'r1', scriptName: 'R1', findRegex: '/a/', replaceString: 'b' }] }, power_user: { x: 1 } };
+    await writeFile(settingsFile, JSON.stringify(before, null, 2));
+    const co = await engine.checkout(undefined, { kind: 'regex', id: 'global' });
+    assert.equal(co.path, 'regex/global');
+    await writeFile(join(ws.root, 'regex', 'global', '01-R1.replace.txt'), 'B!');
+    const res = await engine.sync('regex/global');
+    assert.equal(res.result, 'synced');
+    const text = await readFile(settingsFile, 'utf8');
+    const expected = structuredClone(before);
+    expected.extension_settings.regex[0].replaceString = 'B!';
+    assert.equal(text, JSON.stringify(expected, null, 2)); // indentation and every other key unchanged
+    assert.equal((await readdir(join(ws.root, '.cellar', 'backups', TARGET, 'regex'))).length, 1);
+});
+
 test('server: turning a tavern off also turns its offline access off', async () => {
     const config = {
         port: 0, token: 'offline-test-token-0123456789', allowOrigins: [], taverns: { st: true, tt: true }, stPorts: [],

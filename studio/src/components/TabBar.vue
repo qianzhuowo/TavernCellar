@@ -3,6 +3,7 @@ import Icon from './Icon.vue';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf, pathOfKey } from '../stores/ui.js';
 import { itemName } from '../lib/status.js';
+import { kindOf } from '../lib/kinds.js';
 
 defineProps({ hasInspector: { type: Boolean, default: false } });
 const app = useApp();
@@ -14,7 +15,7 @@ const BAR = { conflict: 'var(--st-conflict)', both: 'var(--st-conflict)', invali
 function info(/** @type {string} */ key) {
   if (key.startsWith('item:')) {
     const it = app.item(key.slice(5));
-    return { label: itemName(key.slice(5)), icon: it && it.kind === 'lorebook' ? 'book' : 'user', bar: it ? BAR[app.worst(it)] : '' };
+    return { label: it && it.kind === 'regex' ? '全局正则' : itemName(key.slice(5)), icon: it ? kindOf(it.kind).icon : 'circle', bar: it ? BAR[app.worst(it)] : '' };
   }
   if (key.startsWith('conflict:')) return { label: '冲突 · ' + itemName(key.slice(9)), icon: 'alert', bar: BAR.conflict };
   const f = FIXED[key] || [key, 'circle'];

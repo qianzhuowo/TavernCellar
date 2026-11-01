@@ -11,7 +11,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
 import { readCardText, writeCard } from './png.js';
 
@@ -35,6 +35,40 @@ export function imageMime(bytes) {
     if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
     if (bytes.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
     return 'application/octet-stream';
+}
+
+/** settings.json of a tavern user: a JSON object (BOM tolerated). */
+function parseSettings(content) {
+    const settings = JSON.parse(content.toString('utf8').replace(/^\uFEFF/, ''));
+    if (!isPlainObject(settings)) throw new Error('settings.json is not a JSON object');
+    return settings;
+}
+
+function assertRegexData(data) {
+    const extra = Object.keys(data).filter(k => k !== 'scripts');
+    if (extra.length) throw new ProtocolError(ERR.BAD_REQUEST, `Global regex data has unknown keys: ${extra.join(', ')}`);
+    if (!Array.isArray(data.scripts) || !data.scripts.every(isPlainObject)) {
+        throw new ProtocolError(ERR.BAD_REQUEST, 'Global regex scripts must be a list of objects');
+    }
+}
+
+/**
+ * settings.json with only extension_settings.regex replaced. Keeps the file's indentation (ST writes 4 spaces, tt 2),
+ * line endings and key order, so nothing else in the file changes.
+ */
+export function replaceSettingsRegex(content, scripts) {
+    const text = content.toString('utf8');
+    const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const settings = parseSettings(content);
+    const body = text.slice(bom.length);
+    const indent = /^\{\r?\n([ \t]+)"/.exec(body)?.[1] ?? (/^\{\s*\r?\n/.test(body) ? 4 : undefined); // undefined: compact
+    const eol = text.includes('\r\n') ? '\r\n' : '\n';
+    if (!isPlainObject(settings.extension_settings)) settings.extension_settings = {};
+    settings.extension_settings.regex = scripts;
+    let out = JSON.stringify(settings, null, indent);
+    if (eol === '\r\n') out = out.replace(/\n/g, '\r\n');
+    if (/\r?\n$/.test(text)) out += eol;
+    return Buffer.from(bom + out, 'utf8');
 }
 
 async function writeAtomic(file, content) {
@@ -86,6 +120,10 @@ export class OfflineLink {
     worldsDir() { return join(this.location.userDir, 'worlds'); }
 
     fileFor(kind, id) {
+        if (kind === 'regex') {
+            if (id !== GLOBAL_REGEX_ID) throw new ProtocolError(ERR.NOT_FOUND, `Regex list ${id} not found (only "${GLOBAL_REGEX_ID}")`);
+            return join(this.location.userDir, 'settings.json');
+        }
         return kind === 'character'
             ? join(this.charactersDir(), safeFileName(id))
             : join(this.worldsDir(), safeFileName(`${id}.json`));
@@ -111,6 +149,10 @@ export class OfflineLink {
                 const card = JSON.parse(readCardText(content));
                 delete card.json_data;
                 return card;
+            }
+            if (kind === 'regex') {
+                const scripts = parseSettings(content).extension_settings?.regex;
+                return scripts === undefined ? {} : { scripts };
             }
             const data = JSON.parse(content.toString('utf8'));
             if (!isPlainObject(data)) throw new Error('not a JSON object');
@@ -162,7 +204,10 @@ export class OfflineLink {
     async catalog({ kind, query, offset = 0, limit = 50 }) {
         assertKind(kind);
         let items;
-        if (kind === 'character') {
+        if (kind === 'regex') {
+            const { data } = await this.readItem('regex', GLOBAL_REGEX_ID).catch(() => ({ data: {} }));
+            items = [{ id: GLOBAL_REGEX_ID, name: '全局正则', count: Array.isArray(data.scripts) ? data.scripts.length : 0 }];
+        } else if (kind === 'character') {
             const names = (await readdir(this.charactersDir()).catch(() => [])).filter(n => n.toLowerCase().endsWith('.png'));
             items = (await Promise.all(names.map(n => this.characterSummary(n).catch(() => null)))).filter(Boolean);
             await Promise.all(items.map(async item => { item.dateLastChat = await this.lastChat(item.id); }));
@@ -206,7 +251,7 @@ export class OfflineLink {
         if (!root) throw new ProtocolError(ERR.HOST_ERROR, 'No workspace for offline backups');
         const dir = join(root, this.location.targetId, kind);
         await mkdir(dir, { recursive: true });
-        const base = safeFileName(kind === 'character' ? id : `${id}.json`);
+        const base = safeFileName(kind === 'character' ? id : kind === 'regex' ? 'settings.json' : `${id}.json`);
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const target = join(dir, `${stamp}__${base}`);
         await copyFile(file, target);
@@ -230,9 +275,10 @@ export class OfflineLink {
         }
         const sent = structuredClone(data);
         delete sent.json_data;
-        const content = kind === 'character'
-            ? writeCard(current.content, sent)
-            : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
+        if (kind === 'regex') assertRegexData(sent);
+        const content = kind === 'character' ? writeCard(current.content, sent)
+            : kind === 'regex' ? replaceSettingsRegex(current.content, sent.scripts)
+                : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
         const backup = await this.backup(kind, id, file);
         await writeAtomic(file, content);
 

@@ -16,7 +16,8 @@
 │   ├─ templates/worldinfo-entry.json   酒馆提供的世界书条目模板
 │   └─ conflicts/<项路径>/<targetId>.json  冲突时保存的酒馆版本
 ├─ characters/<名称>/          角色卡
-└─ lorebooks/<名称>/           世界书
+├─ lorebooks/<名称>/           世界书
+└─ regex/global/               全局正则（每个酒馆一份，第二个起为 global-2 …）
 ```
 
 `<名称>` 取自头像文件名（去掉 `.png`）或世界书名称，替换 Windows 非法字符；重名时追加 `-2`、`-3`。
@@ -133,6 +134,24 @@ order: 250
 - 条目顺序沿用取出时的顺序，新条目追加在末尾。
 - **分组**：条目的 Cellar 分组记在条目字段 `extensions.cellar.group`（路径字符串，`/` 分级），在工作区中表示为 `entries/` 下的子文件夹，文件夹是唯一来源（YAML 头中不再出现该字段，`extensions`/`cellar` 因此变空时也不写出）。把文件移到别的文件夹 = 换组，移回 `entries/` 根下 = 取消分组。同时在文件夹和 YAML 头中写分组会报错，不会擅自取舍。组名不能作为文件夹名时（含 Windows 不允许的字符、首尾空格、`.`/`..`、空段），该条目留在根下，分组照原样写在 YAML 头中。酒馆不认识这个字段，只原样保存（ST 界面编辑、复制、移动条目都会保留它）。
 
-## 5. 无损往返
+## 5. 全局正则
 
-对任意卡片或世界书数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。
+酒馆设置 `settings.json` 中的 `extension_settings.regex`。资料项 `kind: "regex"`，`id` 固定为 `global`，数据为 `{ scripts: [...] }`（酒馆里还没有这个键时为 `{}`）。
+
+```
+regex/global/
+├─ cellar-item.json                 编解码元数据（不要手改）
+├─ 001-<scriptName>.json            一条正则，除 replaceString 外的全部字段
+└─ 001-<scriptName>.replace.txt     它的 replaceString
+```
+
+- 规则与角色卡里的正则相同（第 3 节）：**编号决定顺序**，名称只为辨认；删掉一对文件即删除该条，新建一对即新增。
+- `scripts` 不是对象列表时整份原样记在 `cellar-item.json`，不拆文件，Studio 也不提供编辑。
+- 按槽位合并：每条正则按 `id` 一个槽位，顺序单独一个槽位（与角色正则相同），两边改了不同的正则会自动合并。
+- 写入（Cellar Link）：复核 `baseHash` → 赋值 `extension_settings.regex` → 酒馆自身的 `saveSettingsDebounced()` → 等 `SETTINGS_UPDATED` → 通过 `/api/settings/get` 读回 `settings.json` 复核。只改这一个键，与正则扩展自己保存全局正则的路径相同。
+- 写入（离线）：只替换 `settings.json` 中的 `extension_settings.regex`，保留文件原有的缩进（ST 4 空格、tt 2 空格）、换行和其他键，先备份再原子写入。
+- 已知差异：按文件写回后，每条正则的 `replaceString` 键排到对象末尾。哈希按排序后的键计算，内容不变，同步状态不受影响。
+
+## 6. 无损往返
+
+对任意卡片、世界书或全局正则数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。

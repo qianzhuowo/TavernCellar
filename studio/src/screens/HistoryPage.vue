@@ -9,6 +9,7 @@ import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import { itemName, relTime } from '../lib/status.js';
+import { kindOf } from '../lib/kinds.js';
 
 const UNDESCRIBED = '(未写说明)';
 const app = useApp();
@@ -255,7 +256,7 @@ onMounted(load);
         <template v-else-if="diff">
           <div v-for="it in diff.items" :key="it.path" class="vh-ditem">
             <div class="vh-ditem-h">
-              <Icon :name="it.kind === 'lorebook' ? 'book' : 'user'" size="sm" />
+              <Icon :name="kindOf(it.kind).icon" size="sm" />
               <strong>{{ itemName(it.path) }}</strong>
               <span class="badge">{{ statusText[it.status] }}</span>
               <span v-if="it.slots.length" class="faint">{{ it.slots.length }} 处</span>

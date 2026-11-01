@@ -7,6 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import { itemName, uiStatus, isConflict } from '../lib/status.js';
 import { flushItem } from '../lib/useItem.js';
+import { kindOf } from '../lib/kinds.js';
 import { runBindingOp, canReach } from '../lib/syncOps.js';
 
 const app = useApp();
@@ -26,7 +27,7 @@ const input = ref(/** @type {HTMLInputElement|null} */ (null));
 
 const entries = computed(() => {
   const items = app.items.map((/** @type {any} */ it) => ({
-    key: 'item:' + it.path, label: itemName(it.path), sub: it.path + '/', icon: it.kind === 'lorebook' ? 'book' : 'user'
+    key: 'item:' + it.path, label: itemName(it.path), sub: it.path + '/', icon: kindOf(it.kind).icon
   }));
   const all = [...items, ...SCREENS.map((s) => ({ ...s, sub: '' }))];
   const s = q.value.trim().toLowerCase();

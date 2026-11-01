@@ -13,7 +13,7 @@ let inflight = null;
 export const useLibrary = defineStore('library', {
   state: () => ({
     target: localStorage.getItem('cs.lib.target') || '',
-    /** @type {'character'|'lorebook'} */
+    /** @type {'character'|'lorebook'|'regex'} */
     kind: /** @type {any} */ (localStorage.getItem('cs.lib.kind') || 'character'),
     query: '',
     sort: 'recent',
@@ -63,7 +63,7 @@ export const useLibrary = defineStore('library', {
     },
     /** @param {string} id */
     setTarget(id) { this.target = id; localStorage.setItem('cs.lib.target', id); this.tag = ''; this.reload(); },
-    /** @param {'character'|'lorebook'} k */
+    /** @param {'character'|'lorebook'|'regex'} k */
     setKind(k) { this.kind = k; localStorage.setItem('cs.lib.kind', k); this.tag = ''; this.reload(); },
     /** Drop any pending page load (old tavern/kind/query, or the page was left). */
     cancel() {

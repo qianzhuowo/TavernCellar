@@ -39,11 +39,11 @@ const stemWidth = n => Math.max(2, String(n).length);
  * Writes `list` as numbered file pairs: `<stem>.json` (the object without `textKey`) and `<stem><textExt>` (its text).
  * Returns false (and writes nothing) when an element is not a plain object or its text is not a string.
  */
-function splitList(list, { dir, nameKey, textKey, textExt, rawPrefix }, files, meta) {
+export function splitList(list, { dir, nameKey, textKey, textExt, rawPrefix }, files, meta) {
     if (!list.every(x => isPlainObject(x) && (x[textKey] === undefined || typeof x[textKey] === 'string'))) return false;
     const width = stemWidth(list.length);
     list.forEach((item, i) => {
-        const stem = `${dir}/${String(i + 1).padStart(width, '0')}-${safeSegment(item[nameKey] || dir, 60)}`;
+        const stem = `${dir ? dir + '/' : ''}${String(i + 1).padStart(width, '0')}-${safeSegment(item[nameKey] || dir || 'regex', 60)}`;
         const { [textKey]: text, ...rest } = item;
         files[`${stem}.json`] = json(rest);
         if (typeof text === 'string') {
@@ -55,7 +55,7 @@ function splitList(list, { dir, nameKey, textKey, textExt, rawPrefix }, files, m
 }
 
 /** Reads numbered file pairs back into a list, ordered by number (then name). */
-function joinList(files, { re, textKey, textExt, rawPrefix }, raw) {
+export function joinList(files, { re, textKey, textExt, rawPrefix }, raw) {
     return Object.keys(files)
         .map(name => ({ name, match: re.exec(name) }))
         .filter(x => x.match)
@@ -74,7 +74,7 @@ function joinList(files, { re, textKey, textExt, rawPrefix }, raw) {
         });
 }
 
-const REGEX_SPEC = { dir: 'regex', nameKey: 'scriptName', textKey: 'replaceString', textExt: '.replace.txt', rawPrefix: REGEX_PATH, re: REGEX_JSON_RE };
+export const REGEX_SPEC = { dir: 'regex', nameKey: 'scriptName', textKey: 'replaceString', textExt: '.replace.txt', rawPrefix: REGEX_PATH, re: REGEX_JSON_RE };
 const SCRIPT_SPEC = { dir: 'scripts', nameKey: 'name', textKey: 'content', textExt: '.js', rawPrefix: 'helper.scripts', re: SCRIPT_JSON_RE };
 
 /** Recognizes the Tavern Helper shape; returns { form, helper (object view), keys? } or null. */

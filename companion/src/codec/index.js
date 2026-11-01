@@ -1,5 +1,6 @@
 import { CHARACTER_CODEC_VERSION, decodeCharacter, encodeCharacter, ownsCharacterFile } from './character.js';
 import { decodeLorebook, encodeLorebook, LOREBOOK_CODEC_VERSION, ownsLorebookFile } from './lorebook.js';
+import { decodeRegex, encodeRegex, ownsRegexFile, REGEX_CODEC_VERSION } from './regex.js';
 
 /**
  * Per-kind codec registry. `folder` is the workspace top-level directory; `nameOf` derives the item folder name.
@@ -24,6 +25,15 @@ export const CODECS = Object.freeze({
         encode: (files, options) => encodeLorebook(files, options),
         owns: rel => ownsLorebookFile(rel),
         version: LOREBOOK_CODEC_VERSION,
+    },
+    /** Global regex scripts of a tavern (id "global"); folder regex/global. */
+    regex: {
+        folder: 'regex',
+        nameOf: id => id,
+        decode: data => decodeRegex(data),
+        encode: files => encodeRegex(files),
+        owns: rel => ownsRegexFile(rel),
+        version: REGEX_CODEC_VERSION,
     },
 });
 

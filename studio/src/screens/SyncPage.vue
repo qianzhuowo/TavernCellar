@@ -15,6 +15,7 @@ import {
 import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
 import { api, errorText } from '../api.js';
 import { warningText } from '../lib/warnings.js';
+import { kindOf } from '../lib/kinds.js';
 
 const app = useApp();
 const warnText = (/** @type {any} */ w) => warningText(w, app.settings?.ui?.messageLang);
@@ -40,8 +41,6 @@ const rows = computed(() => {
 });
 const issueCount = computed(() => app.items.filter(hasIssue).length);
 
-const KIND = { character: { label: '角色', icon: 'user' }, lorebook: { label: '世界书', icon: 'book' } };
-const kindOf = (/** @type {string} */ k) => KIND[k] || { label: k, icon: 'box' };
 
 // ---- per-cell actions ----------------------------------------------------
 /** @type {Record<string, string>} key path|target -> running op */

@@ -36,3 +36,18 @@
     opacity: 0.7;
     word-break: break-all;
 }
+
+/* Global regex list replaced by TavernCellar while the regex panel still shows the old rows (see src/link/host.js). */
+#saved_regex_scripts.tavern-cellar-stale {
+    opacity: 0.45;
+    pointer-events: none;
+    user-select: none;
+}
+
+.tavern-cellar-stale-notice {
+    margin: 4px 0;
+    padding: 6px 8px;
+    border: 1px solid var(--SmartThemeQuoteColor, #d29922);
+    border-radius: 6px;
+    font-size: 0.9em;
+}
