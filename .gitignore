@@ -97,3 +97,10 @@ DevToolsActivePort
 # Cellar Studio portable / local install trees accidentally created inside the repo
 /Cellar Studio/
 /CellarStudio/
+
+# More live-test / packaging artifacts: CDP network captures (may hold cookies or tokens), unpacked Electron
+# archives, intermediate prototype screenshots, Cellar offline backups made outside a workspace
+*.har
+*.asar
+*.raw.png
+backups/
