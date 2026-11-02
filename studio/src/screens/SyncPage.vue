@@ -9,7 +9,7 @@ import StatusBadge from '../components/StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import {
-  uiStatus, isConflict, itemName, relTime,
+  uiStatus, isConflict, itemName, displayName, relTime,
   HOST, STATUS, MODE_DOT, MODE_LABEL, MODE_TIP, OFF_MODE, STALE_HINT
 } from '../lib/status.js';
 import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
@@ -37,7 +37,7 @@ const bindingOf = (/** @type {any} */ it, /** @type {string} */ id) => (it.bindi
 const hasIssue = (/** @type {any} */ it) => !!it.error || (it.bindings || []).some((/** @type {any} */ b) => b.status !== 'in-sync' || (b.warnings && b.warnings.length) || b.tavernError || b.waiting);
 const rows = computed(() => {
   const list = onlyIssues.value ? app.items.filter(hasIssue) : app.items;
-  return list.map((/** @type {any} */ it) => ({ it, name: itemName(it.path), warned: (it.bindings || []).filter((/** @type {any} */ b) => b.warnings && b.warnings.length) }));
+  return list.map((/** @type {any} */ it) => ({ it, name: displayName(it), warned: (it.bindings || []).filter((/** @type {any} */ b) => b.warnings && b.warnings.length) }));
 });
 const issueCount = computed(() => app.items.filter(hasIssue).length);
 
@@ -83,7 +83,7 @@ const pickBusy = ref(false);
 let pickSeq = 0;
 function openPick(/** @type {any} */ it, /** @type {any} */ c) {
   picking.value = it.path + '|' + c.id;
-  pickQuery.value = itemName(it.path);
+  pickQuery.value = displayName(it);
   searchPick(it, c);
 }
 async function searchPick(/** @type {any} */ it, /** @type {any} */ c) {

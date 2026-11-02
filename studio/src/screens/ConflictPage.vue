@@ -10,7 +10,7 @@ import SlotDiff from '../components/SlotDiff.vue';
 import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { uiStatus, isConflict, itemName } from '../lib/status.js';
+import { uiStatus, isConflict, itemName, displayName } from '../lib/status.js';
 import { kindOf } from '../lib/slot-view.js';
 import { isEntrySlot } from '../lib/entryNoise.js';
 
@@ -18,7 +18,7 @@ const app = useApp();
 const ui = useUi();
 const path = computed(() => ui.route.arg);
 const item = computed(() => app.item(path.value));
-const name = computed(() => itemName(path.value));
+const name = computed(() => (item.value ? displayName(item.value) : itemName(path.value)));
 const conflictTargets = computed(() => (item.value ? item.value.bindings.filter((b) => isConflict(uiStatus(b.status))).map((b) => b.target) : []));
 
 const target = ref('');

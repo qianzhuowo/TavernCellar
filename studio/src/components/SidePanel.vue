@@ -6,7 +6,7 @@ import StatusBadge from './StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
-import { uiStatus, itemName, HOST } from '../lib/status.js';
+import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
 import { LIB_KINDS } from '../lib/kinds.js';
 
 const app = useApp();
@@ -18,7 +18,8 @@ const mode = computed(() => (ui.route.name === 'library' ? 'library' : ui.route.
 const groups = computed(() => [
   { key: 'character', title: '角色', icon: 'user', items: app.items.filter((i) => i.kind === 'character') },
   { key: 'lorebook', title: '世界书', icon: 'book', items: app.items.filter((i) => i.kind === 'lorebook') },
-  { key: 'regex', title: '正则', icon: 'regex', items: app.items.filter((i) => i.kind === 'regex') }
+  { key: 'regex', title: '正则', icon: 'regex', items: app.items.filter((i) => i.kind === 'regex') },
+  { key: 'preset', title: '预设', icon: 'sliders', items: app.items.filter((i) => i.kind === 'preset') }
 ]);
 
 const SETTINGS_NAV = [
@@ -101,9 +102,9 @@ function jump(/** @type {string} */ id) {
               class="tree-item"
               :class="{ on: ui.route.key === 'item:' + it.path }"
               :href="hrefOf('item:' + it.path)"
-              :title="it.path"
+              :title="it.kind === 'preset' ? (presetRef(it.bindings?.[0]?.id)?.type || '') + ' · ' + it.path : it.path"
             >
-              <span class="name">{{ it.kind === 'regex' ? regexName(it) : itemName(it.path) }}</span>
+              <span class="name">{{ it.kind === 'regex' ? regexName(it) : displayName(it) }}</span>
               <span class="badges">
                 <StatusBadge v-if="it.error" status="invalid" icon-only :title="it.error" />
                 <StatusBadge
@@ -118,9 +119,6 @@ function jump(/** @type {string} */ id) {
             </a>
             <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a href="#/library">去资料库取出</a></div>
           </template>
-        </div>
-        <div class="tree-group">
-          <div class="tg-head"><Icon name="chevRight" size="sm" /><Icon name="sliders" size="sm" />预设<span class="count">阶段 4 开放</span></div>
         </div>
         <div class="tree-legend faint">徽标按绑定的酒馆依次排列，悬停查看酒馆名</div>
       </div>

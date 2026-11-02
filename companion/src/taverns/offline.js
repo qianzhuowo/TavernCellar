@@ -11,7 +11,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, parsePresetId, presetId } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
 import { readCardText, writeCard } from './png.js';
 
@@ -53,22 +53,30 @@ function assertRegexData(data) {
 }
 
 /**
+ * JSON text in the layout of `original`: same indentation (detected from the first key; tabs kept), line endings,
+ * BOM and trailing newline. Presets are written by the taverns with different indents (ST 4 spaces, tt 2 or 4).
+ */
+export function formatLike(original, value) {
+    const text = original.toString('utf8');
+    const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+    const body = text.slice(bom.length);
+    const indent = /^\{\r?\n([ \t]+)"/.exec(body)?.[1] ?? (/^\{\s*\r?\n/.test(body) ? 4 : undefined);
+    const eol = text.includes('\r\n') ? '\r\n' : '\n';
+    let out = JSON.stringify(value, null, indent);
+    if (eol === '\r\n') out = out.replace(/\n/g, '\r\n');
+    if (/\r?\n$/.test(text)) out += eol;
+    return Buffer.from(bom + out, 'utf8');
+}
+
+/**
  * settings.json with only extension_settings.regex replaced. Keeps the file's indentation (ST writes 4 spaces, tt 2),
  * line endings and key order, so nothing else in the file changes.
  */
 export function replaceSettingsRegex(content, scripts) {
-    const text = content.toString('utf8');
-    const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
     const settings = parseSettings(content);
-    const body = text.slice(bom.length);
-    const indent = /^\{\r?\n([ \t]+)"/.exec(body)?.[1] ?? (/^\{\s*\r?\n/.test(body) ? 4 : undefined); // undefined: compact
-    const eol = text.includes('\r\n') ? '\r\n' : '\n';
     if (!isPlainObject(settings.extension_settings)) settings.extension_settings = {};
     settings.extension_settings.regex = scripts;
-    let out = JSON.stringify(settings, null, indent);
-    if (eol === '\r\n') out = out.replace(/\n/g, '\r\n');
-    if (/\r?\n$/.test(text)) out += eol;
-    return Buffer.from(bom + out, 'utf8');
+    return formatLike(content, settings);
 }
 
 async function writeAtomic(file, content) {
@@ -124,6 +132,10 @@ export class OfflineLink {
             if (id !== GLOBAL_REGEX_ID) throw new ProtocolError(ERR.NOT_FOUND, `Regex list ${id} not found (only "${GLOBAL_REGEX_ID}")`);
             return join(this.location.userDir, 'settings.json');
         }
+        if (kind === 'preset') {
+            const { apiId, name } = parsePresetId(id);
+            return join(this.location.userDir, PRESET_APIS[apiId], safeFileName(`${name}.json`));
+        }
         return kind === 'character'
             ? join(this.charactersDir(), safeFileName(id))
             : join(this.worldsDir(), safeFileName(`${id}.json`));
@@ -154,7 +166,7 @@ export class OfflineLink {
                 const scripts = parseSettings(content).extension_settings?.regex;
                 return scripts === undefined ? {} : { scripts };
             }
-            const data = JSON.parse(content.toString('utf8'));
+            const data = JSON.parse(content.toString('utf8').replace(/^\uFEFF/, ''));
             if (!isPlainObject(data)) throw new Error('not a JSON object');
             return data;
         } catch (error) {
@@ -207,6 +219,15 @@ export class OfflineLink {
         if (kind === 'regex') {
             const { data } = await this.readItem('regex', GLOBAL_REGEX_ID).catch(() => ({ data: {} }));
             items = [{ id: GLOBAL_REGEX_ID, name: '全局正则', count: Array.isArray(data.scripts) ? data.scripts.length : 0 }];
+        } else if (kind === 'preset') {
+            items = [];
+            for (const [apiId, folder] of Object.entries(PRESET_APIS)) {
+                const names = (await readdir(join(this.location.userDir, folder)).catch(() => [])).filter(n => n.toLowerCase().endsWith('.json'));
+                for (const n of names) {
+                    const name = n.slice(0, -5);
+                    try { items.push({ id: presetId(apiId, name), name, apiId }); } catch { /* not a valid preset name */ }
+                }
+            }
         } else if (kind === 'character') {
             const names = (await readdir(this.charactersDir()).catch(() => [])).filter(n => n.toLowerCase().endsWith('.png'));
             items = (await Promise.all(names.map(n => this.characterSummary(n).catch(() => null)))).filter(Boolean);
@@ -249,9 +270,9 @@ export class OfflineLink {
     async backup(kind, id, file) {
         const root = this.backupDir();
         if (!root) throw new ProtocolError(ERR.HOST_ERROR, 'No workspace for offline backups');
-        const dir = join(root, this.location.targetId, kind);
+        const dir = join(root, this.location.targetId, kind === 'preset' ? `preset-${parsePresetId(id).apiId}` : kind);
         await mkdir(dir, { recursive: true });
-        const base = safeFileName(kind === 'character' ? id : kind === 'regex' ? 'settings.json' : `${id}.json`);
+        const base = safeFileName(kind === 'character' ? id : kind === 'regex' ? 'settings.json' : kind === 'preset' ? `${parsePresetId(id).name}.json` : `${id}.json`);
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const target = join(dir, `${stamp}__${base}`);
         await copyFile(file, target);
@@ -278,7 +299,8 @@ export class OfflineLink {
         if (kind === 'regex') assertRegexData(sent);
         const content = kind === 'character' ? writeCard(current.content, sent)
             : kind === 'regex' ? replaceSettingsRegex(current.content, sent.scripts)
-                : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
+                : kind === 'preset' ? formatLike(current.content, sent)
+                    : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
         const backup = await this.backup(kind, id, file);
         await writeAtomic(file, content);
 

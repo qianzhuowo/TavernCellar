@@ -53,9 +53,10 @@
 | `ping` | `{}` | `{}` |
 | `asset.get` | `{ type: 'avatar', id }` | `{ type, id, mime, data }`（`data` 为 base64，原始大小上限 512KB） |
 
-- `kind`：`character`（id 为头像文件名，如 `Alice.png`）、`lorebook`（id 为世界书名称）或 `regex`（id 只能是 `global`，即酒馆的全局正则 `extension_settings.regex`，数据为 `{ scripts }`；`catalog.list` 只返回这一项并带 `count`）。插件在 `hello.capabilities.kinds` 中声明支持的类型。
+- `kind`：`character`（id 为头像文件名，如 `Alice.png`）、`lorebook`（id 为世界书名称）`regex`（id 只能是 `global`，即酒馆的全局正则 `extension_settings.regex`，数据为 `{ scripts }`；`catalog.list` 只返回这一项并带 `count`）或 `preset`（id 为 `<类型>/<名称>`，类型见 `shared/protocol.js` 的 `PRESET_APIS`，数据为预设文件内容；`catalog.list` 读取全部预设文件名，每项带 `apiId`、`selected`，聊天补全预设带提示词条数 `count`）。插件在 `hello.capabilities.kinds` 中声明支持的类型。
 - `regex` 的 `item.put` 只接受 `{ scripts: [对象...] }`；写入后插件按 Cellar Link 设置「同步全局正则后」处理酒馆的正则面板：`lock`（默认）锁住面板里的旧列表并提示，刷新页面或正则面板重绘后解除，不发任何酒馆事件；`event` 发出 `MAIN_API_CHANGED` 让正则扩展立即重绘，其他监听该事件的扩展也会当作切换了 API。面板的每一行按下标绑定渲染时的对象，不处理的话在旧行上操作会把旧正则写回。
-- `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文。
+- `preset` 的 `item.put` 只接受对象；对象中带 `name` 且与 id 中的名称不同时返回 `bad_request`（不支持改名）。插件通过 `/api/presets/save` 写入、`/api/settings/get` 读回，再更新酒馆内存中的预设列表；写入的是当前选中的预设时触发预设下拉框的 `change` 让酒馆重新加载。
+- `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文（预设除外：名称取自 `/api/settings/get`，这样不经酒馆界面放进文件夹的预设也能列出）。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
 - `watch.set` 整体替换监视列表。
@@ -66,7 +67,7 @@
 
 | type | payload | 触发 |
 |---|---|---|
-| `item.changed` | `{ kind, id, hash }` | 监视列表中的项触发了 `CHARACTER_EDITED` / `WORLDINFO_UPDATED`；全局正则在 `SETTINGS_UPDATED` 后且列表确实变化时 |
+| `item.changed` | `{ kind, id, hash }` | 监视列表中的项触发了 `CHARACTER_EDITED` / `WORLDINFO_UPDATED`；全局正则在 `SETTINGS_UPDATED` 后且列表确实变化时；预设在 `PRESET_CHANGED` / `SETTINGS_UPDATED` 后且内存中的该预设确实变化时 |
 
 ## 6. 错误码
 

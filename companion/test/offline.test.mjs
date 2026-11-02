@@ -135,6 +135,27 @@ test('offline: global regex lives in settings.json; sync replaces only extension
     assert.equal((await readdir(join(ws.root, '.cellar', 'backups', TARGET, 'regex'))).length, 1);
 });
 
+test('offline: presets keep the file layout (tt indent, BOM-free) and are backed up per type', async () => {
+    const dir = join(dataRoot, 'default-user', 'OpenAI Settings');
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, 'My Preset.json');
+    const before = { name: 'My Preset', temperature: 1, prompts: [{ identifier: 'main', name: 'Main', content: 'hi' }], prompt_order: [] };
+    await writeFile(file, JSON.stringify(before, null, 2)); // tt layout: 2 spaces, no trailing newline
+    const cat = await targets.resolve(TARGET).link.request('catalog.list', { kind: 'preset' });
+    assert.deepEqual(cat.items.map(i => i.id), ['openai/My Preset']);
+    const co = await engine.checkout(undefined, { kind: 'preset', id: 'openai/My Preset' });
+    assert.equal(co.path, 'presets/openai-My Preset');
+    await writeFile(join(ws.root, co.path, 'prompts', '01-Main.md'), 'hello');
+    running = true;
+    await assert.rejects(engine.sync(co.path), e => e.code === ERR.TAVERN_RUNNING);
+    running = false;
+    assert.equal((await engine.sync(co.path)).result, 'synced');
+    const expected = structuredClone(before);
+    expected.prompts[0].content = 'hello';
+    assert.equal(await readFile(file, 'utf8'), JSON.stringify(expected, null, 2));
+    assert.equal((await readdir(join(ws.root, '.cellar', 'backups', TARGET, 'preset-openai'))).length, 1);
+});
+
 test('server: turning a tavern off also turns its offline access off', async () => {
     const config = {
         port: 0, token: 'offline-test-token-0123456789', allowOrigins: [], taverns: { st: true, tt: true }, stPorts: [],

@@ -17,7 +17,8 @@
 │   └─ conflicts/<项路径>/<targetId>.json  冲突时保存的酒馆版本
 ├─ characters/<名称>/          角色卡
 ├─ lorebooks/<名称>/           世界书
-└─ regex/global/               全局正则（每个酒馆一份，第二个起为 global-2 …）
+├─ regex/global/               全局正则（每个酒馆一份，第二个起为 global-2 …）
+└─ presets/<类型>-<名称>/      预设（如 presets/openai-Default）
 ```
 
 `<名称>` 取自头像文件名（去掉 `.png`）或世界书名称，替换 Windows 非法字符；重名时追加 `-2`、`-3`。
@@ -150,8 +151,39 @@ regex/global/
 - 按槽位合并：每条正则按 `id` 一个槽位，顺序单独一个槽位（与角色正则相同），两边改了不同的正则会自动合并。
 - 写入（Cellar Link）：复核 `baseHash` → 赋值 `extension_settings.regex` → 酒馆自身的 `saveSettingsDebounced()` → 等 `SETTINGS_UPDATED` → 通过 `/api/settings/get` 读回 `settings.json` 复核。只改这一个键，与正则扩展自己保存全局正则的路径相同。
 - 写入（离线）：只替换 `settings.json` 中的 `extension_settings.regex`，保留文件原有的缩进（ST 4 空格、tt 2 空格）、换行和其他键，先备份再原子写入。
-- 已知差异：按文件写回后，每条正则的 `replaceString` 键排到对象末尾。哈希按排序后的键计算，内容不变，同步状态不受影响。
+- 键顺序：拆出的 `replaceString` 不在对象末尾时，`cellar-item.json` 的 `textPos` 记下它原来的位置，写回时放回原处（角色正则、预设提示词同理）。
 
-## 6. 无损往返
+## 6. 预设
 
-对任意卡片、世界书或全局正则数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。
+酒馆数据目录中 `<预设文件夹>/<名称>.json` 的内容。资料项 `kind: "preset"`，`id` 为 `<类型>/<名称>`，类型与文件夹：
+
+| 类型 | 文件夹 | Studio 名称 |
+|---|---|---|
+| `openai` | `OpenAI Settings` | 聊天补全 |
+| `textgenerationwebui` | `TextGen Settings` | 文本补全 |
+| `kobold` | `KoboldAI Settings` | KoboldAI |
+| `novel` | `NovelAI Settings` | NovelAI |
+| `instruct` / `context` / `sysprompt` / `reasoning` | 同名文件夹 | 指令模板 / 上下文模板 / 系统提示词 / 推理格式 |
+
+聊天补全预设拆开，其他类型是扁平的参数文件，整份放在 `preset.json`：
+
+```
+presets/openai-<名称>/
+├─ cellar-item.json                 编解码元数据（类型、原始顺序等，不要手改）
+├─ preset.json                      除下面两组之外的全部参数（含 prompt_order）
+├─ prompts/001-<name>.json          一条提示词，除 content 外的字段
+├─ prompts/001-<name>.md            它的 content（标记类提示词没有）
+├─ regex/01-<scriptName>.json       预设正则（extensions.regex_scripts），与角色正则相同
+└─ regex/01-<scriptName>.replace.txt
+```
+
+- 提示词在 `prompts` 中的顺序就是文件编号；实际发送顺序由 `preset.json` 里的 `prompt_order` 决定（全局为 `character_id: 100001`）。
+- 按槽位合并：提示词按 `identifier`、`prompt_order` 按 `character_id`、预设正则按 `id`，其余参数每个顶层键一个槽位。
+- 写入（Cellar Link）：复核 `baseHash` → 酒馆的 `/api/presets/save`（不经过预设管理器的保存函数，避免它弹窗或转换格式）→ `/api/settings/get` 读回复核 → 更新酒馆内存中的预设列表。写入的是酒馆当前选中的预设时，酒馆会重新加载它，界面上未保存的修改会丢失。
+- 写入（离线）：直接写预设文件，保留原有缩进（ST 4 空格，tt 2 或 4 空格）、换行、BOM 与结尾换行；备份在 `preset-<类型>`。ST 自带的少数 NovelAI 默认预设是手排的（数组写在一行），离线写入后按标准缩进展开，值不变——ST 自己保存时也会这样。
+- 资料库列出数据目录中的全部预设文件，标出酒馆当前使用的那个。
+- 不支持改名、新建、删除（在酒馆里做）。
+
+## 7. 无损往返
+
+对任意卡片、世界书、全局正则或预设数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。

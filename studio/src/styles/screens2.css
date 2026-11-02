@@ -245,3 +245,8 @@
 .cf-diff-h { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4) 0; font-size: var(--fs-sm); }
 .cf-diff-h .mono { font-size: 11.5px; }
 .vh-dep.earlier { opacity: .75; border: 1px dashed currentColor; }
+
+/* 资料库 · presets grouped by type */
+.preset-group { margin-bottom: var(--sp-4); }
+.preset-group-head { font-size: var(--fs-xs); margin: 0 0 var(--sp-2) var(--sp-1); display: flex; gap: var(--sp-2); align-items: center; }
+.preset-cur { margin-left: var(--sp-2); font-size: var(--fs-xs); }

@@ -142,13 +142,45 @@ function assembleRegex(m) {
     return data;
 }
 
+function presetSlots(data) {
+    const m = new Map();
+    for (const [k, v] of Object.entries(data)) {
+        if (k === 'prompts' && objectList(v)) putList(m, 'prompt', v, 'identifier');
+        else if (k === 'prompt_order' && objectList(v)) putList(m, 'porder', v, 'character_id');
+        else if (k === 'extensions' && isPlainObject(v)) {
+            m.set('ext.$', true);
+            for (const [ek, ev] of Object.entries(v)) {
+                if (ek === 'regex_scripts' && objectList(ev)) putList(m, 'regex', ev, 'id');
+                else m.set(`ext.${ek}`, ev);
+            }
+        } else m.set(`p.${k}`, v);
+    }
+    return m;
+}
+
+function assemblePreset(m) {
+    const data = {};
+    const ext = () => (data.extensions ??= {});
+    for (const [slot, v] of m) {
+        if (slot.startsWith('p.')) data[slot.slice(2)] = v;
+        else if (slot === 'prompt.$order') data.prompts = takeList(m, 'prompt');
+        else if (slot === 'porder.$order') data.prompt_order = takeList(m, 'porder');
+        else if (slot === 'ext.$') ext();
+        else if (slot === 'regex.$order') ext().regex_scripts = takeList(m, 'regex');
+        else if (slot.startsWith('ext.')) ext()[slot.slice(4)] = v;
+    }
+    return data;
+}
+
 export function slotsOf(kind, data) {
     if (kind === 'regex') return regexSlots(data);
+    if (kind === 'preset') return presetSlots(data);
     return kind === 'lorebook' ? lorebookSlots(data) : characterSlots(data);
 }
 
 export function assemble(kind, slots) {
     if (kind === 'regex') return assembleRegex(slots);
+    if (kind === 'preset') return assemblePreset(slots);
     return kind === 'lorebook' ? assembleLorebook(slots) : assembleCharacter(slots);
 }
 
@@ -220,7 +252,10 @@ export function slotLabel(slot, value) {
     const name = v => (isPlainObject(v) ? v.scriptName ?? v.name ?? v.comment : undefined) || '';
     let m;
     if ((m = /^greetings\.(\d+)$/.exec(slot))) return `其他开场 第 ${Number(m[1]) + 1} 条`;
-    if (slot.endsWith('.$order')) return { regex: '正则顺序', script: '脚本顺序', book: '内嵌世界书条目顺序' }[slot.split('.')[0]] ?? slot;
+    if (slot.endsWith('.$order')) return { regex: '正则顺序', script: '脚本顺序', book: '内嵌世界书条目顺序', prompt: '提示词列表', porder: '提示词顺序' }[slot.split('.')[0]] ?? slot;
+    if (slot.startsWith('prompt.#')) return `提示词「${name(value) || slot.slice(8)}」`;
+    if (slot.startsWith('porder.#')) return `提示词顺序（${slot.slice(8) === '100001' ? '全局' : '角色 ' + slot.slice(8)}）`;
+    if (slot.startsWith('p.')) return `预设参数 ${slot.slice(2)}`;
     if (slot.startsWith('regex.#')) return `正则「${name(value) || slot.slice(7)}」`;
     if (slot.startsWith('script.#')) return `脚本「${name(value) || slot.slice(8)}」`;
     if (slot.startsWith('book.#')) return `内嵌世界书条目「${name(value) || slot.slice(6)}」`;

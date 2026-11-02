@@ -1,6 +1,8 @@
 import { CHARACTER_CODEC_VERSION, decodeCharacter, encodeCharacter, ownsCharacterFile } from './character.js';
 import { decodeLorebook, encodeLorebook, LOREBOOK_CODEC_VERSION, ownsLorebookFile } from './lorebook.js';
 import { decodeRegex, encodeRegex, ownsRegexFile, REGEX_CODEC_VERSION } from './regex.js';
+import { decodePreset, encodePreset, ownsPresetFile, PRESET_CODEC_VERSION } from './preset.js';
+import { parsePresetId } from '../../../shared/protocol.js';
 
 /**
  * Per-kind codec registry. `folder` is the workspace top-level directory; `nameOf` derives the item folder name.
@@ -34,6 +36,15 @@ export const CODECS = Object.freeze({
         encode: files => encodeRegex(files),
         owns: rel => ownsRegexFile(rel),
         version: REGEX_CODEC_VERSION,
+    },
+    /** Tavern presets, id "<apiId>/<name>"; folder presets/<apiId>-<name> (item paths are always two segments). */
+    preset: {
+        folder: 'presets',
+        nameOf: id => { const { apiId, name } = parsePresetId(id); return `${apiId}-${name}`; },
+        decode: (data, options) => decodePreset(data, options),
+        encode: files => encodePreset(files),
+        owns: rel => ownsPresetFile(rel),
+        version: PRESET_CODEC_VERSION,
     },
 });
 

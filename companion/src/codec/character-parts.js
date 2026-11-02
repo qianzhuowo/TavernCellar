@@ -49,13 +49,19 @@ export function splitList(list, { dir, nameKey, textKey, textExt, rawPrefix }, f
         if (typeof text === 'string') {
             files[`${stem}${textExt}`] = text;
             if (needsRaw(text)) meta.raw.push(`${rawPrefix}.${i}.${textKey}`);
+            // Where the text sat among the keys, so joining puts it back there (only recorded when not last).
+            const keys = Object.keys(item);
+            const pos = keys.indexOf(textKey);
+            if (pos < keys.length - 1) (meta.textPos ??= {})[`${rawPrefix}.${i}`] = pos;
         }
     });
     return true;
 }
 
-/** Reads numbered file pairs back into a list, ordered by number (then name). */
-export function joinList(files, { re, textKey, textExt, rawPrefix }, raw) {
+/** Inverse of splitList: reads numbered file pairs back into a list, ordered by number (then name). */
+export function joinList(files, { re, textKey, textExt, rawPrefix }, meta) {
+    const raw = new Set(meta.raw ?? []);
+    const textPos = meta.textPos ?? {};
     return Object.keys(files)
         .map(name => ({ name, match: re.exec(name) }))
         .filter(x => x.match)
@@ -69,8 +75,13 @@ export function joinList(files, { re, textKey, textExt, rawPrefix }, raw) {
             }
             if (!isPlainObject(item)) throw new Error(`${name}: expected a JSON object`);
             const textFile = name.replace(/\.json$/, textExt);
-            if (files[textFile] !== undefined) item[textKey] = normalizeText(files[textFile], raw.has(`${rawPrefix}.${i}.${textKey}`));
-            return item;
+            if (files[textFile] === undefined) return item;
+            const text = normalizeText(files[textFile], raw.has(`${rawPrefix}.${i}.${textKey}`));
+            const pos = textPos[`${rawPrefix}.${i}`];
+            if (!Number.isInteger(pos) || Object.hasOwn(item, textKey)) return Object.assign(item, { [textKey]: text });
+            const entries = Object.entries(item);
+            entries.splice(Math.min(pos, entries.length), 0, [textKey, text]);
+            return Object.fromEntries(entries);
         });
 }
 
@@ -131,16 +142,14 @@ export function splitParts(rest, files, meta, exclude = new Set()) {
 
 /** Inverse of splitParts: puts the parts from `files` back into `card`. */
 export function joinParts(card, files, meta) {
-    const raw = new Set(meta.raw ?? []);
-
-    const regex = joinList(files, REGEX_SPEC, raw);
+    const regex = joinList(files, REGEX_SPEC, meta);
     if (regex.length > 0) setPath(card, REGEX_PATH, regex);
     else if ((meta.emptyArrays ?? []).includes(REGEX_PATH)) setPath(card, REGEX_PATH, []);
 
     const info = meta.helper;
     if (!info) return;
     const parts = {};
-    if (info.scripts) parts.scripts = joinList(files, SCRIPT_SPEC, raw);
+    if (info.scripts) parts.scripts = joinList(files, SCRIPT_SPEC, meta);
     if (info.variables && files[VARIABLES_FILE] !== undefined) {
         try {
             parts.variables = JSON.parse(files[VARIABLES_FILE].replace(/^\uFEFF/, ''));

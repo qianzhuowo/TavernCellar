@@ -3,7 +3,7 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, ProtocolError, assertAssetRef, assertItemRef, assertKind } from '../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, parsePresetId, presetId } from '../../shared/protocol.js';
 import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
 
 const ctx = () => SillyTavern.getContext();
@@ -210,6 +210,105 @@ function assertGlobalRegexId(id) {
     return id;
 }
 
+// ---- presets --------------------------------------------------------------
+
+/**
+ * Preset files are read from disk through /api/settings/get (the only endpoint returning them; both ST and tt have
+ * it). The preset lists in memory can differ from the files (ST merges saves into them, tt adds `name` on disk), so
+ * they are only used for listing and as a cheap change detector. Reads within a short window share one request.
+ */
+const PRESET_LISTS = {
+    openai: ['openai_settings', 'openai_setting_names'],
+    textgenerationwebui: ['textgenerationwebui_presets', 'textgenerationwebui_preset_names'],
+    kobold: ['koboldai_settings', 'koboldai_setting_names'],
+    novel: ['novelai_settings', 'novelai_setting_names'],
+};
+const PRESET_CACHE_MS = 1500;
+let presetDisk = null; // { at, promise }
+
+async function readPresetsFromDisk({ fresh = false } = {}) {
+    if (fresh || !presetDisk || Date.now() - presetDisk.at > PRESET_CACHE_MS) {
+        const promise = (async () => {
+            const response = await postJson('/api/settings/get', {});
+            if (!response.ok) throw await responseError(response, 'Reading presets');
+            return response.json();
+        })();
+        presetDisk = { at: Date.now(), promise };
+        promise.catch(() => { if (presetDisk?.promise === promise) presetDisk = null; });
+    }
+    return presetDisk.promise;
+}
+
+/** One preset exactly as its file holds it. */
+async function readPresetFromDisk(id, options) {
+    const { apiId, name } = parsePresetId(id);
+    const all = await readPresetsFromDisk(options);
+    let data;
+    if (PRESET_LISTS[apiId]) {
+        const [listKey, namesKey] = PRESET_LISTS[apiId];
+        const i = (all[namesKey] ?? []).indexOf(name);
+        if (i >= 0) data = JSON.parse(all[listKey][i]);
+    } else {
+        data = (all[apiId] ?? []).find(p => p?.name === name);
+    }
+    if (!isPlainObject(data)) throw new ProtocolError(ERR.NOT_FOUND, `Preset ${id} not found`);
+    return data;
+}
+
+/** The preset object the tavern holds in memory for `name`, or undefined. */
+function presetInMemory(apiId, name) {
+    const manager = ctx().getPresetManager(apiId);
+    if (!manager) return undefined;
+    const { presets, preset_names } = manager.getPresetList(apiId);
+    const index = Array.isArray(preset_names) ? preset_names.indexOf(name) : preset_names?.[name];
+    return index === undefined || index < 0 ? undefined : { presets, index, value: presets[index] };
+}
+
+/** Every preset file (names from disk, like offline listing), flagged when it is the one the tavern uses. */
+async function listPresets() {
+    const all = await readPresetsFromDisk({ fresh: true });
+    const items = [];
+    for (const apiId of Object.keys(PRESET_APIS)) {
+        const selected = ctx().getPresetManager(apiId)?.getSelectedPresetName();
+        let entries;
+        if (PRESET_LISTS[apiId]) {
+            const [listKey, namesKey] = PRESET_LISTS[apiId];
+            entries = (all[namesKey] ?? []).map((name, i) => [name, all[listKey]?.[i]]);
+        } else {
+            entries = (all[apiId] ?? []).filter(p => typeof p?.name === 'string').map(p => [p.name, p]);
+        }
+        for (const [name, raw] of entries) {
+            if (typeof name !== 'string' || !name || name.includes('/')) continue;
+            let count;
+            if (apiId === 'openai' && typeof raw === 'string') {
+                const m = raw.match(/"identifier"\s*:/g); // cheap prompt count without parsing every large file
+                if (m) count = m.length;
+            }
+            items.push({ id: presetId(apiId, name), name, apiId, selected: name === selected, ...(count !== undefined ? { count } : {}) });
+        }
+    }
+    return items;
+}
+
+/**
+ * Saves through the tavern's preset endpoint (what PresetManager.savePreset posts, without its popups), then puts the
+ * stored file into the in-memory list. When it is the selected preset the tavern reloads it, which replaces unsaved
+ * edits in its panel (Cellar Studio warns before syncing).
+ */
+async function writePreset(id, data) {
+    const { apiId, name } = parsePresetId(id);
+    const response = await postJson('/api/presets/save', { preset: data, name, apiId });
+    if (!response.ok) throw await responseError(response, `Saving preset ${id}`);
+    const saved = await response.json().catch(() => ({}));
+    if (saved?.name && saved.name !== name) throw new ProtocolError(ERR.HOST_ERROR, `Preset ${id} was saved as "${saved.name}"`);
+    const stored = await readPresetFromDisk(id, { fresh: true });
+    const slot = presetInMemory(apiId, name);
+    if (slot) slot.presets[slot.index] = structuredClone(stored);
+    const manager = ctx().getPresetManager(apiId);
+    if (manager && manager.getSelectedPresetName() === name) $(manager.select).trigger('change');
+    return stored;
+}
+
 // ---- assets ---------------------------------------------------------------
 
 function bytesToBase64(bytes) {
@@ -247,11 +346,14 @@ export class Host {
         this.writing = new Set();
         this.onWorldInfoUpdated = this.onWorldInfoUpdated.bind(this);
         this.onCharacterEdited = this.onCharacterEdited.bind(this);
+        /** Watched presets: hash of the in-memory copy last seen, to skip settings saves that did not touch them. */
+        this.presetMemHash = new Map();
+        this.onPresetEvent = this.onPresetEvent.bind(this);
     }
 
     capabilities() {
         return {
-            kinds: ['character', 'lorebook', 'regex'],
+            kinds: ['character', 'lorebook', 'regex', 'preset'],
             worldInfoEntryTemplate: structuredClone(newWorldInfoEntryTemplate),
         };
     }
@@ -261,6 +363,8 @@ export class Host {
         eventSource.on(eventTypes.WORLDINFO_UPDATED, this.onWorldInfoUpdated);
         eventSource.on(eventTypes.CHARACTER_EDITED, this.onCharacterEdited);
         eventSource.on(eventTypes.SETTINGS_UPDATED, this.onSettingsUpdated);
+        eventSource.on(eventTypes.SETTINGS_UPDATED, this.onPresetEvent);
+        eventSource.on(eventTypes.PRESET_CHANGED, this.onPresetEvent);
     }
 
     detachEvents() {
@@ -268,6 +372,8 @@ export class Host {
         eventSource.removeListener(eventTypes.WORLDINFO_UPDATED, this.onWorldInfoUpdated);
         eventSource.removeListener(eventTypes.CHARACTER_EDITED, this.onCharacterEdited);
         eventSource.removeListener(eventTypes.SETTINGS_UPDATED, this.onSettingsUpdated);
+        eventSource.removeListener(eventTypes.SETTINGS_UPDATED, this.onPresetEvent);
+        eventSource.removeListener(eventTypes.PRESET_CHANGED, this.onPresetEvent);
     }
 
     async handle(type, payload) {
@@ -290,6 +396,15 @@ export class Host {
             const items = [{ id: GLOBAL_REGEX_ID, name: '全局正则', count: Array.isArray(scripts) ? scripts.length : 0 }];
             return { total: 1, items: start === 0 ? items : [] };
         }
+        if (kind === 'preset') {
+            let items = await listPresets();
+            if (typeof query === 'string' && query.trim()) {
+                const q = query.trim().toLowerCase();
+                items = items.filter(item => item.name.toLowerCase().includes(q) || item.apiId.includes(q));
+            }
+            const count = Math.min(500, Math.max(1, Number(limit) || 50));
+            return { total: items.length, items: items.slice(start, start + count) };
+        }
         // Browsing starts at page one: reload the list so items added outside this page show up; later pages reuse it.
         if (start === 0) await (kind === 'character' ? ctx().getCharacters() : ctx().updateWorldInfoList());
         let items = kind === 'character' ? listCharacters() : listLorebooks();
@@ -304,6 +419,7 @@ export class Host {
 
     async read(kind, id) {
         if (kind === 'regex') return readGlobalRegex(assertGlobalRegexId(id));
+        if (kind === 'preset') return readPresetFromDisk(id);
         return kind === 'character' ? readCharacter(id) : readLorebook(id);
     }
 
@@ -321,19 +437,20 @@ export class Host {
         if (this.writing.has(key)) throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} is already being written`);
         this.writing.add(key);
         try {
-            const current = await this.read(kind, id);
+            const current = kind === 'preset' ? await readPresetFromDisk(id, { fresh: true }) : await this.read(kind, id);
             const currentHash = await hashData(current);
             if (baseHash !== currentHash) {
                 throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
             }
             if (kind === 'character') await writeCharacter(id, data);
             else if (kind === 'regex') assertGlobalRegexData(data);
-            else await writeLorebook(id, data);
+            else if (kind !== 'preset') await writeLorebook(id, data);
 
             // Re-read what the backend actually stored (lorebooks: bypass the frontend cache).
             const stored = kind === 'character' ? await readCharacter(id)
                 : kind === 'regex' ? await writeGlobalRegex(data.scripts)
-                    : await readLorebookFromDisk(id);
+                    : kind === 'preset' ? await writePreset(id, data)
+                        : await readLorebookFromDisk(id);
             const sent = kind === 'character' ? characterPayload(id, data) : data;
             const hash = await hashData(stored);
             const sentHash = await hashData(sent);
@@ -356,6 +473,7 @@ export class Host {
                 this.regexHash = hash;
                 refreshRegexPanel(this.regexRefresh()).catch(error => console.warn('[Cellar Link] regex panel refresh failed', error));
             }
+            if (kind === 'preset') await this.rememberPreset(id);
             return { data: stored, hash, warnings };
         } finally {
             this.writing.delete(key);
@@ -365,7 +483,33 @@ export class Host {
     setWatch({ items }) {
         if (!Array.isArray(items)) throw new ProtocolError(ERR.BAD_REQUEST, 'items must be an array');
         this.watched = new Set(items.filter(i => i && typeof i.id === 'string').map(i => watchKey(i.kind, i.id)));
+        this.presetMemHash = new Map();
+        for (const i of items) if (i?.kind === 'preset' && typeof i.id === 'string') this.rememberPreset(i.id).catch(() => {});
         return { count: this.watched.size };
+    }
+
+    /** Records the hash of a preset's in-memory copy (undefined when it is not in the list). */
+    async rememberPreset(id) {
+        let value;
+        try { const { apiId, name } = parsePresetId(id); value = presetInMemory(apiId, name)?.value; } catch { return; }
+        this.presetMemHash.set(id, value === undefined ? null : await hashData(value));
+    }
+
+    /**
+     * PRESET_CHANGED / SETTINGS_UPDATED: a watched preset whose in-memory copy changed may have been saved. Its file is
+     * read again (cheap check first: the in-memory copy, since reading files returns every preset at once).
+     */
+    async onPresetEvent() {
+        for (const id of this.presetMemHash.keys()) {
+            const key = watchKey('preset', id);
+            if (!this.watched.has(key) || this.writing.has(key)) continue;
+            const before = this.presetMemHash.get(id);
+            await this.rememberPreset(id);
+            if (this.presetMemHash.get(id) !== before) {
+                presetDisk = null; // the file was just saved: do not answer from an older read
+                this.notify('preset', id);
+            }
+        }
     }
 
     async notify(kind, id, data) {

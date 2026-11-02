@@ -8,6 +8,7 @@ export class FakeTavern {
         this.store = {
             character: new Map([['Alice.png', { name: 'Alice', data: { name: 'Alice', description: 'orig', alternate_greetings: [], extensions: {} } }]]),
             lorebook: new Map([['Book', { entries: { 0: { uid: 0, key: ['k'], comment: 'c', content: 'body' } } }]]),
+            preset: new Map([['openai/P1', { temperature: 1, prompts: [{ identifier: 'main', name: 'Main', role: 'system', content: 'hello' }, { identifier: 'x1', name: 'Style', role: 'system', content: 'be brief' }], prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }], extensions: { regex_scripts: [{ id: 'pr1', scriptName: 'PR1', findRegex: '/x/', replaceString: 'y', placement: [2] }] } }]]),
             regex: new Map([['global', { scripts: [{ id: 'r1', scriptName: 'R1', findRegex: '/a/', replaceString: 'b', placement: [2], disabled: false }] }]]),
         };
         this.watch = [];

@@ -5,6 +5,7 @@ import Icon from '../components/Icon.vue';
 import CardEditor from '../editors/CardEditor.vue';
 import LorebookEditor from '../editors/LorebookEditor.vue';
 import RegexEditor from '../editors/RegexEditor.vue';
+import PresetEditor from '../editors/PresetEditor.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { uiStatus, isConflict } from '../lib/status.js';
@@ -37,5 +38,6 @@ const conflicts = computed(() => (item.value ? item.value.bindings.filter((b) =>
     <CardEditor v-if="item.kind === 'character' && !item.error" :key="item.path" :path="item.path" />
     <LorebookEditor v-else-if="item.kind === 'lorebook' && !item.error" :key="item.path" :path="item.path" />
     <RegexEditor v-else-if="item.kind === 'regex' && !item.error" :key="item.path" :path="item.path" />
+    <PresetEditor v-else-if="item.kind === 'preset' && !item.error" :key="item.path" :path="item.path" />
   </div>
 </template>

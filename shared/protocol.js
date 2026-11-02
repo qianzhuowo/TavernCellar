@@ -9,9 +9,37 @@ export const LINK_PATH = '/link';
 export const HELLO_TIMEOUT_MS = 5000;
 export const REQUEST_TIMEOUT_MS = 30000;
 
-export const KINDS = Object.freeze(['character', 'lorebook', 'regex']);
+export const KINDS = Object.freeze(['character', 'lorebook', 'regex', 'preset']);
 /** The only id of kind 'regex': the tavern's global regex list (extension_settings.regex). */
 export const GLOBAL_REGEX_ID = 'global';
+
+/**
+ * Preset types (the tavern's preset manager apiIds) and their data folder. A preset id is `<apiId>/<name>`; the name
+ * is the file name without `.json`, which the tavern sanitizes, so it never contains `/`.
+ */
+export const PRESET_APIS = Object.freeze({
+    openai: 'OpenAI Settings',
+    textgenerationwebui: 'TextGen Settings',
+    kobold: 'KoboldAI Settings',
+    novel: 'NovelAI Settings',
+    instruct: 'instruct',
+    context: 'context',
+    sysprompt: 'sysprompt',
+    reasoning: 'reasoning',
+});
+
+/** Splits a preset id into its apiId and name; throws bad_request when it is not one. */
+export function parsePresetId(id) {
+    const slash = typeof id === 'string' ? id.indexOf('/') : -1;
+    const apiId = slash > 0 ? id.slice(0, slash) : '';
+    const name = slash > 0 ? id.slice(slash + 1) : '';
+    if (!Object.hasOwn(PRESET_APIS, apiId) || !name || name.includes('/') || /[\\:*?"<>|\u0000-\u001f]/.test(name) || name === '.' || name === '..') {
+        throw new ProtocolError(ERR.BAD_REQUEST, `Invalid preset id: ${id}`);
+    }
+    return { apiId, name };
+}
+
+export const presetId = (apiId, name) => `${apiId}/${name}`;
 
 export const MSG = Object.freeze({
     HELLO: 'hello',
@@ -149,6 +177,7 @@ export function assertItemRef(payload) {
     if (typeof payload.id !== 'string' || !payload.id) {
         throw new ProtocolError(ERR.BAD_REQUEST, 'Item id must be a non-empty string');
     }
+    if (payload.kind === 'preset') parsePresetId(payload.id);
 }
 
 /**

@@ -9,7 +9,7 @@
  *   W != B, T != B  conflict       -> never overwritten silently
  */
 import { hashData } from '../../shared/hash.js';
-import { ERR, MSG, ProtocolError } from '../../shared/protocol.js';
+import { ERR, MSG, ProtocolError, assertItemRef, parsePresetId } from '../../shared/protocol.js';
 import { CODECS, codecFor } from './codec/index.js';
 import { CHARACTER_PARTS } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
@@ -140,6 +140,10 @@ export class SyncEngine {
      */
     async decodeOptions(item) {
         if (item.kind === 'character') return { exclude: item.layout?.exclude ?? [] };
+        if (item.kind === 'preset') {
+            const id = Object.values(item.bindings ?? {})[0]?.id;
+            return { apiId: id ? parsePresetId(id).apiId : undefined };
+        }
         if (item.kind !== 'lorebook') return undefined;
         const files = await this.ws.readItemFiles(item.path).catch(() => ({}));
         try {
@@ -328,6 +332,7 @@ export class SyncEngine {
 
     async checkoutOne(targetSpec, { kind, id, exclude }) {
         const { target, link } = this.targets.resolve(targetSpec);
+        assertItemRef({ kind, id });
         const existing = this.ws.findBinding(target.id, kind, id);
         if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `${kind} "${id}" is already checked out at ${existing.item.path}`);
         if (exclude !== undefined && (kind !== 'character' || !Array.isArray(exclude) || exclude.some(p => !CHARACTER_PARTS.includes(p)))) {

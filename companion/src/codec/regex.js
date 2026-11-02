@@ -39,5 +39,5 @@ export function encodeRegex(files) {
     const data = isPlainObject(meta.rest) ? deepClone(meta.rest) : {};
     if (meta.absent) return data;
     if (meta.opaque !== undefined) return { ...data, scripts: deepClone(meta.opaque) };
-    return { ...data, scripts: joinList(files, SPEC, new Set(meta.raw ?? [])) };
+    return { ...data, scripts: joinList(files, SPEC, meta) };
 }

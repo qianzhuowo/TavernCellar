@@ -6,7 +6,7 @@ import Avatar from '../components/Avatar.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
-import { initialOf, relTime, STALE_HINT } from '../lib/status.js';
+import { initialOf, relTime, STALE_HINT, presetRef } from '../lib/status.js';
 import { LIB_KINDS, kindOf } from '../lib/kinds.js';
 
 const app = useApp();
@@ -25,7 +25,7 @@ const sub = computed(() => {
   const t = cur.value;
   if (!t) return '';
   const parts = [app.targetName(t.id)];
-  if (lib.total || !lib.loading) parts.push(lib.kind === 'regex' ? '全局正则' : lib.total + (lib.kind === 'character' ? ' 个角色' : ' 本世界书'));
+  if (lib.total || !lib.loading) parts.push(lib.kind === 'regex' ? '全局正则' : lib.total + ({ character: ' 个角色', lorebook: ' 本世界书', preset: ' 个预设' })[lib.kind]);
   return parts.join(' · ');
 });
 
@@ -34,6 +34,17 @@ function onQuery(/** @type {string} */ v) {
   clearTimeout(qTimer);
   qTimer = window.setTimeout(() => lib.reload(), 250);
 }
+
+const presetGroups = computed(() => {
+  const groups = new Map();
+  for (const e of lib.shown) {
+    const r = presetRef(e.id);
+    if (!r) continue;
+    if (!groups.has(r.apiId)) groups.set(r.apiId, { apiId: r.apiId, type: r.type, items: [] });
+    groups.get(r.apiId).items.push(e);
+  }
+  return [...groups.values()];
+});
 
 function open(/** @type {any} */ e) {
   if (e.checkedOut) ui.openItem(e.checkedOut);
@@ -68,7 +79,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
           <Icon name="search" size="sm" />
           <input class="input" data-find :value="lib.query" placeholder="搜索名称" @input="onQuery(/** @type {any} */ ($event.target).value)" />
         </label>
-        <select v-if="lib.kind !== 'regex'" v-model="lib.sort" class="select" style="width: 120px">
+        <select v-if="lib.kind !== 'regex' && lib.kind !== 'preset'" v-model="lib.sort" class="select" style="width: 120px">
           <option v-if="lib.kind === 'character'" value="recent">最近聊天</option>
           <option value="name">名称</option>
           <option value="default">酒馆顺序</option>
@@ -123,6 +134,22 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
       </div>
       <div class="dt-note faint rx-lib-note"><Icon name="info" size="sm" /><div>全局正则保存在酒馆设置里，每个酒馆一份。取出后在工作区按条编辑；同步时只替换这份列表，不改其他设置。</div></div>
     </div>
+
+    <!-- presets, grouped by type -->
+    <template v-if="lib.kind === 'preset' && lib.shown.length">
+      <div v-for="g in presetGroups" :key="g.apiId" class="preset-group">
+        <div class="preset-group-head faint">{{ g.type }}<span class="count">{{ g.items.length }}</span></div>
+        <div class="book-list card">
+          <div v-for="e in g.items" :key="e.id" class="book-row">
+            <Icon name="sliders" />
+            <div class="grow">{{ e.name }}<span v-if="e.count !== undefined" class="faint"> · {{ e.count }} 条提示词</span><span v-if="e.selected" class="badge preset-cur">酒馆当前使用</span></div>
+            <a v-if="e.checkedOut" class="in-ws static" :href="'#/item/' + encodeURIComponent(e.checkedOut)"><Icon name="check" size="sm" />已在工作区</a>
+            <button v-else class="btn sm" :disabled="lib.busy[e.id]" @click="take(e, false)"><Icon :name="lib.busy[e.id] ? 'spin' : 'download'" size="sm" />取出</button>
+          </div>
+        </div>
+      </div>
+      <div class="dt-note faint rx-lib-note"><Icon name="info" size="sm" /><div>聊天补全预设取出后，提示词与预设正则会拆成单独文件。同步只覆盖这一个预设文件；同步酒馆正在使用的预设时，酒馆会重新载入它，未保存的面板修改会丢失。</div></div>
+    </template>
 
     <div ref="sentinel" class="load-more faint">
       <template v-if="lib.loading && lib.slow"><Icon name="spin" size="sm" /> 酒馆迟迟没有响应…<span v-if="cur && cur.live">若酒馆页面在后台，切换过去即可恢复。</span><button class="btn sm ghost" @click="lib.cancel()">取消</button></template>

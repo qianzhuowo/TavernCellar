@@ -114,3 +114,25 @@ export function relTime(/** @type {number|undefined} */ ms) {
 
 /** Display name of a workspace item = last path segment. */
 export const itemName = (/** @type {string} */ path) => String(path).split('/').pop() || path;
+
+/** Preset types (shared/protocol.js PRESET_APIS) as the tavern labels them. */
+export const PRESET_TYPES = {
+  openai: '聊天补全', textgenerationwebui: '文本补全', kobold: 'KoboldAI', novel: 'NovelAI',
+  instruct: '指令模板', context: '上下文模板', sysprompt: '系统提示词', reasoning: '推理格式'
+};
+/** A preset id "<apiId>/<name>" split; null for other ids. @param {string|undefined} id */
+export function presetRef(id) {
+  const i = typeof id === 'string' ? id.indexOf('/') : -1;
+  return i > 0 ? { apiId: id.slice(0, i), name: id.slice(i + 1), type: PRESET_TYPES[/** @type {'openai'} */ (id.slice(0, i))] || id.slice(0, i) } : null;
+}
+/**
+ * Name to show for a workspace item: presets by their tavern name (folders are "<apiId>-<name>"), the rest by folder.
+ * @param {any} it status item
+ */
+export function displayName(it) {
+  if (it?.kind === 'preset') {
+    const ref = presetRef(it.bindings?.[0]?.id);
+    if (ref) return ref.name;
+  }
+  return itemName(it?.path ?? '');
+}
