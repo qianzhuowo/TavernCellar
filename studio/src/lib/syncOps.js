@@ -2,6 +2,7 @@
 // conflict handling everywhere (a conflict status or a conflict error opens the conflict page).
 import { api, errorText } from '../api.js';
 import { uiStatus, isConflict } from './status.js';
+import { useLibrary } from '../stores/library.js';
 
 /**
  * Sync (workspace -> tavern) or pull (tavern -> workspace) one binding, then refresh the store.
@@ -112,5 +113,26 @@ export async function bindItem(app, ui, path, target, id) {
   } catch (e) {
     ui.toast(errorText(e), 'alert');
     return 'error';
+  }
+}
+
+/**
+ * Takes an item out of the workspace (the taverns keep their copy; earlier versions stay in the history).
+ * Closes its tabs, refreshes the item list and un-marks it in the 资料库.
+ * @param {any} app @param {any} ui @param {string} path @param {boolean} keepFiles
+ * @returns {Promise<boolean>}
+ */
+export async function removeItem(app, ui, path, keepFiles) {
+  try {
+    const r = await api.remove(path, keepFiles);
+    ui.closeTab('conflict:' + path);
+    ui.closeTab('item:' + path);
+    for (const e of useLibrary().items) if (e.checkedOut === path) e.checkedOut = null;
+    await app.refreshStatus();
+    ui.toast('已从工作区移除 ' + path + (r.kept && r.kept.length ? '（保留了你自己的 ' + r.kept.length + ' 个文件）' : ''));
+    return true;
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    return false;
   }
 }

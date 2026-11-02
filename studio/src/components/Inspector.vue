@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import Toggle from './Toggle.vue';
 import StatusBadge from './StatusBadge.vue';
@@ -7,7 +7,7 @@ import CardParts from './card/CardParts.vue';
 import { kindOf } from '../lib/kinds.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, removeItem } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
@@ -51,6 +51,17 @@ async function follow(/** @type {any} */ b) {
 
 async function copyPath() {
   await copyPathToast(abs.value, ui.toast);
+}
+
+// ---- remove from workspace (two steps: 移除… then 确认移除) ----
+const removing = ref(false);
+const keepFiles = ref(false);
+const removeBusy = ref(false);
+watch(() => props.path, () => { removing.value = false; keepFiles.value = false; });
+
+async function confirmRemove() {
+  removeBusy.value = true;
+  try { if (await removeItem(app, ui, props.path, keepFiles.value)) removing.value = false; } finally { removeBusy.value = false; }
 }
 </script>
 
@@ -131,6 +142,19 @@ async function copyPath() {
           <dt>类型</dt><dd>{{ kindOf(item.kind).type }}</dd>
           <dt>绑定</dt><dd>{{ item.bindings.length }} 个酒馆</dd>
         </dl>
+      </section>
+
+      <section class="insp-sec">
+        <h4>移除</h4>
+        <button v-if="!removing" class="btn sm" title="不再在工作区里管理这一项" @click="removing = true"><Icon name="trash" size="sm" />从工作区移除…</button>
+        <div v-else class="insp-remove">
+          <p class="faint">只从工作区移除：酒馆里的内容不受影响，之前的版本仍在版本历史中。文件夹里你自己的笔记会保留。</p>
+          <label class="insp-check"><input v-model="keepFiles" type="checkbox" />保留文件夹里的全部文件</label>
+          <div class="insp-btns">
+            <button class="btn sm danger" :disabled="removeBusy" @click="confirmRemove"><Icon :name="removeBusy ? 'spin' : 'trash'" size="sm" />确认移除</button>
+            <button class="btn sm ghost" :disabled="removeBusy" @click="removing = false">取消</button>
+          </div>
+        </div>
       </section>
     </div>
   </aside>

@@ -185,6 +185,35 @@ export class Workspace {
         await pruneEmptyDirs(dir);
     }
 
+    /**
+     * Takes an item out of the manifest and deletes its codec files (`owns(rel)`), keeping everything else the user
+     * put in the folder; the folder goes when nothing is left. Sync state must be forgotten by the caller first.
+     * Returns the files that were kept.
+     */
+    async removeItem(path, owns, { deleteFiles = true } = {}) {
+        const index = this.manifest.items.findIndex(item => item.path === path);
+        if (index < 0) return [];
+        let kept = [];
+        if (deleteFiles) {
+            const dir = this.resolveInside(path);
+            const current = await this.readItemFiles(path);
+            for (const rel of Object.keys(current)) {
+                if (owns(rel)) await rm(this.resolveInside(`${path}/${rel}`), { force: true });
+                else kept.push(rel);
+            }
+            await pruneEmptyDirs(dir);
+            // Only an empty folder goes: hidden files (not read as item files) are the user's too.
+            if ((await readdir(dir).catch(() => [null])).length === 0) await rm(dir, { recursive: true, force: true });
+        }
+        this.manifest.items.splice(index, 1);
+        delete this.state.items[path];
+        await rm(this.internal('base', ...path.split('/')), { recursive: true, force: true });
+        await rm(this.internal('conflicts', ...path.split('/')), { recursive: true, force: true });
+        await this.saveManifest();
+        await this.saveState();
+        return kept;
+    }
+
     async saveConflict(path, targetId, payload) {
         const file = this.internal('conflicts', ...path.split('/'), `${targetId}.json`);
         await mkdir(dirname(file), { recursive: true });

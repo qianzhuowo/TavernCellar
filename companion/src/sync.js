@@ -527,6 +527,26 @@ export class SyncEngine {
     }
 
     /**
+     * Takes an item out of the workspace: all its bindings, sync state, base snapshots and conflicts are forgotten and
+     * (unless `keepFiles`) the files the codec wrote are deleted; the user's own files in the folder stay. The
+     * taverns are never touched. Earlier versions remain in the version history.
+     */
+    async remove(path, { keepFiles = false } = {}) {
+        const item = this.requireItem(path);
+        return this.withLock(path, async () => {
+            const targets = Object.keys(item.bindings ?? {});
+            for (const targetId of targets) await this.ws.vcs.dropDeployed(targetId, item.path).catch(() => {});
+            const kept = await this.ws.removeItem(item.path, codecFor(item.kind).owns, { deleteFiles: !keepFiles });
+            this.local.delete(item.path);
+            for (const targetId of targets) {
+                await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
+            }
+            this.log(`removed ${item.path} from the workspace${keepFiles ? ' (files kept)' : ''}`);
+            return { path: item.path, result: 'removed', kept: keepFiles ? null : kept };
+        });
+    }
+
+    /**
      * Binds an existing workspace item to an item in a tavern (the way back from `unbind`, or adopting a tavern item
      * for a folder made elsewhere). Nothing is written on either side: identical data is recorded as in sync;
      * otherwise there is no common base, so a whole-item conflict is recorded and the user picks a side.

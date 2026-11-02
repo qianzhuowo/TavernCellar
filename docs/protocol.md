@@ -112,6 +112,8 @@
 | `/api/sync` | `{ path, target?, force? }` | 工作区 → 酒馆 |
 | `/api/pull` | `{ path, target?, force? }` | 酒馆 → 工作区 |
 | `/api/auto-sync` | `{ path, target?, enabled }` | 切换随时同步 |
+| `/api/unbind` | `{ path, target? }` | 解除一个绑定（文件与酒馆内容都保留） |
+| `/api/remove` | `{ path, keepFiles? }` | 从工作区移除一项：忘掉全部绑定、同步状态、基准快照与冲突，不动酒馆；默认删除编解码生成的文件，保留用户自己的文件（`keepFiles: true` 则一个文件都不删）；返回 `{ path, result: 'removed', kept }` |
 | `GET /api/assets/avatar?target=&id=` | — | 头像图片本身（供 `<img>` 使用）；按酒馆 + 文件名缓存 10 分钟，酒馆报告该角色被修改时失效；带 `ETag` |
 
 `target` 可以是 targetId，也可以是唯一前缀；只连接了一个目标时可省略。

@@ -75,6 +75,8 @@
 .sync-ops .tlabel { font-size: var(--fs-sm); }
 .sync-row.mode-none .sync-ops .btn, .sync-row.mode-closed .sync-ops .btn { opacity: .5; }
 .insp-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.insp-remove p { margin: 0 0 8px; font-size: var(--fs-sm); line-height: 1.5; }
+.insp-check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); cursor: pointer; }
 
 /* ---- library ---- */
 .search { position: relative; display: flex; align-items: center; }

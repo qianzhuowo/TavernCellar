@@ -39,6 +39,7 @@ const USAGE = `TavernCellar 伴侣程序
   cellar sync <项路径> [--target ID] [--force]    把工作区修改同步到酒馆
   cellar pull <项路径> [--target ID] [--force]    把酒馆中的内容取回工作区
   cellar auto <项路径> <on|off> [--target ID]     切换随时同步
+  cellar remove <项路径> [--keep-files]          从工作区移除一项（不动酒馆；默认删除生成的文件，保留自己的笔记）
 
 版本记录（工作区是 git 仓库，修改自动进入草稿 @）:
   cellar log [项路径] [--limit N]           版本列表，标出各酒馆已部署的版本
@@ -368,6 +369,14 @@ async function main() {
             const [path, mode] = positional;
             if (!path || !['on', 'off'].includes(mode)) throw new Error('用法: cellar auto <项路径> <on|off>');
             print(await api(config, 'POST', '/api/auto-sync', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target, enabled: mode === 'on' }));
+            return;
+        }
+        case 'remove': {
+            const [path] = positional;
+            if (!path) throw new Error('用法: cellar remove <项路径> [--keep-files]');
+            const r = await api(config, 'POST', '/api/remove', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), keepFiles: Boolean(flags['keep-files']) });
+            console.log(`已从工作区移除 ${r.path}（酒馆里的内容不受影响）`);
+            if (r.kept?.length) console.log(`  文件夹中保留了你自己的文件：${r.kept.join('、')}`);
             return;
         }
         case 'log': {
