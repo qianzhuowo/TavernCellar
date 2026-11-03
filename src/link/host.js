@@ -3,8 +3,9 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, PREVIEW_VERSION, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
 import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
+import { previewPrompt } from './preview.js';
 
 const ctx = () => SillyTavern.getContext();
 const watchKey = (kind, id) => `${kind}\u0000${id}`;
@@ -345,6 +346,7 @@ export class Host {
     capabilities() {
         return {
             kinds: ['character', 'lorebook', 'regex', 'preset'],
+            preview: PREVIEW_VERSION,
             worldInfoEntryTemplate: structuredClone(newWorldInfoEntryTemplate),
         };
     }
@@ -375,6 +377,7 @@ export class Host {
             case MSG.ITEM_PUT: return this.put(payload);
             case MSG.WATCH_SET: return this.setWatch(payload);
             case MSG.ASSET_GET: assertAssetRef(payload); return readAsset(payload);
+            case MSG.PROMPT_PREVIEW: return previewPrompt(payload);
             default: throw new ProtocolError(ERR.BAD_REQUEST, `Unknown request type: ${type}`);
         }
     }

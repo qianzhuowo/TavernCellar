@@ -53,6 +53,12 @@ const USAGE = `TavernCellar 伴侣程序
   cellar follow <项路径> [--target <酒馆>]  取消固定，改为跟随最新
   版本可以写编号前几位、标签名或 HEAD
 
+编辑测试（需要酒馆页面已连接，并打开了一个角色的聊天）:
+  cellar preview [--target ID] [--input 测试文本] [--full] [--json]
+                                          用酒馆自己的 dryRun 组装下一条回复的提示词：token 数、触发的世界书条目
+                                          预览的是酒馆里的内容，工作区未同步的修改先 cellar sync；不发给模型、不写聊天
+                                          --input 作为附加指令加在末尾并参与世界书扫描；--full 打印完整提示词
+
 配置文件: ${configPath()}`;
 
 function parseArgs(argv) {
@@ -113,6 +119,37 @@ function formatDiff({ from, to, items }) {
     for (const item of items) {
         lines.push(`\n${item.path}  ${{ added: '新增', removed: '删除', changed: '修改', unreadable: `无法读取：${item.error}` }[item.status]}`);
         for (const s of item.slots) lines.push(s.eolOnly ? `  ${s.label}（只有换行符不同）` : `  ${s.label}\n    - ${show(s.from)}\n    + ${show(s.to)}`);
+    }
+    return lines.join('\n');
+}
+
+/** Insertion position of a world info entry (world_info_position in the tavern's world-info.js; Studio's short forms). */
+const WI_POSITION = ['↑Char', '↓Char', '↑AN', '↓AN', '@D', '↑EM', '↓EM', 'Outlet'];
+
+function formatPreview(r, full) {
+    const t = r.tokens ?? {};
+    const lines = [
+        `${r.chat?.character?.name ?? ''}  聊天 ${r.chat?.chatId || '（无）'}（${r.chat?.messages ?? 0} 条消息）  API ${r.api}${r.model ? ` · ${r.model}` : ''}`,
+        `提示词 ${t.total ?? '?'} token${t.approx ? '（按内容估算）' : ''}${t.context ? ` / 上下文 ${t.context}` : ''}${t.response ? `（其中回复预留 ${t.response}）` : ''}`,
+    ];
+    if (r.input) lines.push(`测试输入：${r.input.slice(0, 80)}`);
+    const p = r.prompt ?? {};
+    if (p.sections) {
+        lines.push('', '分段:');
+        for (const s of p.sections) lines.push(`  ${String(s.tokens).padStart(6)}  ${s.name || s.identifier}${s.count > 1 ? `（${s.count} 条）` : ''}`);
+    } else if (p.messages) {
+        lines.push('', `${p.messages.length} 条消息`);
+    }
+    const entries = r.worldInfo?.entries ?? [];
+    lines.push('', `触发的世界书条目：${entries.length}${r.worldInfo?.overflowed ? '（超出世界书预算，部分条目未加入）' : ''}`);
+    for (const e of entries) {
+        const pos = WI_POSITION[e.position] ?? String(e.position);
+        lines.push(`  ${String(e.tokens ?? '').padStart(6)}  ${e.world} / ${e.comment || e.keys.join(',') || `#${e.uid}`}  ${pos}${e.position === 4 ? e.depth : ''}  顺序 ${e.order ?? ''}${e.constant ? '  常驻' : ''}${e.path ? `  [${e.path}]` : ''}`);
+    }
+    if (full) {
+        lines.push('', '---- 完整提示词 ----');
+        if (p.messages) for (const m of p.messages) lines.push(`[${m.role}${m.name ? ` ${m.name}` : ''}] (${m.tokens})`, m.content, '');
+        else lines.push(p.text ?? '');
     }
     return lines.join('\n');
 }
@@ -430,6 +467,12 @@ async function main() {
             if (!path) throw new Error('用法: cellar follow <项路径> [--target <酒馆>]');
             const r = await api(config, 'POST', '/api/follow', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target });
             console.log(`${r.path} 在 ${r.target.slice(0, 8)} 改为跟随最新${r.sync ? `（同步：${r.sync}${r.error ? ` ${r.error}` : ''}）` : ''}`);
+            return;
+        }
+        case 'preview': {
+            const r = await api(config, 'POST', '/api/preview', { target, input: typeof flags.input === 'string' ? flags.input : undefined });
+            if (flags.json) { print(r); return; }
+            console.log(formatPreview(r, Boolean(flags.full)));
             return;
         }
         case 'help':

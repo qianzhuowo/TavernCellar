@@ -121,7 +121,13 @@ export const api = {
     /** Deploy a version to one tavern and pin the bindings there; the workspace is not changed. */
     pushVersion: (rev, target, { paths, force } = {}) => call('POST', '/api/push', { rev, target, paths, force }),
     /** End a pin: the binding follows the workspace again. */
-    follow: (path, target) => call('POST', '/api/follow', { path, target })
+    follow: (path, target) => call('POST', '/api/follow', { path, target }),
+    /**
+     * Prompt preview (phase 5): the tavern dry-runs the next reply of the chat open in it. A dry run may tokenize a
+     * long chat, so the client waits a little longer than the companion's own 120 s limit.
+     * @param {string} target @param {string} [input] test text, added as the quiet prompt
+     */
+    preview: (target, input) => call('POST', '/api/preview', { target, input: input || undefined }, { timeoutMs: 130000 })
 };
 
 /** Shown when a tavern page stops answering (usually a backgrounded, frozen browser tab). */
@@ -138,6 +144,8 @@ export function errorText(e) {
     case 'unauthorized': return '未授权：请从伴侣程序重新打开 Studio';
     case 'not_found': return e.message || '找不到该资料项';
     case 'timeout': return /[\u4e00-\u9fff]/.test(e.message || '') ? e.message : UNRESPONSIVE_TEXT;
+    case 'no_chat': return e.message || '酒馆里没有打开角色聊天';
+    case 'busy': return e.message || '酒馆正忙，稍后再试';
     default: return e.message || e.code;
   }
 }

@@ -13,7 +13,8 @@ const acts = computed(() => [
   { key: 'library', icon: 'library', tip: '资料库', href: libraryHref(app.itemKind(pathOfKey(ui.route.key))) },
   { key: 'item', icon: 'folder', tip: '工作区', href: ui.lastItem ? '#/item/' + encodeURIComponent(ui.lastItem) : null },
   { key: 'sync', icon: 'sync', tip: '同步', href: '#/sync', dot: app.conflictCount },
-  { key: 'history', icon: 'history', tip: '历史', href: '#/history' }
+  { key: 'history', icon: 'history', tip: '历史', href: '#/history' },
+  { key: 'preview', icon: 'eye', tip: '预览', href: '#/preview' }
 ]);
 
 function click(/** @type {any} */ a) {

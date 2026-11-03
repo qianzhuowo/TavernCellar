@@ -83,6 +83,11 @@ CLI → `POST /api/checkout` → 伴侣程序向插件发 `item.get` → 解码�
   - 两种方式都可离线浏览、取出、拉取。离线绑定在状态里带 `offlineSync`。
 - `GET /api/status` 对离线绑定直接读取酒馆当前哈希 T，给出真实状态并标 `offline: true`：`in-sync`、`local-changes`（W ≠ B）、`tavern-changes`（T ≠ B）、`both-changed`（W、T 都变且不同；同步会被拒绝并记为冲突）、`conflict`、`invalid`。
 
+### 提示词预览（阶段 5，`src/link/preview.js`、`companion/src/preview.js`）
+预览只读不写：伴侣程序把 `prompt.preview` 转给实时连接，Cellar Link 在酒馆页面里对当前打开的角色聊天调用酒馆自己的 dryRun 生成，收集 `WORLDINFO_SCAN_DONE` 与 `GENERATE_AFTER_DATA` 的结果回传。提示词全部由酒馆组装（与真正发送时同一条代码路径），伴侣程序与 Studio 不重新实现任何世界书扫描或提示词拼接。
+- 预览的是酒馆里的内容。工作区修改不注入酒馆内存；「同步并预览」先走正常同步（同样的 baseHash 复核，冲突项不同步），再预览。这样单一写入路径不变，预览也不会出现“酒馆里没有的内容”。
+- 伴侣程序给结果中的角色与触发条目附上绑定的工作区路径，Studio 据此跳到条目并在世界书编辑器里标出上次触发的条目。
+
 ## 4. 目标（酒馆实例）
 
 - 每个酒馆实例由插件生成并持久保存一个 `targetId`（存放在该酒馆自己的扩展设置里），因此 ST 与 tt 天然是不同的目标。

@@ -4,7 +4,7 @@ import {
   Library, Folder, RefreshCw, History, Settings, User, BookOpen, Regex, SlidersHorizontal, Check, ArrowDown, ArrowUp,
   TriangleAlert, Minus, Circle, Plus, X, Search, ChevronDown, ChevronRight, ExternalLink, Copy, Info, Plug, Palette,
   Box, Sun, Moon, Wine, FolderOpen, Download, Upload, Trash2, Link, PanelRight, PanelLeft, LoaderCircle, Code, Terminal,
-  CircleCheck, CircleAlert, WifiOff, HardDrive, Puzzle, ArrowLeft, ArrowRight, Hourglass, Tag, Pin, FileText, ListTree, Save
+  CircleCheck, CircleAlert, WifiOff, HardDrive, Puzzle, ArrowLeft, ArrowRight, Hourglass, Tag, Pin, FileText, ListTree, Save, Eye, Sparkles
 } from 'lucide-vue-next';
 
 const MAP = {
@@ -16,7 +16,7 @@ const MAP = {
   upload: Upload, trash: Trash2, link: Link, panelRight: PanelRight, panelLeft: PanelLeft, spin: LoaderCircle,
   code: Code, terminal: Terminal, ok: CircleCheck, err: CircleAlert, offline: WifiOff, disk: HardDrive,
   puzzle: Puzzle, back: ArrowLeft, next: ArrowRight, wait: Hourglass, tag: Tag, pin: Pin,
-  file: FileText, outline: ListTree, save: Save
+  file: FileText, outline: ListTree, save: Save, eye: Eye, fired: Sparkles
 };
 
 defineProps({ name: { type: String, required: true }, size: { type: String, default: '' } });

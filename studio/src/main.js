@@ -9,6 +9,7 @@ import './styles/screens2.css';
 import './styles/editor.css';
 import './styles/sync.css';
 import './styles/lorebook.css';
+import './styles/preview.css';
 import './styles/app.css';
 
 createApp(App).use(createPinia()).mount('#app');

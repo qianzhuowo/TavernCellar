@@ -19,6 +19,11 @@ export async function flushItem(path) {
   if (flush) await flush();
 }
 
+/** Writes the pending edits of every open editor (before syncing or previewing the workspace). */
+export async function flushAll() {
+  await Promise.all([...openEditors.values()].map((f) => f()));
+}
+
 
 /**
  * @param {import('vue').Ref<string>} pathRef

@@ -4,7 +4,7 @@ import { MSG, PROTOCOL_VERSION, event, okResponse, errorResponse, ProtocolError,
 
 /** Minimal stand-in for Cellar Link backed by an in-memory store. */
 export class FakeTavern {
-    constructor(port, { targetId = 'fake-target-1', host = 'st', origin = 'http://127.0.0.1:8000', headers } = {}) {
+    constructor(port, { targetId = 'fake-target-1', host = 'st', origin = 'http://127.0.0.1:8000', headers, capabilities = {} } = {}) {
         this.store = {
             character: new Map([['Alice.png', { name: 'Alice', data: { name: 'Alice', description: 'orig', alternate_greetings: [], extensions: {} } }]]),
             lorebook: new Map([['Book', { entries: { 0: { uid: 0, key: ['k'], comment: 'c', content: 'body' } } }]]),
@@ -18,7 +18,7 @@ export class FakeTavern {
             this.ws.on('open', () => this.ws.send(JSON.stringify(request('h1', MSG.HELLO, {
                 protocol: PROTOCOL_VERSION,
                 target: { id: targetId, host, label: `Fake ${host}`, hostVersion: 'test' },
-                capabilities: { worldInfoEntryTemplate: { key: [], content: '', comment: '', disable: false } },
+                capabilities: { worldInfoEntryTemplate: { key: [], content: '', comment: '', disable: false }, ...capabilities },
             }))));
             this.ws.on('error', reject);
             this.ws.on('close', code => reject(Object.assign(new Error('closed'), { code })));
@@ -36,6 +36,11 @@ export class FakeTavern {
 
     async handle({ type, payload }) {
         if (type === MSG.WATCH_SET) { this.watch = payload.items; return {}; }
+        if (type === MSG.PROMPT_PREVIEW) {
+            this.previews = [...(this.previews ?? []), payload];
+            if (this.previewError) throw this.previewError;
+            return structuredClone(this.previewResult ?? {});
+        }
         if (type === MSG.ASSET_GET) {
             this.assetGets = (this.assetGets ?? 0) + 1;
             const bytes = this.assets?.[payload.id];

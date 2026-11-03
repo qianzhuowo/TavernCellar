@@ -62,8 +62,25 @@ export const MSG = Object.freeze({
     WATCH_SET: 'watch.set',
     PING: 'ping',
     ASSET_GET: 'asset.get',
+    PROMPT_PREVIEW: 'prompt.preview',
     ITEM_CHANGED: 'item.changed',
 });
+
+/** Version of `prompt.preview` a Cellar Link declares in `hello.capabilities.preview` (absent: not supported). */
+export const PREVIEW_VERSION = 1;
+/** Longest test input `prompt.preview` accepts, in characters. */
+export const PREVIEW_INPUT_MAX = 8000;
+/** A dry run may tokenize a long chat: the companion waits this long for `prompt.preview`. */
+export const PREVIEW_TIMEOUT_MS = 120000;
+
+/** Validates a `prompt.preview` payload: `{ input? }`, input a string of at most PREVIEW_INPUT_MAX characters. */
+export function assertPreviewRequest(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new ProtocolError(ERR.BAD_REQUEST, 'Missing payload');
+    const extra = Object.keys(payload).filter(k => k !== 'input');
+    if (extra.length) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown preview options: ${extra.join(', ')}`);
+    if (payload.input !== undefined && typeof payload.input !== 'string') throw new ProtocolError(ERR.BAD_REQUEST, 'input must be a string');
+    if ((payload.input ?? '').length > PREVIEW_INPUT_MAX) throw new ProtocolError(ERR.BAD_REQUEST, `input is longer than ${PREVIEW_INPUT_MAX} characters`);
+}
 
 /** Asset types `asset.get` serves (only character avatar thumbnails for now). */
 export const ASSET_TYPES = Object.freeze(['avatar']);
@@ -94,6 +111,10 @@ export const ERR = Object.freeze({
     TAVERN_RUNNING: 'tavern_running',
     /** The tavern is not running and its offline mode is "wait until it starts". */
     WAITING_FOR_TAVERN: 'waiting_for_tavern',
+    /** Prompt preview: the tavern has no character or group chat open. */
+    NO_CHAT: 'no_chat',
+    /** Prompt preview: another preview or a generation is running in the tavern. */
+    BUSY: 'busy',
 });
 
 export const CLOSE = Object.freeze({

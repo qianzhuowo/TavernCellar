@@ -9,7 +9,7 @@ defineProps({ hasInspector: { type: Boolean, default: false } });
 const app = useApp();
 const ui = useUi();
 
-const FIXED = { library: ['资料库', 'library'], settings: ['设置', 'settings'], sync: ['同步', 'sync'], history: ['历史', 'history'] };
+const FIXED = { library: ['资料库', 'library'], settings: ['设置', 'settings'], sync: ['同步', 'sync'], history: ['历史', 'history'], preview: ['预览', 'eye'] };
 const BAR = { conflict: 'var(--st-conflict)', both: 'var(--st-conflict)', invalid: 'var(--st-conflict)', local: 'var(--st-local)', remote: 'var(--st-remote)' };
 
 function info(/** @type {string} */ key) {

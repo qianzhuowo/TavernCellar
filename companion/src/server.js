@@ -22,6 +22,7 @@ import { Workspace } from './workspace/workspace.js';
 import { OFFLINE_SYNC_MODES, detectTtDataRoot, offlineSyncMode, resolveLocations } from './taverns/locations.js';
 import { OfflineLink } from './taverns/offline.js';
 import { AssetCache } from './assets.js';
+import { previewPrompt } from './preview.js';
 
 export const SERVER_NAME = 'TavernCellar';
 export const SERVER_VERSION = '0.1.0';
@@ -174,6 +175,8 @@ class LinkConnection {
     /** Sends a request to the plugin and resolves with its response payload. Fails at once while the page is unresponsive. */
     request(type, payload = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         if (!this.target) return Promise.reject(new ProtocolError(ERR.NOT_CONNECTED, 'Link not ready'));
+        // A request made after the socket closed (e.g. the handshake follow-up of a tab that just went away) would only time out.
+        if (this.socket.readyState !== this.socket.OPEN) return Promise.reject(new ProtocolError(ERR.NOT_CONNECTED, 'Link closed'));
         if (type !== MSG.PING && this.target.responsive === false) return Promise.reject(new ProtocolError(ERR.TIMEOUT, UNRESPONSIVE_MESSAGE));
         const id = `s${++this.seq}`;
         return new Promise((resolve, reject) => {
@@ -296,6 +299,7 @@ async function readJsonBody(req, limit = 32 * 1024 * 1024) {
 const STATUS_BY_CODE = {
     [ERR.BAD_REQUEST]: 400, [ERR.UNAUTHORIZED]: 401, [ERR.TAVERN_DISABLED]: 403, [ERR.NOT_FOUND]: 404, [ERR.CONFLICT]: 409,
     [ERR.NOT_CONNECTED]: 503, [ERR.TIMEOUT]: 504, [ERR.HOST_ERROR]: 502, [ERR.TAVERN_RUNNING]: 423, [ERR.WAITING_FOR_TAVERN]: 423,
+    [ERR.NO_CHAT]: 412, [ERR.BUSY]: 409,
 };
 
 /** Validates a locations object from the API: { st: [{dir, user?, offlineSync?}], tt: [{install?, data, offlineSync?}] }. */
@@ -551,6 +555,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/history/restore': b => engine.restoreVersion(b),
         'POST /api/push': b => engine.pushVersion(b),
         'POST /api/follow': b => engine.follow(b.path, b),
+        'POST /api/preview': b => previewPrompt({ targets, workspace: () => engine.ws }, b),
     };
 
     const server = createServer(async (req, res) => {
@@ -603,6 +608,8 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
                 isHostEnabled: host => config.taverns[host] === true,
                 log,
                 onReady: async (link, capabilities) => {
+                    // Version of prompt.preview this Cellar Link supports (0: older plugin); listed in /api/status targets.
+                    link.target.preview = Number.isInteger(capabilities.preview) && capabilities.preview > 0 ? capabilities.preview : 0;
                     const previous = targets.add(link.target, link);
                     if (previous) previous.link.close(CLOSE.REPLACED, 'replaced by a newer connection');
                     log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id} origin=${origin}`);

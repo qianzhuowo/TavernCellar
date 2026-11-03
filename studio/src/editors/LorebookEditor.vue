@@ -9,6 +9,8 @@ import Toggle from '../components/Toggle.vue';
 import EntryDetail from './lorebook/EntryDetail.vue';
 import GroupPanel from './lorebook/GroupPanel.vue';
 import { useItem } from '../lib/useItem.js';
+import { usePreview } from '../stores/preview.js';
+import { useUi } from '../stores/ui.js';
 import {
   POS, LAMP_LABEL, SORTS, isSort, sortEntries, displayIndexOf, lampOf, posShort, groupOf, setGroup, normGroup,
   inclusionGroups, inGroup, setPosition
@@ -25,6 +27,16 @@ const total = computed(() => all.value.length);
 const bookName = computed(() => props.path.split('/').pop());
 /** @param {number} uid */
 const entryOf = (uid) => all.value.find((e) => e.uid === uid);
+
+// ---- prompt preview (phase 5): entries that fired in the last preview, and the jump from the preview page ----
+const pv = usePreview();
+const ui = useUi();
+const fired = computed(() => pv.triggered(props.path));
+const firedTip = computed(() => (pv.result ? `上次预览时触发（${pv.result.chat.character.name}）` : ''));
+function previewNow() {
+  pv.run({ syncFirst: true });
+  ui.go('#/preview');
+}
 
 // ---- view state (per book, remembered) ----
 const VIEW_KEY = 'tc.lb.view:' + props.path;
@@ -149,7 +161,24 @@ function scrollToUid(uid) {
 
 // ---- selection ----
 const selected = computed(() => (sel.value == null ? null : entryOf(sel.value) ?? null));
+/** Selects the entry the preview page asked for (ui.focusEntry), once this book is loaded. @returns {boolean} */
+function applyFocus() {
+  const want = ui.focusEntry;
+  if (!want || want.path !== props.path || !book.value || !entryOf(want.uid)) return false;
+  ui.focusEntry = null;
+  q.value = '';
+  Object.assign(f, { status: 'all', pos: 'all', en: 'all', incl: 'all' });
+  const g = groupOf(entryOf(want.uid));
+  if (g) collapsed.value = new Set([...collapsed.value].filter((c) => !inGroup(g, c)));
+  selGroup.value = null;
+  multi.value = new Set();
+  sel.value = want.uid;
+  nextTick(() => scrollToUid(want.uid));
+  return true;
+}
+watch(() => ui.focusEntry, applyFocus);
 watch(() => it.version.value, () => {
+  if (applyFocus()) return;
   if (selected.value || selGroup.value) return;
   sel.value = visibleUids.value[0] ?? null;
   multi.value = new Set();
@@ -507,6 +536,7 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
           <div class="lb-tools-row">
             <div class="search grow"><Icon name="search" size="sm" /><input v-model="q" class="input" data-find placeholder="搜索标题、关键字、内容（Ctrl+F）" /></div>
             <button class="btn primary" title="新建条目" @click="createEntry"><Icon name="plus" size="sm" />新建</button>
+            <button class="btn" :disabled="!pv.target || !!pv.running" :title="pv.target ? `同步本地修改到 ${pv.target.name}，在它当前打开的聊天里预览提示词` : '预览需要已连接的酒馆'" @click="previewNow"><Icon name="eye" size="sm" />同步并预览</button>
           </div>
           <div class="lb-tools-row filters">
             <label class="mini-select" :class="{ active: f.status !== 'all' }"><span>状态</span>
@@ -563,6 +593,7 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
                   <span @click.stop><Toggle class="mini" :model-value="!r.e.disable" title="启用" @update:model-value="setEnabled(r.e, $event)" /></span>
                   <span class="lb-main">
                     <span class="lb-title">{{ r.e.comment || '（无标题）' }}</span>
+                    <span v-if="fired.has(r.e.uid)" class="lb-fired" :title="firedTip"><Icon name="fired" size="sm" /></span>
                     <span v-if="!byGroup && groupOf(r.e)" class="chip lb-gchip" :title="'分组：' + groupOf(r.e)">{{ groupOf(r.e) }}</span>
                     <span class="lb-keys">
                       <span v-for="k in (r.e.key ?? []).slice(0, 2)" :key="k" class="chip">{{ k }}</span>
@@ -580,7 +611,7 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
           </div>
         </div>
         <div class="lb-foot faint">
-          显示 {{ visibleUids.length }} / {{ total }} 条<template v-if="groupPaths.length"> · {{ groupPaths.length }} 个分组</template> ·
+          显示 {{ visibleUids.length }} / {{ total }} 条<template v-if="groupPaths.length"> · {{ groupPaths.length }} 个分组</template><template v-if="fired.size"> · <a href="#/preview" :title="firedTip">上次预览触发 {{ fired.size }} 条</a></template> ·
           {{ dragMode === 'custom' ? '拖动条目或整组修改显示顺序' : dragMode === 'order' ? '拖动条目修改「顺序」' : '「自定义」或「顺序」排序下可拖动' }}
         </div>
       </section>

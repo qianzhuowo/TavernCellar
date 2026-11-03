@@ -7,15 +7,15 @@ const ls = {
 };
 
 /**
- * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/settings[/<section>]  #/wizard
- * Tab keys: 'library' | 'sync' | 'history' | 'settings' | 'item:<path>' | 'conflict:<path>'
+ * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/preview  #/settings[/<section>]  #/wizard
+ * Tab keys: 'library' | 'sync' | 'history' | 'preview' | 'settings' | 'item:<path>' | 'conflict:<path>'
  */
 export function parseHash(/** @type {string} */ hash) {
   const h = hash.replace(/^#\/?/, '');
   const [name, ...rest] = h.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
   if ((name === 'item' || name === 'conflict') && arg) return { name, arg, key: name + ':' + arg };
-  if (['sync', 'history', 'wizard'].includes(name)) return { name, arg: '', key: name };
+  if (['sync', 'history', 'preview', 'wizard'].includes(name)) return { name, arg: '', key: name };
   if (name === 'settings' || name === 'library') return { name, arg, key: name };
   return { name: 'library', arg: '', key: 'library' };
 }
@@ -46,7 +46,9 @@ export const useUi = defineStore('ui', {
     collapsed: ls.get('cs.collapsed', {}),
     /** Per item: card editor showing the form or the files it is made of (and which file to select). */
     /** @type {Record<string, {view: 'form'|'files', file?: string}>} */
-    itemView: {}
+    itemView: {},
+    /** Lorebook entry to select once its editor shows (set by the preview page). @type {{path: string, uid: number}|null} */
+    focusEntry: null
   }),
 
   actions: {

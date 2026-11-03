@@ -18,6 +18,7 @@ const SCREENS = [
   { key: 'library', label: '资料库', icon: 'library' },
   { key: 'sync', label: '同步', icon: 'sync' },
   { key: 'history', label: '历史', icon: 'history' },
+  { key: 'preview', label: '预览', icon: 'eye' },
   { key: 'settings', label: '设置', icon: 'settings' }
 ];
 const paletteOpen = ref(false);
