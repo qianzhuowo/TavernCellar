@@ -128,8 +128,8 @@ test('tags, deployed pointers and log filtering by item', async () => {
 });
 
 test('ref names stay valid for paths with spaces, dots and CJK', () => {
-    const ref = deployedRef('3ecf9ab2', 'characters/A b.c~..lock');
-    assert.match(ref, /^refs\/cellar\/deployed\/3ecf9ab2\/[A-Za-z0-9_%-]+$/);
+    const ref = deployedRef('a1b2c3d4', 'characters/A b.c~..lock');
+    assert.match(ref, /^refs\/cellar\/deployed\/a1b2c3d4\/[A-Za-z0-9_%-]+$/);
     assert.equal(encodeRefSegment('世界'), '%E4%B8%96%E7%95%8C');
     assert.equal(decodeURIComponent(encodeRefSegment('characters/A b.c')), 'characters/A b.c');
 });

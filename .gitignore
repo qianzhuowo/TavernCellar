@@ -104,3 +104,24 @@ DevToolsActivePort
 *.asar
 *.raw.png
 backups/
+
+# A Cellar workspace or tavern data accidentally created inside the repo (real cards, books, chats, settings)
+/workspace/
+/characters/
+/lorebooks/
+/regex/
+/presets/
+/cellar.json
+/data/
+*.jsonl
+*.charx
+
+# Node test runner / reporter output and other scratch from manual testing
+*.tap
+.test-output/
+*.img
+*.bin
+
+# Local AI-agent / tool state
+.limcode/
+.claude/settings.local.json

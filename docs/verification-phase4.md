@@ -52,7 +52,7 @@
 
 ## 桌面版
 
-重新打包（`desktop` `npm run dist`），用安装包装到 `STstudio\CellarStudio`；启动后伴侣程序在 7349 提供含正则编辑器的新 Studio。注意：从 VS Code 终端启动时要清除 `ELECTRON_RUN_AS_NODE`，否则 exe 会以 Node 方式运行后立即退出。
+重新打包（`desktop` `npm run dist`），用安装包装到本机的测试安装目录；启动后伴侣程序在 7349 提供含正则编辑器的新 Studio。注意：从 VS Code 终端启动时要清除 `ELECTRON_RUN_AS_NODE`，否则 exe 会以 Node 方式运行后立即退出。
 
 ## 预设
 

@@ -24,7 +24,7 @@ function lcs(a, b) {
 }
 
 /**
- * Equal runs of one or two characters between edits are coincidences ("none" -> "脚本测试.png" shares an "n"), and
+ * Equal runs of one or two characters between edits are coincidences ("none" -> "示例角色.png" shares an "n"), and
  * keeping them interleaves both strings into something unreadable. Fold them into the surrounding edit, so each
  * changed stretch shows as one deletion followed by one insertion.
  * @param {Part[]} parts @returns {Part[]}
