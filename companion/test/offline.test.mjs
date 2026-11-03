@@ -9,6 +9,7 @@ import { SyncEngine } from '../src/sync.js';
 import { TargetRegistry } from '../src/targets.js';
 import { OfflineLink } from '../src/taverns/offline.js';
 import { resolveLocations } from '../src/taverns/locations.js';
+import { readCardText, writeCard } from '../src/taverns/png.js';
 import { startServer } from '../src/server.js';
 
 const TARGET = 'offline-target-1';
@@ -117,6 +118,21 @@ test('offline: both sides changed shows both-changed and sync refuses', async ()
     assert.equal((await statusOf()).status, 'both-changed');
     await assert.rejects(engine.sync('lorebooks/Book'), e => e.code === ERR.CONFLICT);
     assert.equal((await statusOf()).status, 'conflict');
+});
+
+test('offline: a card that stores avatar "none" reads with its file name, so checkout equals what a sync stores', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    const cardFile = join(dataRoot, 'default-user', 'characters', 'Card.png');
+    await writeFile(cardFile, writeCard(png, { name: 'Card', avatar: 'none', spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Card', description: 'd' } }));
+    const co = await engine.checkout(undefined, { kind: 'character', id: 'Card.png' });
+    assert.equal(JSON.parse(await readFile(join(ws.root, co.path, 'card.json'), 'utf8')).avatar, 'Card.png');
+    assert.equal((await engine.sync(co.path)).result, 'up-to-date', 'nothing to write right after checkout');
+    const desc = join(ws.root, co.path, 'description.md');
+    await writeFile(desc, 'changed');
+    const res = await engine.sync(co.path);
+    assert.equal(res.result, 'synced');
+    assert.ok(!res.warnings.some(w => w.code === 'normalized'), 'the tavern stores exactly what was sent');
+    assert.equal(JSON.parse(readCardText(await readFile(cardFile))).avatar, 'Card.png');
 });
 
 test('offline: global regex lives in settings.json; sync replaces only extension_settings.regex', async () => {

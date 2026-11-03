@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
 import Toggle from '../components/Toggle.vue';
@@ -11,10 +11,14 @@ import { desktop, copyText, openNative, copyPathToast } from '../lib/desktop.js'
 
 const app = useApp();
 const ui = useUi();
-const editingWs = ref(false);
+/** '' | 'switch' (open another workspace folder) | 'move' (copy this workspace to a new folder and use it there) */
+const wsMode = ref('');
 const wsDir = ref('');
+const removeOld = ref(false);
 const busy = ref(false);
 const FONT_SIZES = [13, 14, 15, 16, 17, 18, 20];
+const samePath = (/** @type {string} */ a, /** @type {string} */ b) => !!a && !!b && a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase();
+const atDefault = computed(() => samePath(app.workspace, app.settings?.defaultWorkspace || ''));
 
 onMounted(async () => {
   app.refreshTaverns();
@@ -23,22 +27,32 @@ onMounted(async () => {
   if (el) el.scrollIntoView({ block: 'start' });
 });
 
-async function switchWs(/** @type {string} */ dir) {
-  if (!dir) return;
+function openWs(/** @type {'switch'|'move'} */ mode, dir = '') {
+  wsMode.value = mode;
+  wsDir.value = dir;
+  removeOld.value = false;
+}
+
+async function browse() {
+  const p = await desktop.pickDirectory();
+  if (p) wsDir.value = p;
+}
+
+async function applyWs() {
+  const dir = wsDir.value.trim();
+  if (!dir) { ui.toast('请填写文件夹', 'alert'); return; }
   busy.value = true;
   try {
-    const ws = await app.switchWorkspace(dir);
-    editingWs.value = false;
-    ui.toast('已切换工作区：' + ws);
+    if (wsMode.value === 'move') {
+      const r = await app.moveWorkspace(dir, removeOld.value);
+      ui.toast(r.removed ? `已迁移到 ${r.workspace}，原文件夹已删除` : `已迁移到 ${r.workspace}；原文件夹仍保留在 ${r.from}`);
+    } else {
+      ui.toast('已切换工作区：' + await app.switchWorkspace(dir));
+    }
+    wsMode.value = '';
   } catch (e) {
     ui.toast(errorText(e), 'alert');
   } finally { busy.value = false; }
-}
-
-async function changeWs() {
-  if (desktop.available) { const p = await desktop.pickDirectory(); if (p) switchWs(p); return; }
-  wsDir.value = app.workspace;
-  editingWs.value = true;
 }
 
 async function copyWs() { await copyPathToast(app.workspace, ui.toast); }
@@ -55,18 +69,31 @@ function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/w
         <div class="set-label"><div>当前路径</div></div>
         <div class="set-ctl"><div class="path-box mono" style="flex: 1" :title="app.workspace">{{ app.workspace || '未选择' }}</div></div>
       </div>
-      <div v-if="editingWs" class="set-row">
-        <div class="set-label"><div>新的工作区</div><div class="faint">空文件夹会新建工作区；含 cellar.json 时直接打开</div></div>
+      <div v-if="app.settings?.defaultWorkspace && !atDefault" class="set-row">
+        <div class="set-label"><div>默认位置</div><div class="faint">安装目录下的 workspace 文件夹；卸载、升级时保留</div></div>
         <div class="set-ctl">
-          <input v-model="wsDir" class="input mono" style="flex: 1" spellcheck="false" @keydown.enter="switchWs(wsDir.trim())" />
-          <button class="btn sm ghost" @click="editingWs = false">取消</button>
-          <button class="btn sm primary" :disabled="busy" @click="switchWs(wsDir.trim())"><Icon :name="busy ? 'spin' : 'check'" size="sm" />切换</button>
+          <div class="path-box mono" style="flex: 1" :title="app.settings.defaultWorkspace">{{ app.settings.defaultWorkspace }}</div>
+          <button class="btn sm" @click="openWs('move', app.settings.defaultWorkspace)">迁移到这里…</button>
+        </div>
+      </div>
+      <div v-if="wsMode" class="set-row">
+        <div class="set-label">
+          <div>{{ wsMode === 'move' ? '迁移到' : '打开工作区' }}</div>
+          <div class="faint">{{ wsMode === 'move' ? '把当前工作区（文件、版本历史、备份）整个复制到一个空文件夹并改用它' : '空文件夹会新建工作区；含 cellar.json 时直接打开；当前工作区不动' }}</div>
+        </div>
+        <div class="set-ctl" style="flex-wrap: wrap">
+          <input v-model="wsDir" class="input mono" style="flex: 1; min-width: 260px" spellcheck="false" placeholder="例如 D:\TavernCellar" @keydown.enter="applyWs" />
+          <button v-if="desktop.available" class="btn sm" @click="browse">浏览…</button>
+          <label v-if="wsMode === 'move'" class="check"><input v-model="removeOld" type="checkbox" />复制核对无误后删除原文件夹</label>
+          <button class="btn sm ghost" :disabled="busy" @click="wsMode = ''">取消</button>
+          <button class="btn sm primary" :disabled="busy" @click="applyWs"><Icon :name="busy ? 'spin' : 'check'" size="sm" />{{ wsMode === 'move' ? '迁移' : '打开' }}</button>
         </div>
       </div>
       <div v-else class="set-row">
         <div class="set-label" />
         <div class="set-ctl">
-          <button class="btn sm" @click="changeWs">切换…</button>
+          <button class="btn sm" @click="openWs('move')">迁移到…</button>
+          <button class="btn sm ghost" @click="openWs('switch')">打开其他工作区…</button>
           <button v-if="desktop.available" class="btn sm ghost" @click="openNative('showInFolder', app.workspace, ui.toast)"><Icon name="external" size="sm" />在资源管理器中打开</button>
           <button v-else class="btn sm ghost" @click="copyWs"><Icon name="copy" size="sm" />复制路径</button>
         </div>

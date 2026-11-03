@@ -186,6 +186,32 @@ export class Workspace {
     }
 
     /**
+     * One file of an item folder ("/"-separated path relative to the item); null when it does not exist.
+     * Ignored names (editor temp files, internal folders) are never read or written here.
+     */
+    async readItemFile(path, rel) {
+        const abs = this.#itemFile(path, rel);
+        try {
+            return await readFile(abs, 'utf8');
+        } catch (error) {
+            if (error.code === 'ENOENT' || error.code === 'EISDIR') return null;
+            throw error;
+        }
+    }
+
+    /** Replaces one existing file of an item folder (Studio's file view; the same change VS Code would make). */
+    async writeItemFile(path, rel, content) {
+        await atomicWrite(this.#itemFile(path, rel), content);
+    }
+
+    #itemFile(path, rel) {
+        if (typeof rel !== 'string' || !rel || rel.split('/').some(part => !part || part === '.' || part === '..' || isIgnoredName(part))) {
+            throw new Error(`Not a file of the item: ${rel}`);
+        }
+        return this.resolveInside(`${path}/${rel}`);
+    }
+
+    /**
      * Takes an item out of the manifest and deletes its codec files (`owns(rel)`), keeping everything else the user
      * put in the folder; the folder goes when nothing is left. Sync state must be forgotten by the caller first.
      * Returns the files that were kept.

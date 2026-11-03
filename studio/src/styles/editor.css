@@ -20,6 +20,46 @@
 .ce-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ce-save { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); white-space: nowrap; }
 .ce-save.busy { color: var(--text-2); }
+.ce-view { flex: none; }
+
+/* ---------- outline (quick jumps) beside the form; files view ---------- */
+.item-page.character { container-type: inline-size; }
+.item-page.character:has(.ce-layout), .item-page.character:has(.itf) { max-width: calc(var(--editor-maxw) + 2 * var(--sp-8) + 200px); }
+.ce-layout { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
+.ce-form { display: flex; flex-direction: column; gap: var(--gap-section, var(--sp-6)); min-width: 0; }
+.ce-outline {
+  position: sticky; top: var(--sp-3); display: flex; flex-direction: column; gap: 1px;
+  max-height: calc(100vh - 160px); overflow: auto; padding-right: 4px; font-size: var(--fs-sm);
+}
+.ce-outline-h { display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px; font-size: var(--fs-xs); color: var(--text-3); }
+.ce-ol {
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 0; border-left: 2px solid transparent;
+  border-radius: 0 var(--r-md) var(--r-md) 0; background: transparent; color: var(--text-2); font: inherit; text-align: left; cursor: pointer;
+}
+.ce-ol:hover { background: var(--bg-3); color: var(--text); }
+.ce-ol.on { border-left-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.ce-ol.sub { padding-left: 20px; font-size: var(--fs-xs); color: var(--text-3); }
+.ce-ol.sub:hover { color: var(--text); }
+.ce-ol.file { color: var(--text-3); }
+.ce-ol:not(.file) + .ce-ol.file { margin-top: 8px; }
+.ce-ol > svg { flex: none; opacity: .7; }
+.ce-ol-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ce-ol-n { flex: none; font-size: var(--fs-xs); color: var(--text-3); }
+.ce-flash { animation: ce-flash 1.2s ease-out; }
+@keyframes ce-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--accent-soft); background-color: var(--accent-soft); } 100% { box-shadow: 0 0 0 2px transparent; } }
+[id^="ce-sec-"], [id^="ce-greet-"] { scroll-margin-top: var(--sp-4); border-radius: var(--r-md); }
+@container (max-width: 900px) {
+  .ce-layout { grid-template-columns: minmax(0, 1fr); }
+  .ce-outline {
+    position: sticky; top: 0; z-index: 2; flex-direction: row; max-height: none; overflow-x: auto; padding: 4px 0;
+    background: var(--bg-1, var(--bg)); border-bottom: 1px solid var(--line);
+  }
+  .ce-outline-h, .ce-ol.sub { display: none; }
+  .ce-ol { flex: none; border-left: 0; border-bottom: 2px solid transparent; border-radius: var(--r-md) var(--r-md) 0 0; }
+  .ce-ol.on { border-bottom-color: var(--accent); }
+  .ce-ol:not(.file) + .ce-ol.file { margin-top: 0; margin-left: 8px; }
+  .ce-ol-t { overflow: visible; }
+}
 
 /* ---------- header ---------- */
 .ce-head { display: flex; gap: var(--sp-6); align-items: flex-start; }
@@ -120,3 +160,6 @@
   .ce-adv-wrap .collapse-head .meta { display: none; }
   .ce-greet-wc { display: none; }
 }
+
+/* broken item: its files, so it can be fixed in place */
+.item-page > .item-fix { margin-top: var(--sp-3); }

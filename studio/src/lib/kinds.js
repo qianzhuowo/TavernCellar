@@ -16,3 +16,6 @@ export const LIB_KINDS = [
   { value: 'regex', label: '正则' },
   { value: 'preset', label: '预设' }
 ];
+
+/** 资料库 opened on one kind (`#/library/<kind>`); the route is the only way the kind changes. @param {string} [k] */
+export const libraryHref = (k) => (k && k in KIND ? '#/library/' + k : '#/library');

@@ -2,13 +2,15 @@
 import { computed } from 'vue';
 import Icon from './Icon.vue';
 import { useApp } from '../stores/app.js';
-import { useUi } from '../stores/ui.js';
+import { useUi, pathOfKey } from '../stores/ui.js';
+import { libraryHref } from '../lib/kinds.js';
 
 const app = useApp();
 const ui = useUi();
 
+// From an open item (e.g. a lorebook) the 资料库 opens on that item's kind; elsewhere it keeps the last kind.
 const acts = computed(() => [
-  { key: 'library', icon: 'library', tip: '资料库', href: '#/library' },
+  { key: 'library', icon: 'library', tip: '资料库', href: libraryHref(app.itemKind(pathOfKey(ui.route.key))) },
   { key: 'item', icon: 'folder', tip: '工作区', href: ui.lastItem ? '#/item/' + encodeURIComponent(ui.lastItem) : null },
   { key: 'sync', icon: 'sync', tip: '同步', href: '#/sync', dot: app.conflictCount },
   { key: 'history', icon: 'history', tip: '历史', href: '#/history' }

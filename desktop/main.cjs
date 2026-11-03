@@ -8,12 +8,24 @@
 // The companion is ESM and is loaded with import() in loadCompanion().
 const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, shell } = require('electron');
 const { appendFile, mkdir } = require('node:fs/promises');
-const { isAbsolute, join } = require('node:path');
+const { dirname, isAbsolute, join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const here = __dirname;
+/**
+ * Default workspace of the desktop app: a `workspace` folder next to the executable (the folder holding the portable
+ * exe, or the install folder). The installer keeps that folder on uninstall / upgrade (assets/installer.nsh).
+ * Running from source (not packaged) keeps the command line default, Documents/TavernCellar.
+ */
+function desktopDefaultWorkspace() {
+    if (!app.isPackaged) return null;
+    const base = process.env.PORTABLE_EXECUTABLE_DIR || dirname(process.execPath);
+    return join(base, 'workspace');
+}
 let STUDIO_PATH, startServer, cellarHome, defaultWorkspaceDir, loadConfig, saveConfig, Workspace;
 async function loadCompanion() {
+    const fallback = desktopDefaultWorkspace();
+    if (fallback && !process.env.CELLAR_DEFAULT_WORKSPACE) process.env.CELLAR_DEFAULT_WORKSPACE = fallback;
     const load = rel => import(pathToFileURL(join(here, '..', rel)).href);
     ({ STUDIO_PATH, startServer } = await load('companion/src/server.js'));
     ({ cellarHome, defaultWorkspaceDir, loadConfig, saveConfig } = await load('companion/src/config.js'));
@@ -52,7 +64,13 @@ async function startCompanion() {
         return;
     }
     const dir = config.workspace ?? defaultWorkspaceDir();
-    const workspace = await Workspace.init(dir);
+    let workspace;
+    try {
+        workspace = await Workspace.init(dir);
+    } catch (error) {
+        dialog.showErrorBox('Cellar Studio', `无法使用工作区 ${dir}：${error.message}\n可以在 ${join(cellarHome(), 'config.json')} 中把 workspace 改为可写的文件夹。`);
+        throw error;
+    }
     if (!config.workspace) {
         config.workspace = workspace.root;
         await saveConfig(config);
@@ -161,12 +179,19 @@ if (!app.requestSingleInstanceLock()) {
 } else {
     app.on('second-instance', showWindow);
     app.on('before-quit', () => { quitting = true; });
+    // Close the companion, then exit. app.quit() called again from here is ignored by Electron while this quit
+    // is still being processed, which left a windowless process holding the single-instance lock with the port
+    // closed: the next launch then showed its window in that process and stayed blank (ERR_CONNECTION_REFUSED).
     app.on('will-quit', event => {
         if (!server) return;
         event.preventDefault();
         const s = server;
         server = null;
-        s.close().catch(() => {}).finally(() => app.quit());
+        const timeout = new Promise(resolve => setTimeout(resolve, 3000));
+        Promise.race([s.close().catch(() => {}), timeout]).finally(() => {
+            tray?.destroy();
+            app.exit(0);
+        });
     });
     app.on('window-all-closed', () => { /* stay in the tray */ });
     app.whenReady().then(async () => {

@@ -23,6 +23,27 @@ function lcs(a, b) {
   return out;
 }
 
+/**
+ * Equal runs of one or two characters between edits are coincidences ("none" -> "脚本测试.png" shares an "n"), and
+ * keeping them interleaves both strings into something unreadable. Fold them into the surrounding edit, so each
+ * changed stretch shows as one deletion followed by one insertion.
+ * @param {Part[]} parts @returns {Part[]}
+ */
+function foldCoincidences(parts) {
+  /** @type {Part[]} */
+  const out = [];
+  let del = '', ins = '';
+  const flush = () => { if (del) out.push(['-', del]); if (ins) out.push(['+', ins]); del = ins = ''; };
+  parts.forEach((p, i) => {
+    if (p[0] === '-') del += p[1];
+    else if (p[0] === '+') ins += p[1];
+    else if ((del || ins) && i < parts.length - 1 && p[1].length <= 2) { del += p[1]; ins += p[1]; }
+    else { flush(); out.push(p); }
+  });
+  flush();
+  return out;
+}
+
 /** Parts turning `from` into `to`. @param {string} from @param {string} to @returns {Part[]} */
 export function diffText(from, to) {
   if (from === to) return from ? [['=', from]] : [];
@@ -33,7 +54,7 @@ export function diffText(from, to) {
   while (s < max - p && from[from.length - 1 - s] === to[to.length - 1 - s]) s++;
   const a = from.slice(p, from.length - s), b = to.slice(p, to.length - s);
   /** @type {Part[]} */
-  const mid = a.length * b.length <= LCS_LIMIT ? lcs(a, b) : [...(a ? [['-', a]] : []), ...(b ? [['+', b]] : [])];
+  const mid = a.length * b.length <= LCS_LIMIT ? foldCoincidences(lcs(a, b)) : [...(a ? [['-', a]] : []), ...(b ? [['+', b]] : [])];
   /** @type {Part[]} */
   const out = [];
   if (p) out.push(['=', from.slice(0, p)]);

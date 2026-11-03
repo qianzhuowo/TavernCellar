@@ -3,7 +3,7 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, parsePresetId, presetId } from '../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
 import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
 
 const ctx = () => SillyTavern.getContext();
@@ -50,22 +50,13 @@ async function readCharacter(avatar) {
     if (typeof character?.json_data !== 'string' || !character.json_data.trim()) {
         throw new ProtocolError(ERR.HOST_ERROR, `Character ${avatar} has no raw card data`);
     }
-    const card = JSON.parse(character.json_data);
-    delete card.json_data;
-    return card;
+    return canonicalCharacter(JSON.parse(character.json_data), avatar);
 }
 
 async function writeCharacter(avatar, card) {
-    const response = await postJson('/api/characters/merge-attributes', characterPayload(avatar, card));
+    const response = await postJson('/api/characters/merge-attributes', canonicalCharacter(card, avatar));
     if (!response.ok) throw await responseError(response, `Saving character ${avatar}`);
     await refreshCharacterUi(avatar);
-}
-
-/** merge-attributes locates the file by `avatar`, so the stored card always carries it. */
-function characterPayload(avatar, card) {
-    const body = { ...card, avatar };
-    delete body.json_data;
-    return body;
 }
 
 /** Updates the in-memory character list and re-renders the editor if this character is open. */

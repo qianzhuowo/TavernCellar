@@ -72,6 +72,9 @@ function onDrop(i) {
   emit('update', next);
 }
 function onDragEnd() { dragFrom.value = dragOver.value = -1; }
+/** Opens greeting i (outline jump); the caller scrolls to #ce-greet-<i>. @param {number} i */
+function reveal(i) { if (i >= 0 && i < props.items.length) open.value[i] = true; }
+defineExpose({ reveal });
 </script>
 
 <template>
@@ -84,6 +87,7 @@ function onDragEnd() { dragFrom.value = dragOver.value = -1; }
     <div v-if="items.length" class="ce-greets">
       <div
         v-for="(g, i) in items"
+        :id="'ce-greet-' + i"
         :key="i"
         class="ce-greet"
         :class="{ open: open[i], dragging: dragFrom === i, over: dragOver === i && dragFrom !== i }"

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
@@ -110,6 +111,43 @@ test('studio session: page sets an HttpOnly cookie; API and events accept it onl
         assert.equal(events.status, 200);
         assert.match(events.type, /text\/event-stream/);
         assert.match(events.text, /event: status\ndata: \{"reason":"\/api\/settings"\}/);
+    } finally {
+        await server.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('workspace move: copies everything (history included) to an empty folder, switches, optionally removes the old one', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'cellar-move-')));
+    const config = { port: 0, token: 'studio-test-token-0123456789', allowOrigins: [], taverns: { st: true, tt: true }, stPorts: [], locations: { st: [], tt: [] } };
+    const oldDir = join(root, 'old');
+    const ws = await Workspace.init(oldDir);
+    await mkdir(join(oldDir, 'characters', 'A'), { recursive: true });
+    await writeFile(join(oldDir, 'characters', 'A', 'description.md'), 'hello');
+    const server = await startServer({ config, workspace: ws, log: () => {}, watch: false, persistConfig: async () => {} });
+    const auth = { Authorization: `Bearer ${config.token}` };
+    const move = body => get(server.port, '/api/workspace/move', 'POST', auth, body).then(r => ({ status: r.status, body: JSON.parse(r.body) }));
+    try {
+        assert.equal((await move({ dir: join(oldDir, 'inner') })).status, 400, 'inside the current workspace');
+        assert.equal((await move({ dir: root })).status, 400, 'parent of the current workspace');
+        const busy = join(root, 'busy');
+        await mkdir(busy);
+        await writeFile(join(busy, 'x.txt'), 'x');
+        assert.equal((await move({ dir: busy })).status, 400, 'non-empty target');
+
+        const keep = await move({ dir: join(root, 'new') });
+        assert.equal(keep.status, 200);
+        assert.equal(keep.body.result.workspace, join(root, 'new'));
+        assert.equal(keep.body.result.removed, false);
+        assert.equal(config.workspace, join(root, 'new'));
+        assert.equal(await readFile(join(root, 'new', 'characters', 'A', 'description.md'), 'utf8'), 'hello');
+        assert.ok(existsSync(join(root, 'new', '.git')), 'version history moves along');
+        assert.ok(existsSync(join(oldDir, 'cellar.json')), 'old folder kept unless asked');
+
+        const moved = await move({ dir: join(root, 'third'), removeOld: true });
+        assert.equal(moved.body.result.removed, true);
+        assert.ok(!existsSync(join(root, 'new')), 'old folder removed on request');
+        assert.equal(await readFile(join(root, 'third', 'characters', 'A', 'description.md'), 'utf8'), 'hello');
     } finally {
         await server.close();
         await rm(root, { recursive: true, force: true });

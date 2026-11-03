@@ -7,7 +7,7 @@ const ls = {
 };
 
 /**
- * Routes (hash): #/library  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/settings[/<section>]  #/wizard
+ * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/settings[/<section>]  #/wizard
  * Tab keys: 'library' | 'sync' | 'history' | 'settings' | 'item:<path>' | 'conflict:<path>'
  */
 export function parseHash(/** @type {string} */ hash) {
@@ -15,8 +15,8 @@ export function parseHash(/** @type {string} */ hash) {
   const [name, ...rest] = h.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
   if ((name === 'item' || name === 'conflict') && arg) return { name, arg, key: name + ':' + arg };
-  if (['library', 'sync', 'history', 'wizard'].includes(name)) return { name, arg: '', key: name };
-  if (name === 'settings') return { name, arg, key: 'settings' };
+  if (['sync', 'history', 'wizard'].includes(name)) return { name, arg: '', key: name };
+  if (name === 'settings' || name === 'library') return { name, arg, key: name };
   return { name: 'library', arg: '', key: 'library' };
 }
 
@@ -43,7 +43,10 @@ export const useUi = defineStore('ui', {
     /** @type {{id:number, text:string, icon:string}[]} */
     toasts: [],
     /** @type {Record<string, boolean>} */
-    collapsed: ls.get('cs.collapsed', {})
+    collapsed: ls.get('cs.collapsed', {}),
+    /** Per item: card editor showing the form or the files it is made of (and which file to select). */
+    /** @type {Record<string, {view: 'form'|'files', file?: string}>} */
+    itemView: {}
   }),
 
   actions: {
@@ -80,6 +83,8 @@ export const useUi = defineStore('ui', {
       this.inspector = !this.inspector; ls.set('cs.inspector', this.inspector);
     },
     toggleSide() { this.side = !this.side; ls.set('cs.side', this.side); },
+    /** @param {string} path @param {'form'|'files'} view @param {string} [file] item-relative file or folder to select */
+    setItemView(path, view, file = '') { this.itemView = { ...this.itemView, [path]: { view, file } }; },
     /** @param {string} key */
     toggleGroup(key) { this.collapsed = { ...this.collapsed, [key]: !this.collapsed[key] }; ls.set('cs.collapsed', this.collapsed); },
     /** @param {string} text @param {string} [icon] */

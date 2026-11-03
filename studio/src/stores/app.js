@@ -36,7 +36,7 @@ export const useApp = defineStore('app', {
     online: false,
     /** first successful load done */
     ready: false,
-    /** @type {{port:number, workspace:string, ui:{theme:string, density:string, wizardDone:boolean, messageLang:string, font:string, fontSize:number, wordCount:boolean, externalEditor:string}}|null} */
+    /** @type {{port:number, workspace:string, defaultWorkspace:string, ui:{theme:string, density:string, wizardDone:boolean, messageLang:string, font:string, fontSize:number, wordCount:boolean, externalEditor:string}}|null} */
     settings: null,
     /** @type {any} /api/status result */
     status: null,
@@ -53,6 +53,8 @@ export const useApp = defineStore('app', {
     port: (s) => (s.settings && s.settings.port) || Number(location.port) || 7349,
     taverns: (s) => (s.status && s.status.taverns) || { st: true, tt: true },
     items: (s) => (s.status && s.status.items) || [],
+    /** Kind of a workspace item path ('' when unknown). @returns {(path: string) => string} */
+    itemKind() { return (path) => (path && this.items.find((/** @type {any} */ i) => i.path === path)?.kind) || ''; },
 
     /** Every known target: live first, then offline-capable, then ids only seen in bindings. */
     targets(s) {
@@ -182,6 +184,14 @@ export const useApp = defineStore('app', {
       // don't hold the caller (button spinner) on the status refetch
       this.refreshStatus();
       return r.workspace;
+    },
+
+    /** @param {string} dir @param {boolean} removeOld */
+    async moveWorkspace(dir, removeOld) {
+      const r = await api.moveWorkspace(dir, removeOld);
+      if (this.settings) this.settings.workspace = r.workspace;
+      this.refreshStatus();
+      return r;
     },
 
     /** @param {'st'|'tt'} host @param {boolean} on */

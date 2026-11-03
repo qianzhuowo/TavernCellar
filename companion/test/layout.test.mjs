@@ -63,6 +63,40 @@ test('setLayout re-lays out files without changing the content hash, and rejects
     }
 });
 
+test('item files: list, read and write split files with a hash guard; the item is re-read like after a VS Code edit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cellar-files-'));
+    try {
+        const ws = await Workspace.init(join(root, 'ws'));
+        const item = { path: 'characters/A', kind: 'character', bindings: {} };
+        ws.manifest.items.push(item);
+        await ws.writeItemFiles(item.path, decodeCharacter(card), CODECS.character.owns);
+        const engine = new SyncEngine({ workspace: ws, targets: new TargetRegistry() });
+
+        const { files } = await engine.itemFiles(item.path);
+        const rels = files.map(f => f.rel);
+        assert.ok(rels.includes('regex/01-r.replace.txt') && rels.includes('scripts/01-MVU.js') && rels.includes('variables.json'), rels.join());
+        assert.equal(files.find(f => f.rel === 'cellar-item.json').readOnly, true);
+
+        const r = await engine.readItemFile(item.path, { file: 'regex/01-r.replace.txt' });
+        assert.equal(r.text, 'y');
+        const w = await engine.writeItemFile(item.path, { file: 'regex/01-r.replace.txt', text: 'z', hash: r.hash });
+        assert.equal(w.error, null);
+        assert.equal((await engine.readItemData(item.path)).data.data.extensions.regex_scripts[0].replaceString, 'z');
+
+        await assert.rejects(engine.writeItemFile(item.path, { file: 'regex/01-r.replace.txt', text: 'q', hash: r.hash }), e => e.code === 'conflict');
+        await assert.rejects(engine.writeItemFile(item.path, { file: 'cellar-item.json', text: '{}', hash: 'x' }), /由 TavernCellar 维护/);
+        for (const badPath of ['../../cellar.json', 'regex/../../B/card.json', '.git/config']) {
+            await assert.rejects(engine.readItemFile(item.path, { file: badPath }), e => e.code === 'bad_request', badPath);
+        }
+        await assert.rejects(engine.readItemFile(item.path, { file: 'nope.md' }), e => e.code === 'not_found');
+
+        const bad = await engine.readItemFile(item.path, { file: 'variables.json' });
+        assert.match((await engine.writeItemFile(item.path, { file: 'variables.json', text: '{ broken', hash: bad.hash })).error, /variables\.json/);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test('framework detection: Tavern Helper, MVU, Xiaobai X', () => {
     assert.deepEqual(detectFrameworks(card).map(f => f.id), ['tavern_helper', 'mvu', 'xiaobaix']);
     const pairs = { data: { extensions: { tavern_helper: [['scripts', [{ name: 's', content: 'x' }]]] } } };

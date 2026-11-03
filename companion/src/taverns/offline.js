@@ -11,7 +11,7 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, parsePresetId, presetId } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
 import { readCardText, writeCard } from './png.js';
 
@@ -157,11 +157,7 @@ export class OfflineLink {
 
     decode(kind, id, content) {
         try {
-            if (kind === 'character') {
-                const card = JSON.parse(readCardText(content));
-                delete card.json_data;
-                return card;
-            }
+            if (kind === 'character') return canonicalCharacter(JSON.parse(readCardText(content)), id);
             if (kind === 'regex') {
                 const scripts = parseSettings(content).extension_settings?.regex;
                 return scripts === undefined ? {} : { scripts };
@@ -294,7 +290,7 @@ export class OfflineLink {
         if (currentHash !== baseHash) {
             throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
         }
-        const sent = structuredClone(data);
+        const sent = kind === 'character' ? canonicalCharacter(data, id) : structuredClone(data);
         delete sent.json_data;
         if (kind === 'regex') assertRegexData(sent);
         const content = kind === 'character' ? writeCard(current.content, sent)

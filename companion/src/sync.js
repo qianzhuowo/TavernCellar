@@ -11,7 +11,7 @@
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError, assertItemRef, parsePresetId } from '../../shared/protocol.js';
 import { CODECS, codecFor } from './codec/index.js';
-import { CHARACTER_PARTS } from './codec/character.js';
+import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
 import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
 
@@ -124,6 +124,55 @@ export class SyncEngine {
             }
             return { path: item.path, hash: await this.writeItem(item, data), created };
         });
+    }
+
+    // ---- item files (Studio's file view: the files a split item is made of, edited like VS Code would) ---------
+
+    /** Files of an item folder: the codec's (card.json, regex/…, character_book/…) and the user's own. */
+    async itemFiles(path) {
+        const item = this.requireItem(path);
+        const files = await this.ws.readItemFiles(item.path);
+        const owns = codecFor(item.kind).owns;
+        return {
+            path: item.path,
+            files: Object.keys(files).sort().map(rel => ({ rel, size: Buffer.byteLength(files[rel], 'utf8'), owned: owns(rel), readOnly: rel === ITEM_META_FILE })),
+        };
+    }
+
+    /** One file with a hash of its text, which a later write must present. */
+    async readItemFile(path, { file } = {}) {
+        const item = this.requireItem(path);
+        const text = await this.#itemFileText(item, file);
+        return { path: item.path, file, text, hash: await hashData(text) };
+    }
+
+    /**
+     * Replaces an existing file when it still has `hash` (else `conflict`). The item is then re-read exactly as after
+     * an external edit (auto-sync included); a file that no longer parses marks the item invalid, as in VS Code.
+     */
+    async writeItemFile(path, { file, text, hash } = {}) {
+        const item = this.requireItem(path);
+        if (typeof text !== 'string') throw new ProtocolError(ERR.BAD_REQUEST, 'text must be a string');
+        if (file === ITEM_META_FILE) throw new ProtocolError(ERR.BAD_REQUEST, `${ITEM_META_FILE} 由 TavernCellar 维护，不能在这里编辑`);
+        const written = await this.withLock(item.path, async () => {
+            const current = await this.#itemFileText(item, file);
+            if (hash !== await hashData(current)) throw new ProtocolError(ERR.CONFLICT, `${file} 在别处被修改了`, { hash: await hashData(current) });
+            await this.ws.writeItemFile(item.path, file, text);
+            return { path: item.path, file, hash: await hashData(text) };
+        });
+        await this.onFilesChanged(item.path);
+        return { ...written, error: this.local.get(item.path)?.error ?? null };
+    }
+
+    async #itemFileText(item, file) {
+        let text;
+        try {
+            text = await this.ws.readItemFile(item.path, file);
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, error.message);
+        }
+        if (text === null) throw new ProtocolError(ERR.NOT_FOUND, `${item.path}/${file} 不存在`);
+        return text;
     }
 
     async writeItem(item, data) {

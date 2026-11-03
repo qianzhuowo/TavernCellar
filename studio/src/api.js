@@ -70,6 +70,8 @@ export const api = {
   putSettings: (patch) => call('PUT', '/api/settings', patch),
   /** @param {string} dir */
   setWorkspace: (dir) => call('POST', '/api/workspace', { dir }),
+  /** Copies the whole workspace to an empty folder and switches to it. @param {string} dir @param {boolean} removeOld */
+  moveWorkspace: (dir, removeOld) => call('POST', '/api/workspace/move', { dir, removeOld }),
   /** @param {{st?: boolean, tt?: boolean}} v */
   setTaverns: (v) => call('POST', '/api/taverns', v),
   locations: () => call('GET', '/api/taverns/locations'),
@@ -103,6 +105,12 @@ export const api = {
   editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops }),
   /** Character parts kept in card.json instead of their own files. @param {string} path @param {string[]} exclude */
   setLayout: (path, exclude) => call('POST', '/api/layout', { path, exclude }),
+  /** Files an item folder is made of (split parts and the user's own files). @param {string} path */
+  itemFiles: (path) => call('POST', '/api/item/files', { path }),
+  /** @param {string} path @param {string} file item-relative, "/"-separated */
+  itemFile: (path, file) => call('POST', '/api/item/file', { path, file }),
+  /** Replaces one file when it still has `hash`; the result's `error` says when the item no longer parses. */
+  putItemFile: (path, file, text, hash) => call('PUT', '/api/item/file', { path, file, text, hash }),
   /** Version history (docs/versioning.md). @param {{path?: string, limit?: number}} [q] */
   history: (q = {}) => call('POST', '/api/history', q),
   describeDraft: (message) => call('POST', '/api/history/describe', { message }),

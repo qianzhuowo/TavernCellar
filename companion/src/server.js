@@ -5,8 +5,8 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { extname, join, resolve, sep } from 'node:path';
+import { cp, readdir, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import {
@@ -17,7 +17,7 @@ import { TargetRegistry } from './targets.js';
 import { SyncEngine } from './sync.js';
 import { watchWorkspace } from './watch.js';
 import { detectTaverns } from './detect.js';
-import { saveConfig } from './config.js';
+import { defaultWorkspaceDir, saveConfig } from './config.js';
 import { Workspace } from './workspace/workspace.js';
 import { OFFLINE_SYNC_MODES, detectTtDataRoot, offlineSyncMode, resolveLocations } from './taverns/locations.js';
 import { OfflineLink } from './taverns/offline.js';
@@ -89,6 +89,34 @@ function tokenMatches(expected, given) {
     const a = Buffer.from(expected);
     const b = Buffer.from(given);
     return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Long form of a path whose leading part exists (Windows 8.3 names such as ADMINI~1), so overlap checks compare like with like. */
+async function longPath(path) {
+    const rest = [];
+    let head = path;
+    for (;;) {
+        try {
+            return join(await realpath(head), ...rest);
+        } catch {
+            const parent = dirname(head);
+            if (parent === head) return path;
+            rest.unshift(basename(head));
+            head = parent;
+        }
+    }
+}
+
+/** Number of files and total bytes under a folder (used to verify a workspace copy). */
+async function folderStats(dir) {
+    let files = 0;
+    let bytes = 0;
+    for (const entry of await readdir(dir, { withFileTypes: true, recursive: true })) {
+        if (!entry.isFile()) continue;
+        files++;
+        bytes += (await stat(join(entry.parentPath ?? entry.path, entry.name))).size;
+    }
+    return { files, bytes };
 }
 
 const SESSION_COOKIE = 'cellar_session';
@@ -381,7 +409,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     }
 
     function settings() {
-        return { port, workspace: workspace.root, ui: { ...UI_DEFAULTS, ...config.ui } };
+        return { port, workspace: workspace.root, defaultWorkspace: defaultWorkspaceDir(), ui: { ...UI_DEFAULTS, ...config.ui } };
     }
 
     async function setSettings(body) {
@@ -416,6 +444,33 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         for (const { id } of targets.list()) await engine.pushWatchList(id).catch(() => {});
         log(`workspace switched to ${next.root}`);
         return { workspace: next.root };
+    }
+
+    /**
+     * Moves the whole workspace folder (files, version history, backups) to `dir`, then switches to it.
+     * The target must be missing or empty and may not overlap the current workspace. The old folder is deleted only
+     * when asked and only after the copy was verified and the switch succeeded.
+     */
+    async function moveWorkspace({ dir, removeOld = false } = {}) {
+        if (typeof dir !== 'string' || !dir.trim()) throw new ProtocolError(ERR.BAD_REQUEST, 'dir is required');
+        const from = workspace.root;
+        const to = await longPath(resolve(dir.trim()));
+        const inside = (a, b) => a.toLowerCase() === b.toLowerCase() || a.toLowerCase().startsWith(b.toLowerCase() + sep);
+        if (inside(to, from) || inside(from, to)) throw new ProtocolError(ERR.BAD_REQUEST, '新位置不能是当前工作区本身、它的子文件夹或上级文件夹');
+        const entries = await readdir(to).catch(error => (error.code === 'ENOENT' ? [] : Promise.reject(error)));
+        if (entries.length) throw new ProtocolError(ERR.BAD_REQUEST, `目标文件夹不是空的：${to}`);
+        await cp(from, to, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
+        const [a, b] = await Promise.all([folderStats(from), folderStats(to)]);
+        if (a.files !== b.files || a.bytes !== b.bytes) {
+            throw new ProtocolError(ERR.HOST_ERROR, `复制结果不一致（原 ${a.files} 个文件 / ${a.bytes} 字节，新 ${b.files} / ${b.bytes}），已保留原工作区`);
+        }
+        await switchWorkspace({ dir: to });
+        let removed = false;
+        if (removeOld === true) {
+            await rm(from, { recursive: true, force: true }).then(() => { removed = true; }, error => log(`old workspace not removed: ${error.message}`));
+        }
+        log(`workspace moved ${from} -> ${to}${removed ? ' (old folder removed)' : ''}`);
+        return { workspace: to, from, removed, files: b.files };
     }
 
     /** Control API access: CLI / desktop main process with the internal token (no Origin), or the Studio page (same origin + session cookie). */
@@ -460,6 +515,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'GET /api/settings': () => settings(),
         'PUT /api/settings': b => setSettings(b),
         'POST /api/workspace': b => switchWorkspace(b),
+        'POST /api/workspace/move': b => moveWorkspace(b),
         'GET /api/items': async () => { await refreshOffline(); return { items: (await engine.status()).items }; },
         'GET /api/status': async () => { await refreshOffline(); return { ...await engine.status(), taverns: config.taverns }; },
         'GET /api/detect': async () => {
@@ -479,6 +535,9 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
             'POST /api/item': b => engine.readItemData(b.path),
             'PUT /api/item': b => engine.writeItemData(b.path, b),
             'POST /api/item/entries': b => engine.editEntries(b.path, b),
+            'POST /api/item/files': b => engine.itemFiles(b.path),
+            'POST /api/item/file': b => engine.readItemFile(b.path, b),
+            'PUT /api/item/file': b => engine.writeItemFile(b.path, b),
         'POST /api/auto-sync': b => engine.setAutoSync(b.path, b),
         'POST /api/unbind': b => engine.unbind(b.path, b),
         'POST /api/remove': b => engine.remove(b.path, { keepFiles: Boolean(b.keepFiles) }),
@@ -589,7 +648,9 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
             for (const res of eventClients) res.end();
             eventClients.clear();
             for (const client of wss.clients) client.terminate();
-            await new Promise(resolve => server.close(() => resolve()));
+            const closed = new Promise(resolve => server.close(() => resolve()));
+            server.closeAllConnections(); // keep-alive sockets from the Studio window would otherwise hold close() open
+            await closed;
         },
     };
 }

@@ -108,7 +108,7 @@ Cellar Studio 是 TavernCellar 面向用户的图形界面：**一个窗口完�
 
 三步，任何一步都可以"稍后再说"：
 
-1. **选择工作区**：默认 `文档\TavernCellar`；可选已有文件夹（检测到 `cellar.json` 则直接打开）。
+1. **选择工作区**：默认为桌面版程序目录下的 `workspace`（源码运行时为 `文档\TavernCellar`）；可选已有文件夹（检测到 `cellar.json` 则直接打开）。
 2. **安装 Cellar Link**：分 ST / tt 两个页签给出步骤——在酒馆"扩展 → 安装扩展"中填入仓库地址 `https://github.com/qianzhuowo/TavernCellar`。Studio **不**直接往酒馆数据目录里复制文件（遵守"只有 Cellar Link 写酒馆"，也避免在酒馆运行时动它的目录）。
 3. **连接酒馆**：显示 `GET /api/detect` 的结果——ST / tt 各一张卡片：运行中 / 未运行 / 未检测到、Cellar Link 是否已安装、已连接 / 等待连接，以及"接受连接"开关（`POST /api/taverns`）与"重新检测"。无令牌：插件装好后自动连上；连上后可进入资料库。
 
@@ -279,6 +279,9 @@ Studio 只调用伴侣程序；以下接口在实现 Studio 时加入，命令�
 | `GET /api/assets/avatar?target=&id=` | 角色头像缩略图；伴侣程序经新的协议消息 `asset.get` 请 Cellar Link 读取 `/thumbnail`，按目标 + 文件名 + 修改时间缓存 |
 | `GET/PUT /api/settings`、`POST /api/workspace` | 设置、工作区切换 |
 | `POST /api/layout` | `{path, exclude}` 修改角色卡哪些部分留在 `card.json`（见 workspace-format 选择性拆出）；状态中的 `layout`、`frameworks` 供检查栏显示 |
+| `POST /api/item/files` | `{path}` → `{files:[{rel,size,owned,readOnly}]}` 资料项文件夹中的文件（`owned=false` 为用户自己的文件；`cellar-item.json` 只读） |
+| `POST /api/item/file` / `PUT /api/item/file` | 读 `{path,file}` → `{text,hash}`；写 `{path,file,text,hash}`，哈希不符返回 `conflict`；写后按外部修改重读，`error` 非空表示资料项已无法读取 |
+| `POST /api/workspace/move` | `{dir, removeOld?}` 复制工作区到空目录、核对文件数与字节后切换；可选删除原文件夹 |
 
 协议变更：增加 `asset.get` 消息（插件读取头像缩略图并以 base64 返回，单次大小上限 512KB）；`PROTOCOL_VERSION` 保持 1，新消息对旧插件返回 `bad_request` 时界面显示占位头像。
 

@@ -24,5 +24,7 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Cellar Studio
   artifactName: CellarStudio-Setup-${version}.${ext}
+  # Keeps $INSTDIR\workspace (the default workspace) on uninstall and upgrade.
+  include: assets/installer.nsh
 portable:
   artifactName: CellarStudio-Portable-${version}.${ext}

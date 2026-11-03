@@ -7,7 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { initialOf, relTime, STALE_HINT, presetRef } from '../lib/status.js';
-import { LIB_KINDS, kindOf } from '../lib/kinds.js';
+import { LIB_KINDS, kindOf, libraryHref } from '../lib/kinds.js';
 
 const app = useApp();
 const ui = useUi();
@@ -57,10 +57,19 @@ async function take(/** @type {any} */ e, /** @type {boolean} */ thenOpen) {
 }
 
 onMounted(() => {
-  lib.reload();
+  // a kind in the route (#/library/lorebook) switches to it, which reloads; otherwise load the current kind
+  if (!applyRouteKind()) lib.reload();
   io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting) && lib.hasMore && !lib.loading) lib.loadMore(); }, { rootMargin: '400px' });
   if (sentinel.value) io.observe(sentinel.value);
 });
+/** @returns {boolean} true when the route named another kind and the library switched to it */
+function applyRouteKind() {
+  const k = ui.route.name === 'library' ? ui.route.arg : '';
+  if (!k || k === lib.kind || !LIB_KINDS.some((o) => o.value === k)) return false;
+  lib.setKind(k);
+  return true;
+}
+watch(() => ui.route, applyRouteKind);
 onBeforeUnmount(() => { if (io) io.disconnect(); clearTimeout(qTimer); lib.cancel(); });
 // sources can appear later (tavern connects): pick one then
 watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.reload(); });
@@ -74,7 +83,7 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
         <p class="muted">{{ sub || '选择一个酒馆浏览' }}</p>
       </div>
       <div class="page-actions">
-        <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="lib.setKind" />
+        <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="(k) => ui.go(libraryHref(k))" />
         <label class="search">
           <Icon name="search" size="sm" />
           <input class="input" data-find :value="lib.query" placeholder="搜索名称" @input="onQuery(/** @type {any} */ ($event.target).value)" />

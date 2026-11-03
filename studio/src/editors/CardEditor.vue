@@ -1,7 +1,7 @@
 <script setup>
 // S2 character card editor (docs/studio-design.md §4.3, §5.1-5.2). Edits `data.*` of the decoded card and keeps the
 // root mirrors equal (components/card/cardFields.js); useItem writes the workspace files after a short pause.
-import { ref, shallowRef, computed, watch, toRef, toRaw, onBeforeUnmount } from 'vue';
+import { ref, shallowRef, computed, watch, toRef, toRaw, onBeforeUnmount, nextTick } from 'vue';
 import { Star } from 'lucide-vue-next';
 import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
@@ -13,6 +13,7 @@ import CardText from '../components/card/CardText.vue';
 import GreetingList from '../components/card/GreetingList.vue';
 import TagInput from '../components/card/TagInput.vue';
 import WorldPicker from '../components/card/WorldPicker.vue';
+import ItemFiles from '../components/ItemFiles.vue';
 import { getField, setField, extraFields } from '../components/card/cardFields.js';
 import { api, errorText } from '../api.js';
 
@@ -114,6 +115,87 @@ function toggleAdv() {
   advOpen.value = !advOpen.value;
   localStorage.setItem(advKey.value, advOpen.value ? '1' : '0');
 }
+
+// ---- form / files ----
+const view = computed(() => ui.itemView[props.path]?.view || 'form');
+const filesInitial = computed(() => ui.itemView[props.path]?.file || '');
+const VIEWS = [{ value: 'form', label: '表单' }, { value: 'files', label: '文件' }];
+
+// ---- outline: jump to a part of the card ----
+const bookCount = computed(() => { const e = f('character_book.entries'); return Array.isArray(e) ? e.length : 0; });
+const regexCount = computed(() => { const r = f('extensions.regex_scripts'); return Array.isArray(r) ? r.length : 0; });
+/** Tavern Helper scripts: an object with `scripts`, or the older list of [key, value] pairs. */
+const scriptCount = computed(() => {
+  const th = f('extensions.tavern_helper');
+  const s = Array.isArray(th) ? th.find((p) => Array.isArray(p) && p[0] === 'scripts')?.[1] : th?.scripts;
+  return Array.isArray(s) ? s.length : 0;
+});
+const layoutExclude = computed(() => new Set(item.value?.layout?.exclude || []));
+/** A part kept in card.json opens card.json; a split part opens its folder in the file view. */
+const partFile = (/** @type {string} */ part, /** @type {string} */ folder) => (layoutExclude.value.has(part) ? 'card.json' : folder);
+
+/** @typedef {{id: string, label: string, adv?: boolean, sub?: boolean, count?: number, greet?: number, file?: string}} OutlineItem */
+const outline = computed(() => {
+  /** @type {OutlineItem[]} */
+  const out = [
+    { id: 'ce-sec-head', label: '名称与标签' },
+    { id: 'ce-sec-desc', label: '角色描述' },
+    { id: 'ce-sec-first', label: '第一条消息' },
+    { id: 'ce-sec-greets', label: '其他开场', count: greetings.value.length }
+  ];
+  greetings.value.forEach((g, i) => out.push({ id: 'ce-greet-' + i, label: '#' + (i + 1) + ' ' + (String(g || '').split('\n').find((l) => l.trim()) || '（空）').replace(/[*"]/g, '').trim(), sub: true, greet: i }));
+  out.push(
+    { id: 'ce-sec-prompt', label: '提示词覆盖', adv: true },
+    { id: 'ce-sec-persona', label: '角色设定', adv: true },
+    { id: 'ce-sec-note', label: '角色备注', adv: true },
+    { id: 'ce-sec-creator', label: '创作者的元数据', adv: true },
+    { id: 'ce-sec-group', label: '群聊', adv: true },
+    { id: 'ce-sec-world', label: world.value ? '世界书 · ' + world.value : '世界书（未绑定）', adv: true },
+    { id: 'ce-sec-extra', label: '其他字段', adv: true }
+  );
+  if (bookCount.value) out.push({ id: '', label: '内嵌世界书', count: bookCount.value, file: partFile('character_book', 'character_book') });
+  if (regexCount.value) out.push({ id: '', label: '角色正则', count: regexCount.value, file: partFile('regex', 'regex') });
+  if (scriptCount.value) out.push({ id: '', label: '酒馆助手脚本', count: scriptCount.value, file: partFile('scripts', 'scripts') });
+  return out;
+});
+
+const greetList = ref(/** @type {any} */ (null));
+const activeId = ref('ce-sec-head');
+async function jump(/** @type {OutlineItem} */ o) {
+  if (o.file) { ui.setItemView(props.path, 'files', o.file); return; }
+  if (o.adv && !advOpen.value) toggleAdv();
+  if (o.greet !== undefined) greetList.value?.reveal(o.greet);
+  await nextTick();
+  const el = document.getElementById(o.id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  activeId.value = o.sub ? 'ce-sec-greets' : o.id;
+  lockUntil = Date.now() + 900;
+  el.classList.remove('ce-flash');
+  void el.offsetWidth;
+  el.classList.add('ce-flash');
+}
+
+// Scroll spy: the outline marks the last section whose top has passed the upper part of the view.
+let lockUntil = 0;
+let raf = 0;
+function spyNow() {
+  raf = 0;
+  if (view.value !== 'form' || Date.now() < lockUntil) return;
+  const form = document.querySelector('.ce-form');
+  if (!form) return;
+  const line = Math.max(0, form.getBoundingClientRect().top) + 140;
+  let cur = '';
+  for (const o of outline.value) {
+    if (!o.id || o.sub) continue;
+    const el = document.getElementById(o.id);
+    if (el && el.getBoundingClientRect().top <= line) cur = o.id;
+  }
+  activeId.value = cur || 'ce-sec-head';
+}
+function onScroll() { if (!raf) raf = requestAnimationFrame(spyNow); }
+document.addEventListener('scroll', onScroll, true);
+onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); cancelAnimationFrame(raf); });
 </script>
 
 <template>
@@ -141,9 +223,30 @@ function toggleAdv() {
           <template v-else-if="it.externalChange.value"><Icon name="alert" size="sm" />暂停写入</template>
           <template v-else><Icon name="check" size="sm" />已写入工作区</template>
         </span>
+        <Seg class="ce-view" :model-value="view" :options="VIEWS" @update:model-value="(v) => ui.setItemView(path, v)" />
       </div>
 
-      <div class="ce-head">
+      <ItemFiles v-if="view === 'files'" :path="path" :initial="filesInitial" />
+      <div v-else class="ce-layout">
+      <nav class="ce-outline" aria-label="大纲">
+        <div class="ce-outline-h"><Icon name="outline" size="sm" />大纲</div>
+        <button
+          v-for="o in outline"
+          :key="o.label + o.id"
+          type="button"
+          class="ce-ol"
+          :class="{ on: !!o.id && o.id === activeId, sub: o.sub, file: !!o.file }"
+          :title="o.file ? '在「文件」中打开' : o.label"
+          @click="jump(o)"
+        >
+          <span class="ce-ol-t">{{ o.label }}</span>
+          <span v-if="o.count" class="ce-ol-n">{{ o.count }}</span>
+          <Icon v-if="o.file" name="file" size="sm" />
+        </button>
+      </nav>
+      <div class="ce-form">
+
+      <div id="ce-sec-head" class="ce-head">
         <div class="ce-avatar">
           <Avatar :name="name || '?'" :target="binding?.target || ''" :file="binding?.id || ''" :lazy="false" />
           <span class="faint">换头像请在酒馆中操作</span>
@@ -181,9 +284,9 @@ function toggleAdv() {
         </div>
       </div>
 
-      <CardText big label="角色描述" :rows="8" :was="was('description')" :model-value="f('description')" @update:model-value="set('description', $event)" />
-      <CardText big label="第一条消息" :rows="6" :was="was('first_mes')" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
-      <GreetingList :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
+      <CardText id="ce-sec-desc" big label="角色描述" :rows="8" :was="was('description')" :model-value="f('description')" @update:model-value="set('description', $event)" />
+      <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :was="was('first_mes')" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
+      <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
 
       <div class="card ce-adv-wrap" :class="{ collapsed: !advOpen }">
         <button class="collapse-head" type="button" :aria-expanded="advOpen" @click="toggleAdv">
@@ -191,14 +294,14 @@ function toggleAdv() {
           <span class="meta">提示词覆盖 · 角色设定 · 角色备注 · 创作者的元数据 · 群聊 · 世界书</span>
         </button>
         <div v-if="advOpen" class="collapse-body ce-adv">
-          <section class="ce-block">
+          <section id="ce-sec-prompt" class="ce-block">
             <div class="ce-block-title"><h3>提示词覆盖</h3><p>可插入 <code v-pre>{{original}}</code> 引用全局设置中的原文</p></div>
             <div class="ce-block-body">
               <CardText label="主要提示词" :rows="3" :was="was('system_prompt')" :model-value="f('system_prompt')" @update:model-value="set('system_prompt', $event)" />
               <CardText label="后续历史指令" :rows="2" :was="was('post_history_instructions')" :model-value="f('post_history_instructions')" @update:model-value="set('post_history_instructions', $event)" />
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-persona" class="ce-block">
             <div class="ce-block-title"><h3>角色设定</h3></div>
             <div class="ce-block-body">
               <CardText label="角色设定摘要" :rows="2" :was="was('personality')" :model-value="f('personality')" @update:model-value="set('personality', $event)" />
@@ -206,7 +309,7 @@ function toggleAdv() {
               <CardText label="对话示例" code :rows="5" hint="每段以 <START> 开头" :model-value="f('mes_example')" @update:model-value="set('mes_example', $event)" />
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-note" class="ce-block">
             <div class="ce-block-title"><h3>角色备注</h3><p>按深度插入到聊天记录中</p></div>
             <div class="ce-block-body">
               <CardText label="角色备注" :rows="2" :was="was('extensions.depth_prompt.prompt')" :model-value="f('extensions.depth_prompt.prompt')" @update:model-value="set('extensions.depth_prompt.prompt', $event)" />
@@ -222,7 +325,7 @@ function toggleAdv() {
               </div>
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-creator" class="ce-block">
             <div class="ce-block-title"><h3>创作者的元数据</h3></div>
             <div class="ce-block-body">
               <div class="ce-grid-2">
@@ -238,7 +341,7 @@ function toggleAdv() {
               <CardText label="创作者的注释" :rows="3" hint="不随 AI 提示词发送" :was="was('creator_notes')" :model-value="f('creator_notes')" @update:model-value="set('creator_notes', $event)" />
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-group" class="ce-block">
             <div class="ce-block-title"><h3>群聊</h3></div>
             <div class="ce-block-body">
               <div class="field">
@@ -252,13 +355,13 @@ function toggleAdv() {
               </div>
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-world" class="ce-block">
             <div class="ce-block-title"><h3>世界书</h3></div>
             <div class="ce-block-body">
               <WorldPicker :model-value="world" :binding="binding" @update:model-value="set('extensions.world', $event)" />
             </div>
           </section>
-          <section class="ce-block">
+          <section id="ce-sec-extra" class="ce-block">
             <div class="ce-block-title"><h3>其他字段</h3><p>原样保留，可在 card.json 中编辑</p></div>
             <div class="ce-block-body">
               <div v-if="extras.length" class="ce-extras">
@@ -270,6 +373,8 @@ function toggleAdv() {
         </div>
       </div>
       <div class="ce-tail" />
+      </div>
+      </div>
     </template>
   </div>
 </template>

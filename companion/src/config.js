@@ -9,9 +9,12 @@ export function cellarHome() {
     return process.env.CELLAR_HOME || join(homedir(), '.tavern-cellar');
 }
 
-/** Default workspace: Documents/TavernCellar (outside any tavern's data folder). */
+/**
+ * Default workspace. The desktop app sets CELLAR_DEFAULT_WORKSPACE to a folder next to its executable (see
+ * desktop/main.cjs); the command line uses Documents/TavernCellar. Either way it is outside any tavern's data folder.
+ */
 export function defaultWorkspaceDir() {
-    return join(homedir(), 'Documents', 'TavernCellar');
+    return process.env.CELLAR_DEFAULT_WORKSPACE || join(homedir(), 'Documents', 'TavernCellar');
 }
 
 export function configPath() {

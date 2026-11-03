@@ -41,6 +41,18 @@ export function parsePresetId(id) {
 
 export const presetId = (apiId, name) => `${apiId}/${name}`;
 
+/**
+ * Character card as read from a tavern (live or offline): the JSON stored in the PNG, without the tavern's
+ * `json_data` copy, with `avatar` set to the card's file name. Cards made elsewhere often store `avatar: "none"`;
+ * the tavern replaces it with the file name on its first save (merge-attributes locates the card by `avatar`), so
+ * reading it this way from the start keeps a fresh checkout equal to what the first sync stores.
+ */
+export function canonicalCharacter(card, avatar) {
+    const out = { ...card, avatar };
+    delete out.json_data;
+    return out;
+}
+
 export const MSG = Object.freeze({
     HELLO: 'hello',
     RESPONSE: 'response',

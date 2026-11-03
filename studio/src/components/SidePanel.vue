@@ -4,10 +4,10 @@ import Icon from './Icon.vue';
 import Seg from './Seg.vue';
 import StatusBadge from './StatusBadge.vue';
 import { useApp } from '../stores/app.js';
-import { useUi, hrefOf } from '../stores/ui.js';
+import { useUi, hrefOf, pathOfKey } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
-import { LIB_KINDS } from '../lib/kinds.js';
+import { LIB_KINDS, libraryHref } from '../lib/kinds.js';
 
 const app = useApp();
 const ui = useUi();
@@ -56,7 +56,7 @@ function jump(/** @type {string} */ id) {
         </div>
         <div class="field">
           <label>类型</label>
-          <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="lib.setKind" />
+          <Seg :model-value="lib.kind" :options="LIB_KINDS" @update:model-value="(k) => ui.go(libraryHref(k))" />
         </div>
         <div v-if="lib.tags.length" class="field">
           <label>标签</label>
@@ -89,11 +89,11 @@ function jump(/** @type {string} */ id) {
 
     <!-- 工作区 tree -->
     <template v-else>
-      <div class="panel-head">工作区<span class="spacer" /><a class="icon-btn" href="#/library" title="从资料库取出"><Icon name="plus" size="sm" /></a></div>
+      <div class="panel-head">工作区<span class="spacer" /><a class="icon-btn" :href="libraryHref(app.itemKind(pathOfKey(ui.route.key)))" title="从资料库取出"><Icon name="plus" size="sm" /></a></div>
       <div class="panel-body">
         <div v-for="g in groups" :key="g.key" class="tree-group" :class="{ collapsed: ui.collapsed[g.key] }">
           <div class="tg-head" @click="ui.toggleGroup(g.key)">
-            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span>
+            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span><a class="tg-add icon-btn" :href="libraryHref(g.key)" :title="'从资料库取出' + g.title" @click.stop><Icon name="plus" size="sm" /></a>
           </div>
           <template v-if="!ui.collapsed[g.key]">
             <a
@@ -117,7 +117,7 @@ function jump(/** @type {string} */ id) {
                 />
               </span>
             </a>
-            <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a href="#/library">去资料库取出</a></div>
+            <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a :href="libraryHref(g.key)">去资料库取出</a></div>
           </template>
         </div>
         <div class="tree-legend faint">徽标按绑定的酒馆依次排列，悬停查看酒馆名</div>

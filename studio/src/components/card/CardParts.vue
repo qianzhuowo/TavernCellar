@@ -22,12 +22,12 @@ const frameworks = computed(() => (props.item.frameworks || []).map((f) => ({ ..
 
 /** Same order and ids as CHARACTER_PARTS in companion/src/codec/character.js. */
 const PARTS = [
-  { id: 'fields', label: '正文字段', tip: '描述、第一条消息、设定等各为一个 .md 文件' },
-  { id: 'greetings', label: '其他开场', tip: 'alternate_greetings/NN.md，每条一个文件' },
-  { id: 'regex', label: '角色正则', tip: 'regex/NN-名称.json + 替换文本' },
-  { id: 'scripts', label: '酒馆助手脚本', tip: 'scripts/NN-名称.json + .js' },
-  { id: 'variables', label: '酒馆助手变量', tip: 'variables.json' },
-  { id: 'character_book', label: '内嵌世界书', tip: 'character_book/NNNN-备注.md，每个条目一个文件' }
+  { id: 'fields', label: '正文字段', tip: '描述、第一条消息、设定等各为一个 .md 文件', file: 'description.md' },
+  { id: 'greetings', label: '其他开场', tip: 'alternate_greetings/NN.md，每条一个文件', file: 'alternate_greetings' },
+  { id: 'regex', label: '角色正则', tip: 'regex/NN-名称.json + 替换文本', file: 'regex' },
+  { id: 'scripts', label: '酒馆助手脚本', tip: 'scripts/NN-名称.json + .js', file: 'scripts' },
+  { id: 'variables', label: '酒馆助手变量', tip: 'variables.json', file: 'variables.json' },
+  { id: 'character_book', label: '内嵌世界书', tip: 'character_book/NNNN-备注.md，每个条目一个文件', file: 'character_book' }
 ];
 const exclude = computed(() => new Set(props.item.layout?.exclude || []));
 const busy = ref('');
@@ -62,12 +62,13 @@ async function toggle(/** @type {string} */ part, /** @type {boolean} */ split) 
     </div>
   </section>
   <section class="insp-sec">
-    <h4>文件拆分</h4>
+    <h4 class="parts-h">文件拆分<button class="btn sm ghost" type="button" title="在编辑器中查看、编辑这些文件" @click="ui.setItemView(item.path, 'files')"><Icon name="file" size="sm" />查看文件</button></h4>
     <div class="faint parts-hint">勾选的部分拆成单独文件，未勾选的留在 card.json。只移动文件，不改变内容和同步状态。</div>
     <label v-for="p in PARTS" :key="p.id" class="check parts-row" :title="p.tip">
       <input type="checkbox" :checked="!exclude.has(p.id)" :disabled="!!busy || !!item.error" @change="toggle(p.id, $event.target.checked)" />
       <span class="grow">{{ p.label }}</span>
       <Icon v-if="busy === p.id" name="spin" size="sm" />
+      <button v-else-if="!exclude.has(p.id)" class="icon-btn parts-open" type="button" :title="'查看拆出的文件：' + p.tip" @click.prevent="ui.setItemView(item.path, 'files', p.file)"><Icon name="file" size="sm" /></button>
     </label>
   </section>
 </template>
@@ -81,4 +82,9 @@ async function toggle(/** @type {string} */ part, /** @type {boolean} */ split) 
 .parts-hint { font-size: var(--fs-xs); line-height: 1.5; margin-bottom: 6px; }
 .parts-row { display: flex; width: 100%; padding: 3px 0; font-size: var(--fs-sm); }
 .grow { flex: 1; min-width: 0; }
+.parts-h { display: flex; align-items: center; }
+.parts-h .btn { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.parts-row { align-items: center; }
+.parts-open { width: 22px; height: 22px; opacity: .6; }
+.parts-row:hover .parts-open { opacity: 1; }
 </style>
