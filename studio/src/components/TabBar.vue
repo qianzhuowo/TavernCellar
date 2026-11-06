@@ -9,17 +9,13 @@ defineProps({ hasInspector: { type: Boolean, default: false } });
 const app = useApp();
 const ui = useUi();
 
-const FIXED = { library: ['资料库', 'library'], settings: ['设置', 'settings'], sync: ['同步', 'sync'], history: ['历史', 'history'], preview: ['预览', 'eye'] };
 const BAR = { conflict: 'var(--st-conflict)', both: 'var(--st-conflict)', invalid: 'var(--st-conflict)', local: 'var(--st-local)', remote: 'var(--st-remote)' };
 
+/** Tabs are documents only (ui.tabs holds item: / conflict: keys). */
 function info(/** @type {string} */ key) {
-  if (key.startsWith('item:')) {
-    const it = app.item(key.slice(5));
-    return { label: it && it.kind === 'regex' ? '全局正则' : it ? displayName(it) : itemName(key.slice(5)), icon: it ? kindOf(it.kind).icon : 'circle', bar: it ? BAR[app.worst(it)] : '' };
-  }
   if (key.startsWith('conflict:')) { const it = app.item(key.slice(9)); return { label: '冲突 · ' + (it ? displayName(it) : itemName(key.slice(9))), icon: 'alert', bar: BAR.conflict }; }
-  const f = FIXED[key] || [key, 'circle'];
-  return { label: f[0], icon: f[1], bar: '' };
+  const it = app.item(key.slice(5));
+  return { label: it && it.kind === 'regex' ? '全局正则' : it ? displayName(it) : itemName(key.slice(5)), icon: it ? kindOf(it.kind).icon : 'circle', bar: it ? BAR[app.worst(it)] : '' };
 }
 </script>
 

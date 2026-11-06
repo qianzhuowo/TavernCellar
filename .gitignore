@@ -129,3 +129,13 @@ backups/
 # Local AI-agent / tool state
 .limcode/
 .claude/settings.local.json
+
+# Packaging intermediates wherever electron-builder is pointed, and scratch test homes / workspaces / debug
+# folders created at the repo root by live tests (they hold real tavern ids, cards and logs)
+win-unpacked/
+.stage/
+__uninstaller*
+/*-home/
+/*-ws/
+/debug/
+/ui*shots/

@@ -225,7 +225,7 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
 </script>
 
 <template>
-  <div class="ce" :class="{ wide: it.data.value && (view === 'world' || view === 'regex') }">
+  <div class="ce" :class="{ wide: !!it.data.value }">
     <div v-if="it.externalChange.value" class="banner warn">
       <Icon name="alert" />
       <div class="grow"><b>文件在别处被修改</b><span class="muted"> · 工作区里的文件在你编辑时被改动了（VS Code 或从酒馆取回），暂停写入。重新加载会丢弃这里尚未写入的修改；保留我的修改会用这里的内容覆盖那些改动。</span></div>
@@ -252,20 +252,19 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
         <Seg class="ce-view" :model-value="view" :options="VIEWS" @update:model-value="(v) => ui.setItemView(path, v)" />
       </div>
 
-      <ItemFiles v-if="view === 'files'" :path="path" :initial="filesInitial" />
+      <ItemFiles v-if="view === 'files'" class="ce-files" :path="path" :initial="filesInitial" />
 
       <!-- 世界书: the bound lorebook (its own workspace item) in the lorebook editor -->
       <div v-else-if="view === 'world'" class="ce-pane ce-world-pane">
         <div class="ce-world-head">
           <WorldPicker :model-value="world" :binding="binding" @update:model-value="set('extensions.world', $event)" />
-          <p v-if="worldPath" class="faint ce-world-note"><Icon name="info" size="sm" />「{{ world }}」是工作区中的独立世界书资料项（{{ worldPath }}），在这里编辑即修改它；它单独同步，同步状态见左侧「世界书」分组或同步页。</p>
         </div>
         <LorebookEditor v-if="worldPath" :key="worldPath" :path="worldPath" />
         <div v-else class="empty grow">
           <Icon name="book" />
           <template v-if="world">
             <h3>绑定的世界书「{{ world }}」还不在工作区</h3>
-            <p class="muted">用上方的「一起取出」把它取出到工作区，就能在这里编辑。</p>
+            <p class="muted">如果它在酒馆里，用上方的「一起取出」把它取出到工作区，就能在这里编辑。</p>
           </template>
           <template v-else-if="bookCount">
             <h3>这张卡带有内嵌世界书（{{ bookCount }} 个条目），但没有绑定世界书</h3>

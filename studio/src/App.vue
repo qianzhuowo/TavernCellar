@@ -3,7 +3,6 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useApp } from './stores/app.js';
 import { useUi } from './stores/ui.js';
 import { connectEvents } from './events.js';
-import TitleBar from './components/TitleBar.vue';
 import ActivityBar from './components/ActivityBar.vue';
 import SidePanel from './components/SidePanel.vue';
 import TabBar from './components/TabBar.vue';
@@ -98,7 +97,6 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
       'side-off': !ui.side
     }"
   >
-    <TitleBar />
     <div class="workbench">
       <ActivityBar />
       <SidePanel />

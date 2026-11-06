@@ -33,7 +33,7 @@ svg.ic.lg { width: 20px; height: 20px; }
 .app {
   height: 100vh;
   display: grid;
-  grid-template-rows: var(--titlebar-h) 1fr var(--statusbar-h);
+  grid-template-rows: 1fr var(--statusbar-h);
 }
 .workbench {
   min-height: 0;
@@ -50,14 +50,7 @@ svg.ic.lg { width: 20px; height: 20px; }
 .app.side-off.inspector-off .workbench { grid-template-columns: var(--activity-w) 0 minmax(0, 1fr) 0; }
 .app.side-off .side { display: none; }
 
-/* ---------- Title bar ---------- */
-.titlebar {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: 0 var(--sp-2) 0 var(--sp-4);
-  background: var(--bg-0);
-  border-bottom: 1px solid var(--line);
-  user-select: none;
-}
+/* ---------- Brand mark (boot screen, wizard) ---------- */
 .brand { display: flex; align-items: center; gap: var(--sp-2); font-weight: 600; letter-spacing: .2px; }
 .brand-mark {
   width: 22px; height: 22px; border-radius: 6px;
@@ -66,18 +59,6 @@ svg.ic.lg { width: 20px; height: 20px; }
   color: var(--logo-ink);
 }
 .brand-mark svg { width: 14px; height: 14px; }
-.titlebar .sep { color: var(--text-3); }
-.ws-name { color: var(--text-2); display: flex; align-items: center; gap: 6px; }
-.titlebar .spacer { flex: 1; }
-.conn-summary {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: 4px 10px; border-radius: var(--r-pill);
-  background: var(--bg-2); border: 1px solid var(--line);
-  font-size: var(--fs-sm); color: var(--text-2);
-}
-.conn-summary .conn { display: flex; align-items: center; gap: 6px; }
-.win-ctl { display: flex; gap: 2px; margin-left: var(--sp-2); }
-.win-ctl span { width: 36px; height: 28px; display: grid; place-items: center; color: var(--text-3); border-radius: var(--r-sm); }
 
 /* ---------- Activity bar ---------- */
 .activity {
@@ -207,14 +188,12 @@ svg.ic.lg { width: 20px; height: 20px; }
   .workbench, .app.side-off .workbench { grid-template-columns: var(--activity-w) var(--side-w) minmax(0,1fr) 0; }
   .inspector { display: none; }
   .app.inspector-drawer .inspector {
-    display: flex; position: fixed; right: 0; top: var(--titlebar-h); bottom: var(--statusbar-h);
+    display: flex; position: fixed; right: 0; top: 0; bottom: var(--statusbar-h);
     width: var(--inspector-w); z-index: 40; box-shadow: var(--shadow-2);
   }
-  .conn-summary .conn-label { display: none; }
 }
 @media (max-width: 799px) {
   .workbench, .app.side-off .workbench { grid-template-columns: var(--activity-w) 0 minmax(0,1fr) 0; }
   .side { display: none; }
-  .ws-name, .titlebar .sep { display: none; }
   .statusbar .hide-narrow { display: none; }
 }

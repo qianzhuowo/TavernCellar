@@ -287,18 +287,33 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                   <template v-else v-for="b in [bindingOf(r.it, c.id)]" :key="b.target">
                     <template v-for="v in [cellView(b)]" :key="v.mode">
                       <div class="cell-main">
-                        <template v-if="v.reach">
-                          <StatusBadge :status="v.status" :label="v.mode === 'offline' ? STATUS[v.status].label + ' · 离线' : ''" />
-                        </template>
-                        <template v-else>
-                          <span class="st closed" :title="MODE_TIP[v.mode]"><Icon :name="v.mode === 'stale' ? 'wait' : 'offline'" />{{ v.mode === 'stale' ? '酒馆无响应' : v.mode === 'closed' ? '已关闭' : '酒馆未连接' }}</span>
-                          <span class="cell-sub">上次已知：{{ STATUS[v.status].label }}</span>
-                        </template>
+                        <div class="sx-cell-top">
+                          <template v-if="v.reach">
+                            <StatusBadge :status="v.status" :label="v.mode === 'offline' ? STATUS[v.status].label + ' · 离线' : ''" />
+                          </template>
+                          <span v-else class="st closed" :title="MODE_TIP[v.mode]"><Icon :name="v.mode === 'stale' ? 'wait' : 'offline'" />{{ v.mode === 'stale' ? '酒馆无响应' : v.mode === 'closed' ? '已关闭' : '酒馆未连接' }}</span>
+                          <span class="sx-unbind" :class="{ armed: armed === keyOf(r.it.path, b) }">
+                            <button
+                              class="btn sm"
+                              :class="armed === keyOf(r.it.path, b) ? 'danger sx-unbind-confirm' : 'ghost sx-icon'"
+                              :disabled="!!busy[keyOf(r.it.path, b)] || bulk.running"
+                              :title="armed === keyOf(r.it.path, b) ? '' : '解除与这个酒馆的同步绑定'"
+                              :aria-label="armed === keyOf(r.it.path, b) ? '确认解除绑定' : '解除与这个酒馆的同步绑定'"
+                              @click="unbind(r.it.path, b)"
+                            >
+                              <Icon :name="busy[keyOf(r.it.path, b)] === 'unbind' ? 'spin' : 'link'" size="sm" /><template v-if="armed === keyOf(r.it.path, b)">确认解除</template>
+                            </button>
+                          </span>
+                        </div>
+                        <span v-if="!v.reach" class="cell-sub">上次已知：{{ STATUS[v.status].label }}</span>
                         <span v-if="v.mode === 'stale'" class="cell-sub">{{ STALE_HINT }}</span>
                         <span v-else-if="v.mode === 'offline'" class="cell-sub">{{ v.sub }}</span>
                         <span v-if="b.waiting" class="cell-hint"><Icon name="wait" size="sm" />待同步：酒馆启动后自动同步</span>
                         <span v-if="b.pinned" class="cell-hint sx-pin" :title="PIN_TIP"><Icon name="pin" size="sm" />{{ pinText(b.pinned) }}</span>
                         <span v-if="b.tavernError" class="sx-err"><Icon name="alert" size="sm" /><span>{{ b.tavernError }}</span></span>
+                      </div>
+                      <div v-if="armed === keyOf(r.it.path, b)" class="sx-unbind-note">
+                        只删除这个资料项与「{{ c.name }}」之间的同步记录，之后不再同步到这个酒馆；工作区文件和酒馆中的内容都会保留。再次点击「确认解除」生效。
                       </div>
 
                       <div class="cell-ops">
@@ -314,26 +329,8 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                             <Icon :name="busy[keyOf(r.it.path, b)] === 'pull' ? 'spin' : 'download'" size="sm" />取回
                           </button>
                         </template>
-                        <span class="grow" />
-                        <span class="sx-unbind" :class="{ armed: armed === keyOf(r.it.path, b) }">
-                          <button
-                            class="btn sm"
-                            :class="armed === keyOf(r.it.path, b) ? 'danger sx-unbind-confirm' : 'ghost sx-icon'"
-                            :disabled="!!busy[keyOf(r.it.path, b)] || bulk.running"
-                            :title="armed === keyOf(r.it.path, b) ? '' : '解除绑定'"
-                            :aria-label="armed === keyOf(r.it.path, b) ? '确认解除绑定' : '解除绑定'"
-                            @click="unbind(r.it.path, b)"
-                          >
-                            <Icon :name="busy[keyOf(r.it.path, b)] === 'unbind' ? 'spin' : 'link'" size="sm" /><template v-if="armed === keyOf(r.it.path, b)">确认解除</template>
-                          </button>
-                        </span>
-                      </div>
-                      <div v-if="armed === keyOf(r.it.path, b)" class="sx-unbind-note">
-                        只删除绑定记录：工作区文件和酒馆中的内容都会保留。再次点击「确认解除」生效。
-                      </div>
-
-                      <div class="cell-auto">
                         <Toggle
+                          class="sx-auto"
                           :model-value="!!b.autoSync"
                           sync
                           label="随时同步"

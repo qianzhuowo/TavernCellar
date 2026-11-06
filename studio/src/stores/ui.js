@@ -8,7 +8,8 @@ const ls = {
 
 /**
  * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/preview  #/settings[/<section>]  #/wizard
- * Tab keys: 'library' | 'sync' | 'history' | 'preview' | 'settings' | 'item:<path>' | 'conflict:<path>'
+ * Tab keys: 'item:<path>' | 'conflict:<path>' — only documents open as tabs; the activity-bar pages (资料库, 同步, 预览,
+ * 历史, 设置) are switched from the activity bar and never become tabs.
  */
 export function parseHash(/** @type {string} */ hash) {
   const h = hash.replace(/^#\/?/, '');
@@ -22,6 +23,7 @@ export function parseHash(/** @type {string} */ hash) {
 
 /** Workspace item path of an item or conflict tab key, or '' for fixed tabs. */
 export const pathOfKey = (/** @type {string} */ key) => (/^(item|conflict):/.test(key) ? key.slice(key.indexOf(':') + 1) : '');
+const isDocKey = (/** @type {string} */ key) => !!pathOfKey(key);
 
 export const hrefOf = (/** @type {string} */ key) => {
   const m = /^(item|conflict):(.*)$/s.exec(key);
@@ -34,7 +36,7 @@ export const useUi = defineStore('ui', {
   state: () => ({
     route: parseHash(location.hash),
     /** @type {string[]} */
-    tabs: ls.get('cs.tabs', ['library']),
+    tabs: ls.get('cs.tabs', []).filter(isDocKey),
     lastItem: ls.get('cs.lastItem', ''),
     inspector: ls.get('cs.inspector', true),
     /** inspector shown as an overlay drawer on narrow windows */
@@ -56,7 +58,7 @@ export const useUi = defineStore('ui', {
       this.route = parseHash(location.hash);
       const r = this.route;
       if (r.name === 'wizard') return;
-      if (!this.tabs.includes(r.key)) { this.tabs.push(r.key); ls.set('cs.tabs', this.tabs); }
+      if (isDocKey(r.key) && !this.tabs.includes(r.key)) { this.tabs.push(r.key); ls.set('cs.tabs', this.tabs); }
       if (r.name === 'item') { this.lastItem = r.arg; ls.set('cs.lastItem', r.arg); }
       this.inspectorDrawer = false;
     },

@@ -1,7 +1,7 @@
 /* S4 sync matrix (SyncPage.vue). Builds on .matrix / .cell / .warn-note from screens.css. */
 
 .sx-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
-.sx-bar .grow, .sx .cell-ops .grow { flex: 1; }
+.sx-bar .grow { flex: 1; }
 .sx-ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* split button + menu */
@@ -51,7 +51,14 @@
 .sx-matrix thead th.sx-col-closed .sx-col-name, .sx-matrix thead th.sx-col-none .sx-col-name { color: var(--text-2); }
 
 .sx .cell { min-width: 250px; }
-.sx .cell-ops { flex-wrap: wrap; }
+/* status line (with the unbind icon at its right), then 同步 / 取回 / 随时同步 on one row */
+.sx-cell-top { display: flex; align-items: center; gap: 4px; min-height: 26px; }
+.sx-cell-top .sx-icon { opacity: .55; }
+.sx-cell-top .sx-icon:hover, .sx-cell-top .sx-icon:focus-visible { opacity: 1; }
+.sx .cell-ops { flex-wrap: nowrap; gap: 6px; margin-top: var(--sp-2); }
+.sx .cell-ops .btn { white-space: nowrap; }
+.sx-auto { margin-left: 6px; white-space: nowrap; }
+.sx-auto .tlabel { font-size: var(--fs-sm); }
 .sx .cell .st.closed svg { width: 13px; height: 13px; }
 .sx-err { display: flex; align-items: flex-start; gap: 4px; margin-top: 6px; font-size: var(--fs-xs); color: var(--st-conflict); word-break: break-word; }
 .sx-err svg { flex: none; margin-top: 1px; }

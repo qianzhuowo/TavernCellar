@@ -2,14 +2,13 @@
    Editors — S2 character card editor (prototype css/editor.css)
    ========================================================= */
 
-.item-page.character {
-  margin: 0 auto; width: 100%; box-sizing: border-box;
-  max-width: calc(var(--editor-maxw) + 2 * var(--sp-8));
-  padding: var(--sp-5) var(--sp-8) 0;
-}
-@media (max-width: 960px) { .item-page.character { padding: var(--sp-4) var(--sp-4) 0; } }
+/* The character page uses the whole editor area on every view (角色 / 世界书 / 角色正则 / 文件): the path + save-state
+   bar runs along the top edge and each view fills (and scrolls) the space under it. */
+.item-page.character { max-width: none; width: 100%; height: 100%; padding: 0; gap: 0; box-sizing: border-box; container-type: inline-size; }
+.item-page.character > .item-banners { padding: var(--sp-2) var(--sp-4) 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 
 .ce { display: flex; flex-direction: column; gap: var(--gap-section, var(--sp-6)); min-width: 0; }
+.ce:not(.wide) { padding: var(--sp-5) var(--sp-8); }
 .ce .banner { margin: 0; }
 .ce-loading { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-8) 0; justify-content: center; }
 .ce-small { font-size: var(--fs-xs); }
@@ -22,9 +21,7 @@
 .ce-save.busy { color: var(--text-2); }
 .ce-view { flex: none; }
 
-/* ---------- outline (quick jumps) beside the form; files view ---------- */
-.item-page.character { container-type: inline-size; }
-.item-page.character:has(.ce-layout), .item-page.character:has(.itf) { max-width: calc(var(--editor-maxw) + 2 * var(--sp-8) + 200px); }
+/* ---------- outline (quick jumps) beside the form ---------- */
 .ce-layout { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
 .ce-form { display: flex; flex-direction: column; gap: var(--gap-section, var(--sp-6)); min-width: 0; }
 .ce-outline {
@@ -135,14 +132,6 @@
 .ce-talk { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text-3); }
 .ce-range { flex: 1; accent-color: var(--accent); }
 .ce-talk .badge { min-width: 40px; justify-content: center; font-variant-numeric: tabular-nums; }
-.ce-world-row { display: flex; gap: var(--sp-2); align-items: center; }
-.ce-world-select { flex: 1; min-width: 0; }
-.ce-world-link {
-  display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4);
-  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg-3);
-}
-.ce-world-link .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.ce-world-link .faint { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .ce-extras { border: 1px dashed var(--line-strong); border-radius: var(--r-md); }
 .ce-extra { display: flex; justify-content: space-between; gap: var(--sp-4); padding: 7px var(--sp-3); font-size: var(--fs-sm); min-width: 0; }
 .ce-extra span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -163,18 +152,64 @@
 
 /* broken item: its files, so it can be fixed in place */
 .item-page > .item-fix { margin-top: var(--sp-3); }
+.item-page.character > .item-fix { margin: var(--sp-3) var(--sp-4); }
 
-/* ---------- 世界书 / 角色正则 pages: full width and height, like the lorebook and preset editors ---------- */
-.item-page.character:has(> .ce.wide) { max-width: none; height: 100%; padding: 0; gap: 0; }
-.item-page.character:has(> .ce.wide) > .item-banners { padding: var(--sp-2) var(--sp-4) 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+/* ---------- full-area views under the top bar ---------- */
 .ce.wide { flex: 1; min-height: 0; gap: 0; }
 .ce.wide > .banner { margin: var(--sp-3) var(--sp-4) 0; }
 .ce.wide > .ce-bar { margin: 0; padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--line); }
+.ce.wide > .ce-layout { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-5) var(--sp-6) 0 var(--sp-4); }
+.ce.wide > .itf.ce-files { flex: 1; min-height: 0; height: auto; padding: var(--sp-3) var(--sp-4); }
+@container (max-width: 900px) { .ce.wide > .ce-layout { padding: var(--sp-3) var(--sp-4) 0; } }
 .ce-pane { flex: 1; min-height: 0; display: flex; }
 .ce-pane > .empty { flex: 1; align-self: center; }
 .ce-world-pane { flex-direction: column; }
-.ce-world-head { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6); align-items: flex-start; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
-.ce-world-head > .field { flex: 1 1 420px; max-width: 720px; }
-.ce-world-note { flex: 1 1 260px; margin: 0; font-size: var(--fs-xs); line-height: 1.6; display: flex; gap: 6px; align-items: flex-start; }
-.ce-world-note > svg { flex: none; margin-top: 3px; }
+.ce-world-head { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
 .ce-world-pane > .lb { flex: 1; min-height: 0; height: auto; }
+
+/* 角色世界书 picker (components/card/WorldPicker.vue) */
+.wp { display: flex; flex-direction: column; gap: var(--sp-2); }
+.wp-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.wp-title h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.wp-help { font-size: var(--fs-xs); display: inline-flex; align-items: center; gap: 4px; margin-left: var(--sp-2); }
+.wp-info { position: relative; display: inline-grid; place-items: center; color: var(--text-3); cursor: help; border-radius: 50%; }
+.wp-info:hover, .wp-info:focus-visible { color: var(--accent-text); outline: none; }
+.wp-tip {
+  display: none; position: absolute; left: -8px; top: calc(100% + 8px); z-index: 60; width: max-content; max-width: min(420px, 70vw);
+  padding: 8px 10px; border-radius: var(--r-md); background: var(--bg-3); color: var(--text); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2); font-size: var(--fs-sm); font-weight: 400; line-height: 1.6; white-space: normal; cursor: default;
+}
+.wp-info:hover .wp-tip, .wp-info:focus-visible .wp-tip { display: block; }
+.wp-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.wp-state { font-size: var(--fs-sm); }
+.wp-combo { position: relative; flex: 0 1 460px; min-width: 220px; }
+.wp-trigger {
+  display: flex; align-items: center; gap: 6px; width: 100%; height: 32px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-input); color: var(--text);
+  font: inherit; font-size: var(--fs-md); text-align: left; cursor: pointer;
+}
+.wp-trigger:hover, .wp-combo.open .wp-trigger { border-color: var(--line-strong); }
+.wp-trigger.staged { border-color: var(--accent); }
+.wp-trigger.none .wp-val { color: var(--text-3); }
+.wp-trigger > svg { flex: none; color: var(--text-3); }
+.wp-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.wp-tag { flex: none; font-size: var(--fs-xs); padding: 0 6px; line-height: 18px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); }
+.wp-tag.warn { background: var(--st-conflict-bg); color: var(--st-conflict); }
+.wp-pop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 280px;
+  background: var(--bg-3); border: 1px solid var(--line-strong); border-radius: var(--r-md); box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column; max-height: min(420px, 60vh);
+}
+.wp-search { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); color: var(--text-3); }
+.wp-search .input { flex: 1; min-width: 0; height: 28px; }
+.wp-list { overflow: auto; padding: 4px; }
+.wp-group { padding: 6px 8px 2px; font-size: var(--fs-xs); color: var(--text-3); }
+.wp-opt {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%; padding: 6px 8px; border: 0; border-radius: var(--r-sm, 4px);
+  background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer;
+}
+.wp-opt.active { background: var(--row-hover); }
+.wp-opt.on { background: var(--accent-soft); }
+.wp-opt.none { color: var(--text-2); }
+.wp-opt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-empty { padding: 8px; font-size: var(--fs-sm); }
