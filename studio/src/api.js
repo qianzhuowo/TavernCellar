@@ -120,6 +120,10 @@ export const api = {
   tagVersion: (name, rev) => call('POST', '/api/history/tag', { name, rev }),
   diffVersions: (from, to, path) => call('POST', '/api/history/diff', { from, to, path }),
     restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path }),
+  /** One item's data in a version (预设工坊). */
+  itemAt: (rev, path) => call('POST', '/api/history/item', { rev, path }),
+  collection: () => call('POST', '/api/workshop/collection', {}),
+  saveCollection: (collection, hash) => call('PUT', '/api/workshop/collection', { collection, hash }),
     /** Deploy a version to one tavern and pin the bindings there; the workspace is not changed. */
     pushVersion: (rev, target, { paths, force } = {}) => call('POST', '/api/push', { rev, target, paths, force }),
     /** End a pin: the binding follows the workspace again. */

@@ -18,12 +18,13 @@ import SyncPage from './screens/SyncPage.vue';
 import HistoryPage from './screens/HistoryPage.vue';
 import ConflictPage from './screens/ConflictPage.vue';
 import PreviewPage from './screens/PreviewPage.vue';
+import WorkshopPage from './screens/WorkshopPage.vue';
 
 const app = useApp();
 const ui = useUi();
 
 const showWizard = computed(() => app.ready && (ui.route.name === 'wizard' || !(app.settings && app.settings.ui && app.settings.ui.wizardDone)));
-const screen = computed(() => ({ library: Library, settings: Settings, item: ItemPage, conflict: ConflictPage, sync: SyncPage, history: HistoryPage, preview: PreviewPage }[ui.route.name] || Library));
+const screen = computed(() => ({ library: Library, settings: Settings, item: ItemPage, conflict: ConflictPage, sync: SyncPage, history: HistoryPage, preview: PreviewPage, workshop: WorkshopPage }[ui.route.name] || Library));
 const hasInspector = computed(() => (ui.route.name === 'item' || ui.route.name === 'conflict') && !!app.item(ui.route.arg));
 
 let statusTimer = 0;

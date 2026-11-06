@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CHARACTER_PARTS, decodeCharacter, encodeCharacter, omitParts, restoreParts } from '../src/codec/character.js';
+import { CHARACTER_PARTS, decodeCharacter, encodeCharacter, migrateExclude, omitParts, presentParts, restoreParts } from '../src/codec/character.js';
 import { detectFrameworks } from '../src/codec/frameworks.js';
 import { CODECS } from '../src/codec/index.js';
 import { Workspace } from '../src/workspace/workspace.js';
@@ -17,17 +17,23 @@ const card = {
         extensions: {
             regex_scripts: [{ scriptName: 'r', findRegex: 'x', replaceString: 'y' }],
             tavern_helper: { scripts: [{ name: 'MVU', content: "import 'https://cdn/MagVarUpdate/x.js'" }], variables: { a: 1 } },
-            'xiaobaix-template': { enabled: true },
+            'xiaobaix-tasks': { tasks: [{ name: '开场任务', commands: '/echo hi', interval: 0, triggerTiming: 'character_init' }] },
+            'xiaobaix-template': { enabled: true, template: '<div>{{name}}</div>', customRegex: '' },
+            LittleWhiteBox: { variablesCore: { bumpAliases: { hp: 1 } } },
         },
     },
 };
 
 test('each part can be left in card.json (not extracted); the round-trip stays lossless', () => {
-    assert.deepEqual([...CHARACTER_PARTS], ['greetings', 'regex', 'scripts', 'variables', 'character_book']);
+    assert.deepEqual([...CHARACTER_PARTS], ['greetings', 'regex', 'xiaobaix', 'helper', 'character_book']);
+    const full = Object.keys(decodeCharacter(card));
+    for (const name of ['xiaobaix/tasks/01-开场任务.json', 'xiaobaix/tasks/01-开场任务.txt', 'xiaobaix/template.html', 'xiaobaix/template.json', 'xiaobaix/variables.json', 'scripts/01-MVU.js', 'variables.json']) {
+        assert.ok(full.includes(name), name);
+    }
     for (const part of CHARACTER_PARTS) {
         const files = decodeCharacter(card, { exclude: [part] });
-        const prefix = { greetings: 'alternate_greetings/', regex: 'regex/', scripts: 'scripts/', variables: 'variables.json', character_book: 'character_book/' }[part];
-        assert.equal(Object.keys(files).some(f => f.startsWith(prefix)), false, `${part} should not be split`);
+        const prefixes = { greetings: ['alternate_greetings/'], regex: ['regex/'], xiaobaix: ['xiaobaix/'], helper: ['scripts/', 'variables.json'], character_book: ['character_book/'] }[part];
+        assert.equal(Object.keys(files).some(f => prefixes.some(p => f.startsWith(p))), false, `${part} should not be split`);
         assert.equal('first_mes.md' in files, part !== 'greetings', 'first_mes follows the greetings part');
         assert.ok(files['description.md'], 'base text fields always have their own files');
         assert.deepEqual(encodeCharacter(files), card, part);
@@ -39,15 +45,38 @@ test('each part can be left in card.json (not extracted); the round-trip stays l
     assert.deepEqual(decodeCharacter(card, { exclude: ['fields'] }), decodeCharacter(card));
 });
 
+test('Tavern Helper and Xiaobai X data get files only when non-empty; presentParts tells which exist', () => {
+    const empty = { data: { name: 'E', extensions: { tavern_helper: { scripts: [], variables: {} }, 'xiaobaix-tasks': { tasks: [] }, 'xiaobaix-template': { enabled: false, template: '' }, LittleWhiteBox: {} } } };
+    const files = decodeCharacter(empty);
+    assert.deepEqual(Object.keys(files).sort(), ['card.json', 'cellar-item.json'], 'no blank files');
+    assert.deepEqual(encodeCharacter(files), empty);
+    assert.deepEqual(presentParts(empty), []);
+    assert.deepEqual(presentParts(card), ['xiaobaix', 'helper']);
+    assert.deepEqual(presentParts({ data: { extensions: { TavernHelper_scripts: [{ name: 's', content: 'x' }] } } }), ['helper']);
+    assert.deepEqual(presentParts({ data: { extensions: { LittleWhiteBox: { a: 1 } } } }), ['xiaobaix']);
+    // an edited task script comes back in its place
+    const edited = decodeCharacter(card);
+    edited['xiaobaix/tasks/01-开场任务.txt'] = '/echo changed';
+    assert.equal(encodeCharacter(edited).data.extensions['xiaobaix-tasks'].tasks[0].commands, '/echo changed');
+});
+
+test('older layouts map to today\'s parts', () => {
+    assert.deepEqual(migrateExclude(['scripts', 'regex'], 4), ['regex', 'xiaobaix', 'helper']);
+    assert.deepEqual(migrateExclude(['variables'], 4), ['xiaobaix'], 'variables alone was never left out of the editor');
+    assert.deepEqual(migrateExclude(['fields'], 3), ['xiaobaix']);
+    assert.deepEqual(migrateExclude(undefined, 4), ['xiaobaix'], 'Xiaobai X data stays in card.json until extracted');
+    assert.deepEqual(migrateExclude(['helper'], 5), ['helper']);
+});
+
 test('omitParts leaves out the parts that are not extracted; restoreParts puts them back in place', () => {
     const v2 = { ...structuredClone(card), first_mes: card.data.first_mes };
     v2.data.character_book = { entries: [{ keys: ['k'], content: 'c' }] };
     v2.data.extensions.depth_prompt = { prompt: 'p', depth: 4 };
-    const { data, omitted } = omitParts(v2, ['greetings', 'regex', 'scripts', 'variables', 'character_book']);
-    assert.deepEqual(omitted, ['greetings', 'regex', 'scripts', 'character_book']);
+    const { data, omitted } = omitParts(v2, [...CHARACTER_PARTS]);
+    assert.deepEqual(omitted, ['greetings', 'regex', 'xiaobaix', 'helper', 'character_book']);
     for (const key of ['first_mes', 'alternate_greetings', 'character_book']) assert.equal(key in data.data, false, key);
     assert.equal('first_mes' in data, false);
-    assert.deepEqual(Object.keys(data.data.extensions), ['xiaobaix-template', 'depth_prompt']);
+    assert.deepEqual(Object.keys(data.data.extensions), ['depth_prompt']);
     assert.equal(data.data.description, 'desc');
 
     data.data.description = 'edited';
@@ -69,13 +98,13 @@ test('editor data: a character loads without the parts that are not extracted an
     const root = await mkdtemp(join(tmpdir(), 'cellar-extract-'));
     try {
         const ws = await Workspace.init(join(root, 'ws'));
-        const item = { path: 'characters/A', kind: 'character', bindings: {}, layout: { exclude: ['regex', 'scripts'] } };
+        const item = { path: 'characters/A', kind: 'character', bindings: {}, layout: { exclude: ['regex', 'helper'] } };
         ws.manifest.items.push(item);
         await ws.writeItemFiles(item.path, decodeCharacter(card, { exclude: item.layout.exclude }), CODECS.character.owns);
         const engine = new SyncEngine({ workspace: ws, targets: new TargetRegistry() });
 
         const r = await engine.readItemData(item.path);
-        assert.deepEqual(r.omitted, ['regex', 'scripts']);
+        assert.deepEqual(r.omitted, ['regex', 'helper']);
         assert.equal(r.data.data.extensions.regex_scripts, undefined);
         assert.equal(r.data.data.extensions.tavern_helper, undefined);
         r.data.data.first_mes = 'new opening';
@@ -89,7 +118,7 @@ test('editor data: a character loads without the parts that are not extracted an
     }
 });
 
-test('startup drops the retired "fields" part and re-lays out older items without changing the hash', async () => {
+test('startup maps retired parts and re-lays out older items without changing the hash', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cellar-retired-'));
     try {
         const ws = await Workspace.init(join(root, 'ws'));
@@ -110,10 +139,11 @@ test('startup drops the retired "fields" part and re-lays out older items withou
         const before = await engine.encodeItem(item);
 
         await engine.upgradeLayouts();
-        assert.deepEqual(item.layout, { exclude: ['regex'] });
+        assert.deepEqual(item.layout, { exclude: ['regex', 'xiaobaix'] });
         const files = await ws.readItemFiles(item.path);
         assert.ok(files['description.md'] && files['first_mes.md']);
-        assert.equal(JSON.parse(files['cellar-item.json']).codec, 4);
+        assert.equal(Object.keys(files).some(f => f.startsWith('xiaobaix/')), false, 'Xiaobai X data back in card.json');
+        assert.equal(JSON.parse(files['cellar-item.json']).codec, 5);
         assert.equal((await engine.encodeItem(item)).hash, before.hash);
     } finally {
         await rm(root, { recursive: true, force: true });
@@ -130,12 +160,12 @@ test('setLayout re-lays out files without changing the content hash, and rejects
         const engine = new SyncEngine({ workspace: ws, targets: new TargetRegistry() });
         const before = await engine.encodeItem(item);
 
-        await engine.setLayout(item.path, { exclude: ['regex', 'scripts'] });
+        await engine.setLayout(item.path, { exclude: ['regex', 'helper'] });
         let files = await ws.readItemFiles(item.path);
-        assert.equal(Object.keys(files).some(f => f.startsWith('regex/') || f.startsWith('scripts/')), false);
-        assert.ok(files['variables.json']);
+        assert.equal(Object.keys(files).some(f => f.startsWith('regex/') || f.startsWith('scripts/') || f === 'variables.json'), false);
+        assert.ok(files['xiaobaix/template.html']);
         assert.equal((await engine.encodeItem(item)).hash, before.hash);
-        assert.deepEqual(item.layout, { exclude: ['regex', 'scripts'] });
+        assert.deepEqual(item.layout, { exclude: ['regex', 'helper'] });
 
         await engine.setLayout(item.path, { exclude: [] });
         files = await ws.readItemFiles(item.path);
@@ -145,6 +175,7 @@ test('setLayout re-lays out files without changing the content hash, and rejects
 
         await assert.rejects(engine.setLayout(item.path, { exclude: ['bogus'] }), /Unknown parts/);
         await assert.rejects(engine.setLayout(item.path, { exclude: ['fields'] }), /Unknown parts/);
+        await assert.rejects(engine.setLayout(item.path, { exclude: ['scripts'] }), /Unknown parts/);
     } finally {
         await rm(root, { recursive: true, force: true });
     }
@@ -161,7 +192,7 @@ test('item files: list, read and write split files with a hash guard; the item i
 
         const { files } = await engine.itemFiles(item.path);
         const rels = files.map(f => f.rel);
-        assert.ok(rels.includes('regex/01-r.replace.txt') && rels.includes('scripts/01-MVU.js') && rels.includes('variables.json'), rels.join());
+        assert.ok(rels.includes('regex/01-r.replace.txt') && rels.includes('scripts/01-MVU.js') && rels.includes('variables.json') && rels.includes('xiaobaix/tasks/01-开场任务.txt'), rels.join());
         assert.equal(files.find(f => f.rel === 'cellar-item.json').readOnly, true);
 
         const r = await engine.readItemFile(item.path, { file: 'regex/01-r.replace.txt' });

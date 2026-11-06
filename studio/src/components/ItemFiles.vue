@@ -25,6 +25,7 @@ const FOLDERS = {
   alternate_greetings: '其他开场',
   character_book: '内嵌世界书',
   regex: '角色正则',
+  xiaobaix: '小白X脚本及变量',
   scripts: '酒馆助手脚本',
   entries: '条目',
   prompts: '提示词'

@@ -297,6 +297,22 @@ export class Workspace {
             return undefined;
         }
     }
+
+    /** A workspace file outside the items (e.g. workshop/prompts.json, see docs/workspace-format.md); null if missing. */
+    async readExtraFile(rel) {
+        try {
+            return await readFile(join(this.root, ...rel.split('/')), 'utf8');
+        } catch (error) {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+        }
+    }
+
+    async writeExtraFile(rel, content) {
+        const abs = join(this.root, ...rel.split('/'));
+        await mkdir(dirname(abs), { recursive: true });
+        await atomicWrite(abs, content);
+    }
 }
 
 /** Dotfiles, temp files and editor backups are never part of an item. */

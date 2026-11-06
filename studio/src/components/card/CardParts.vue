@@ -8,7 +8,7 @@ import Icon from '../Icon.vue';
 import { api, errorText } from '../../api.js';
 import { useApp } from '../../stores/app.js';
 import { useUi } from '../../stores/ui.js';
-import { CARD_PARTS, BASE_SECTIONS, extractedOf, excludeFor } from '../../lib/cardParts.js';
+import { BASE_SECTIONS, extractedOf, excludeFor, partsOf } from '../../lib/cardParts.js';
 
 const props = defineProps({ item: { type: Object, required: true } });
 const app = useApp();
@@ -23,6 +23,8 @@ const FRAMEWORK = {
 const frameworks = computed(() => (props.item.frameworks || []).map((f) => ({ ...f, ...(FRAMEWORK[f.id] || { name: f.name, need: '' }) })));
 
 const extracted = computed(() => extractedOf(props.item));
+/** 小白X / 酒馆助手 appear only when the card has such data. */
+const parts = computed(() => partsOf(props.item));
 const busy = ref('');
 
 /** Where an extracted part is edited: its editor page, or its files. */
@@ -81,7 +83,7 @@ async function takeWorld() {
     <h4 class="parts-h">文件提取<button class="btn sm ghost" type="button" title="在编辑器中查看、编辑这些文件" @click="ui.setItemView(item.path, 'files')"><Icon name="file" size="sm" />查看文件</button></h4>
     <div class="faint parts-hint">勾选要编辑的部分。没勾选的留在 card.json 里，编辑器不加载，同步时原样保留。只移动文件，不改变内容和同步状态。</div>
     <div class="faint parts-hint">始终提取：{{ BASE_SECTIONS }}</div>
-    <label v-for="p in CARD_PARTS" :key="p.id" class="check parts-row" :title="p.tip">
+    <label v-for="p in parts" :key="p.id" class="check parts-row" :title="p.tip">
       <input type="checkbox" :checked="extracted.has(p.id)" :disabled="!!busy || !!item.error" @change="toggle(p.id, $event.target.checked)" />
       <span class="grow">{{ p.label }}</span>
       <Icon v-if="busy === p.id" name="spin" size="sm" />

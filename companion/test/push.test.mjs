@@ -116,7 +116,7 @@ test('pulling from a pinned tavern merges its edits since the version into the w
     const b = await binding('tt-target');
     assert.equal(b.pinned, undefined, 'follows the workspace again');
     const h = ok(await api('/api/history', {}));
-    assert.match(h.versions[0].message, /^来自 Fake tt：合并/);
+    assert.equal(h.versions[0].draft, true, 'the pulled edit joins the draft');
 });
 
 test('follow ends a pin; an auto-sync binding syncs right away', async () => {

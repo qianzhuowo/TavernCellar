@@ -111,6 +111,7 @@ backups/
 /lorebooks/
 /regex/
 /presets/
+/workshop/
 /cellar.json
 /data/
 *.jsonl
@@ -138,4 +139,4 @@ __uninstaller*
 /*-home/
 /*-ws/
 /debug/
-/ui*shots/
+/*shots/

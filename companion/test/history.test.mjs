@@ -44,7 +44,7 @@ after(async () => {
     await rm(dir, { recursive: true, force: true });
 });
 
-test('the workspace starts its history; checkout is its own version and the binding is deployed at it', async () => {
+test('the workspace starts its history; a checkout goes into the draft, deployed there, until the user records it', async () => {
     let h = await history();
     // Connecting the tavern recorded it in cellar.json: that is a draft change, but not an item change.
     assert.equal(h.versions.at(-1).message, '开始版本记录');
@@ -52,10 +52,17 @@ test('the workspace starts its history; checkout is its own version and the bind
     const co = await api('/api/checkout', { kind: 'character', id: 'Alice.png' });
     assert.equal(co.ok, true, JSON.stringify(co));
     h = await history();
-    assert.equal(h.versions[0].message, '从 Fake st 取出 characters/Alice');
-    assert.equal(h.draft.id, null);
+    assert.equal(h.versions[0].draft, true, 'no version of its own');
+    assert.equal(h.versions[1].message, '开始版本记录');
+    assert.ok(h.draft.items.includes('characters/Alice'));
     assert.deepEqual(h.deployed.map(d => [d.path, d.rev]), [['characters/Alice', h.versions[0].id]]);
     assert.equal(await deployedRev(), h.versions[0].id);
+    const rec = await api('/api/history/commit', { message: '取出 Alice' });
+    assert.equal(rec.ok, true, JSON.stringify(rec));
+    h = await history();
+    assert.equal(h.draft.id, null);
+    assert.equal(h.deployed[0].shownAt, rec.result.id, 'the deployed draft is shown on the version it became');
+    assert.equal(h.deployed[0].earlier, undefined);
 });
 
 test('edit -> record version -> sync: the deployed pointer follows; syncing an unrecorded draft deploys the draft', async () => {
@@ -89,20 +96,23 @@ test('edit -> record version -> sync: the deployed pointer follows; syncing an u
     assert.equal(h.deployed[0].earlier, true);
 });
 
-test('a tavern edit becomes its own version after the user\'s draft', async () => {
+test('a tavern edit joins the user\'s draft instead of ending it', async () => {
     await writeFile(desc(), 'v3 draft');
+    const count = (await history()).versions.length;
     await tavern.edit('character', 'Alice.png', d => { d.data.personality = 'from tavern'; });
-    await until(async () => (await history()).versions[0].message.startsWith('来自 Fake st'));
+    const personality = async h => (await api('/api/history/diff', { from: h.versions[1].id, to: h.versions[0].id })).result.items[0]?.slots.find(s => s.slot === 'data.personality')?.to.value;
+    await until(async () => (await personality(await history())) === 'from tavern');
     const h = await history();
-    assert.equal(h.versions[0].message, '来自 Fake st：取回 characters/Alice');
-    assert.equal(h.versions[1].message, '草稿说明', 'the draft was finished first, not mixed with the tavern edit');
-    assert.equal(h.draft.id, null);
+    assert.equal(h.versions.length, count, 'no new version');
+    assert.equal(h.versions[0].draft, true);
+    assert.equal(h.versions[0].message, '草稿说明', 'the draft keeps its description');
     assert.equal(await deployedRev(), h.versions[0].id);
+    assert.equal((await api('/api/history/commit', { message: '酒馆改了性格' })).ok, true);
 });
 
 test('field-level diff between versions and restoring an old version, then syncing it', async () => {
     const h = await history({ path: 'characters/Alice' });
-    const checkout = h.versions.find(v => v.message.startsWith('从 '));
+    const checkout = h.versions.find(v => v.message === '取出 Alice');
     const diff = (await api('/api/history/diff', { from: checkout.id, to: h.versions[0].id })).result;
     const alice = diff.items.find(i => i.path === 'characters/Alice');
     const bySlot = Object.fromEntries(alice.slots.map(s => [s.slot, s]));
@@ -123,7 +133,7 @@ test('field-level diff between versions and restoring an old version, then synci
     assert.equal(await deployedRev(), (await history()).versions[0].id);
 });
 
-test('a sync that merges tavern edits records them as their own version after the user\'s draft', async () => {
+test('a sync that merges tavern edits puts them into the draft with the user\'s edit', async () => {
     await writeFile(desc(), 'local edit before merge');
     // The tavern changed another field without telling us (e.g. edited while the companion was not running).
     const current = structuredClone(tavern.store.character.get('Alice.png'));
@@ -132,9 +142,9 @@ test('a sync that merges tavern edits records them as their own version after th
     const r = await api('/api/sync', { path: 'characters/Alice' });
     assert.equal(r.result.result, 'merged', JSON.stringify(r));
     const h = await history();
-    assert.equal(h.versions[0].message, '来自 Fake st：合并 characters/Alice');
-    const tavernPart = (await api('/api/history/diff', { from: h.versions[1].id, to: h.versions[0].id })).result.items[0].slots.map(s => s.slot);
-    assert.deepEqual(tavernPart, ['data.scenario'], 'the merge version holds only the tavern edit');
+    assert.equal(h.versions[0].draft, true);
+    const slots = (await api('/api/history/diff', { from: h.versions[1].id, to: h.versions[0].id })).result.items[0].slots.map(s => s.slot);
+    assert.ok(slots.includes('data.scenario') && slots.includes('data.description'), 'one draft holds both sides');
     assert.equal(await deployedRev(), h.versions[0].id);
     assert.equal(tavern.store.character.get('Alice.png').data.description, 'local edit before merge');
 });
@@ -142,7 +152,10 @@ test('a sync that merges tavern edits records them as their own version after th
 test('tags; unknown versions and items are reported', async () => {
     const tag = await api('/api/history/tag', { name: 'v1.0' });
     assert.equal(tag.ok, true, JSON.stringify(tag));
-    assert.deepEqual((await history()).versions[0].tags, ['v1.0']);
+    const h = await history();
+    assert.deepEqual(h.versions[0].tags, ['v1.0']);
+    assert.equal(h.versions[0].draft, false, 'tagging the draft records it');
+    assert.equal(h.draft.id, null);
     assert.equal((await api('/api/history/tag', { name: 'v1.0' })).error.code, 'bad_request');
     assert.equal((await api('/api/history/tag', { name: 'has space' })).error.code, 'bad_request');
     assert.equal((await api('/api/history/diff', { from: 'nope' })).error.code, 'not_found');
@@ -152,4 +165,29 @@ test('tags; unknown versions and items are reported', async () => {
 test('unbinding drops the deployed pointer', async () => {
     await api('/api/unbind', { path: 'characters/Alice' });
     assert.deepEqual((await history()).deployed, []);
+});
+
+test('预设工坊: an item as of a version, and the prompt collection guarded by its hash', async () => {
+    const h = await history();
+    const first = h.versions.at(-1).id; // 开始版本记录: no items yet
+    const now = await api('/api/history/item', { rev: 'HEAD', path: 'characters/Alice' });
+    assert.equal(now.ok, true, JSON.stringify(now));
+    assert.equal(now.result.kind, 'character');
+    assert.equal(typeof now.result.data.data.name, 'string');
+    assert.equal((await api('/api/history/item', { rev: first, path: 'characters/Alice' })).error.code, 'not_found');
+    assert.equal((await api('/api/history/item', { rev: 'HEAD', path: 'nowhere/x' })).error.code, 'bad_request');
+
+    const put = async body => (await fetch(`http://127.0.0.1:${server.port}/api/workshop/collection`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body),
+    })).json();
+    const empty = (await api('/api/workshop/collection', {})).result;
+    assert.deepEqual(empty.collection, { version: 1, prompts: [] });
+    const collection = { version: 1, prompts: [{ id: 'a', title: '文风', prompt: { identifier: 'x', name: '文风', content: '短句' } }] };
+    const w = await put({ collection, hash: empty.hash });
+    assert.equal(w.ok, true, JSON.stringify(w));
+    assert.equal((await put({ collection, hash: empty.hash })).error.code, 'conflict', 'stale hash');
+    assert.equal((await put({ collection: { prompts: [1] }, hash: w.result.hash })).error.code, 'bad_request');
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'workshop', 'prompts.json'), 'utf8')), collection);
+    const back = (await api('/api/workshop/collection', {})).result;
+    assert.equal(back.hash, w.result.hash);
 });

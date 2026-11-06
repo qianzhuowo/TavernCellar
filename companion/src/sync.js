@@ -11,7 +11,7 @@
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError, assertItemRef, parsePresetId } from '../../shared/protocol.js';
 import { CODECS, codecFor } from './codec/index.js';
-import { CHARACTER_PARTS, RETIRED_PARTS, META_FILE as ITEM_META_FILE, omitParts, restoreParts } from './codec/character.js';
+import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE, migrateExclude, omitParts, presentParts, restoreParts } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
 import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
 
@@ -24,6 +24,9 @@ function linkedWorldName(card) {
     return typeof name === 'string' && name.trim() ? name : undefined;
 }
 import { diffPaths } from './codec/object-path.js';
+
+/** 预设工坊's saved prompts: a workspace file outside the items, versioned with them. */
+export const COLLECTION_FILE = 'workshop/prompts.json';
 
 const ENTRY_TEMPLATE = 'worldinfo-entry';
 
@@ -254,24 +257,24 @@ export class SyncEngine {
                 const codec = codecFor(item.kind);
                 let version = 0;
                 try { version = JSON.parse(files?.['cellar-item.json'] ?? '{}').codec ?? 0; } catch { return; }
-                const retired = (item.layout?.exclude ?? []).filter(p => RETIRED_PARTS.includes(p));
-                if (!files || (version >= codec.version && !retired.length)) return;
+                if (!files || version >= codec.version) return;
                 const previous = item.layout;
+                // Characters: part ids of the old codec -> today's (see migrateExclude).
+                const exclude = item.kind === 'character' ? migrateExclude(item.layout?.exclude, version) : null;
                 let before = null;
                 try {
                     before = await this.encodeItem(item);
-                    if (retired.length) {
-                        const exclude = item.layout.exclude.filter(p => !RETIRED_PARTS.includes(p));
+                    if (exclude) {
                         if (exclude.length) item.layout = { ...item.layout, exclude };
                         else delete item.layout;
                     }
                     const hash = await this.writeItem(item, before.data);
                     if (hash !== before.hash) throw new Error('content changed during re-layout');
-                    if (retired.length) manifestChanged = true;
+                    if (exclude) manifestChanged = true;
                     this.log(`upgraded layout of ${item.path} (codec ${version} -> ${codec.version})`);
                 } catch (error) {
                     if (previous) item.layout = previous;
-                    if (before && retired.length) await this.writeItem(item, before.data).catch(() => {});
+                    if (before && exclude) await this.writeItem(item, before.data).catch(() => {});
                     this.log(`could not upgrade layout of ${item.path}: ${error.message}`);
                 }
             });
@@ -417,13 +420,12 @@ export class SyncEngine {
         const path = this.ws.allocateItemPath(kind, id);
         const item = { path, kind, bindings: { [target.id]: { id, autoSync: false } }, ...(exclude?.length ? { layout: { exclude } } : {}) };
         return this.withLock(path, async () => {
-            await this.#beforeExternal();
             this.ws.manifest.items.push(item);
             const written = await this.writeItem(item, remote.data);
             await this.#agree(item, target.id, remote.data, remote.hash);
             await this.ws.saveManifest();
             await this.ws.saveState();
-            await this.#deployed(item, target.id, 'checkout');
+            await this.#deployed(item, target.id);
             await this.pushWatchList(target.id);
             const warnings = [];
             if (written !== remote.hash) {
@@ -482,7 +484,7 @@ export class SyncEngine {
         // Kept until the next agreement so the sync matrix can show them (e.g. fields the tavern kept).
         if (warnings.length) this.ws.setSyncState(item.path, targetId, { warnings, warnedAt: new Date().toISOString() });
         await this.ws.saveState();
-        await this.#deployed(item, targetId, 'sync');
+        await this.#deployed(item, targetId);
         this.log(`synced ${item.path} -> ${targetId}${warnings.length ? ` (${warnings.length} warning(s))` : ''}`);
         return { path: item.path, target: targetId, result: 'synced', hash: result.hash, warnings };
     }
@@ -501,7 +503,7 @@ export class SyncEngine {
         if (local && local.hash === remote.hash) {
             await this.#agree(item, targetId, remote.data, remote.hash);
             await this.ws.saveState();
-            await this.#deployed(item, targetId, 'sync');
+            await this.#deployed(item, targetId);
             return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash };
         }
         const base = await this.ws.loadBase(item.path, targetId);
@@ -509,10 +511,9 @@ export class SyncEngine {
         const baseUsable = local && base !== undefined && (await hashData(base)) === (state.mergeBase ?? state.base);
         const { data, conflicts, base: nextBase } = baseUsable ? merge3(item.kind, base, local.data, remote.data) : { data: local?.data, conflicts: ['*'] };
         if (baseUsable && (await hashData(data)) !== local.hash) {
-            // Tavern edits come into the workspace: the user's draft is finished first, the tavern part is a version of its own.
-            await this.#beforeExternal();
+            // Tavern edits come into the workspace and join the draft like any other change (docs/versioning.md §2).
             await this.writeItem(item, data);
-            await this.#recordExternal(item, targetId);
+            await this.#draftChanged();
         }
         if (conflicts.length) {
             if (baseUsable) {
@@ -527,7 +528,7 @@ export class SyncEngine {
         await this.ws.saveState();
         this.log(`merged ${item.path} with ${targetId}`);
         const mergedHash = await hashData(data);
-        if (mergedHash === remote.hash) await this.#deployed(item, targetId, 'pull');
+        if (mergedHash === remote.hash) await this.#deployed(item, targetId);
         if (mergedHash === remote.hash || !push) return { path: item.path, target: targetId, result: 'merged', hash: mergedHash, pending: mergedHash !== remote.hash };
         const pushed = await this.#syncLocked(item, targetId, binding, link, false, attempt);
         return { ...pushed, result: 'merged', merged: true };
@@ -552,7 +553,6 @@ export class SyncEngine {
                 if (remote.hash === state.base && !force) return { path: item.path, target: targetId, result: 'up-to-date', hash: remote.hash, pinned: binding.pin };
                 await this.#unpin(item, targetId);
             }
-            await this.#beforeExternal();
             const state = this.ws.getSyncState(item.path, targetId) ?? {};
             const local = await this.encodeItem(item).catch(() => null); // unreadable files count as local changes
             if (!force && local?.hash !== state.base) {
@@ -564,7 +564,7 @@ export class SyncEngine {
             await this.writeItem(item, remote.data);
             await this.#agree(item, targetId, remote.data, remote.hash);
             await this.ws.saveState();
-            await this.#deployed(item, targetId, 'pull');
+            await this.#deployed(item, targetId);
             this.log(`pulled ${item.path} <- ${targetId}`);
             return { path: item.path, target: targetId, result: 'pulled', hash: remote.hash };
         });
@@ -642,7 +642,7 @@ export class SyncEngine {
             if (local && local.hash === remote.hash) {
                 await this.#agree(item, target.id, remote.data, remote.hash);
                 await this.ws.saveState();
-                await this.#deployed(item, target.id, 'sync');
+                await this.#deployed(item, target.id);
                 this.log('bound ' + item.path + ' to ' + target.id + ' (' + id + '), in sync');
                 return { path: item.path, target: target.id, result: 'in-sync', hash: remote.hash };
             }
@@ -675,12 +675,11 @@ export class SyncEngine {
                 this.log(`tavern change on pinned ${item.path} <- ${targetId}: kept in the tavern, not pulled`);
                 return;
             }
-            await this.#beforeExternal();
             if (local && local.hash === state.base) {
                 await this.writeItem(item, remote.data);
                 await this.#agree(item, targetId, remote.data, remote.hash);
                 await this.ws.saveState();
-                await this.#deployed(item, targetId, 'pull');
+                await this.#deployed(item, targetId);
                 this.log(`tavern change pulled: ${item.path} <- ${targetId}`);
             } else {
                 // Both sides changed: merge; auto-sync items push the merge back right away.
@@ -835,18 +834,14 @@ export class SyncEngine {
     }
 
     /**
-     * Workspace and tavern now hold the same data: record it and point the deployed ref at that version.
-     * 'sync' keeps it in the draft; 'pull' / 'checkout' record a version of their own. History problems are logged,
-     * never fail the sync.
+     * Workspace and tavern now hold the same data: snapshot it into the draft and point the deployed ref there.
+     * Checkouts, pulls and merges are ordinary draft changes: only the user ends a draft (记录版本 / 打标签), as in
+     * jj. History problems are logged, never fail the sync.
      */
-    async #deployed(item, targetId, how) {
+    async #deployed(item, targetId) {
         try {
             const vcs = await this.versions();
-            const label = this.#targetLabel(targetId);
-            let oid = how === 'pull' ? await vcs.record(`来自 ${label}：取回 ${item.path}`)
-                : how === 'checkout' ? await vcs.record(`从 ${label} 取出 ${item.path}`)
-                    : await vcs.snapshot();
-            oid ??= await vcs.resolve('HEAD');
+            const oid = (await vcs.snapshot()) ?? await vcs.resolve('HEAD');
             await vcs.setDeployed(targetId, item.path, oid);
             this.onHistory();
         } catch (error) {
@@ -854,19 +849,10 @@ export class SyncEngine {
         }
     }
 
-    /** Before tavern content is written into the workspace: the user's draft becomes a version of its own. */
-    async #beforeExternal() {
+    /** Tavern edits merged into the workspace (not yet agreed with the tavern as a whole): into the draft. */
+    async #draftChanged() {
         try {
-            await (await this.versions()).endDraft();
-        } catch (error) {
-            this.log(`version history: ${error.message}`);
-        }
-    }
-
-    /** Tavern edits merged into the workspace (not yet agreed with the tavern as a whole): their own version. */
-    async #recordExternal(item, targetId) {
-        try {
-            await (await this.versions()).record(`来自 ${this.#targetLabel(targetId)}：合并 ${item.path}`);
+            await (await this.versions()).snapshot();
             this.onHistory();
         } catch (error) {
             this.log(`version history: ${error.message}`);
@@ -993,6 +979,46 @@ export class SyncEngine {
         return { from: fromId, to: toId, items };
     }
 
+    /** One item's data as it was in a version (预设工坊 compares it with the workspace). */
+    async itemAtVersion({ rev, path } = {}) {
+        if (typeof path !== 'string' || !path) throw new ProtocolError(ERR.BAD_REQUEST, 'path is required');
+        const kind = this.ws.getItem(path)?.kind ?? Object.entries(CODECS).find(([, c]) => path.startsWith(`${c.folder}/`))?.[0];
+        if (!kind) throw new ProtocolError(ERR.BAD_REQUEST, `${path} 不是资料项路径`);
+        const vcs = await this.versions();
+        let id;
+        try { id = await vcs.resolve(rev ?? 'HEAD'); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
+        const at = await this.#dataAt(vcs, id, path, kind);
+        if (!at.present) throw new ProtocolError(ERR.NOT_FOUND, `${path} 在版本 ${id.slice(0, 8)} 中不存在`);
+        if (at.error) throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${at.error}`);
+        return { rev: id, path, kind, data: at.data };
+    }
+
+    // ---- 预设工坊 prompt collection (workshop/prompts.json, docs/workspace-format.md) -------------------------
+
+    /** The saved prompts; `hash` guards the next write. */
+    async readCollection() {
+        const text = await this.ws.readExtraFile(COLLECTION_FILE);
+        let collection = { version: 1, prompts: [] };
+        if (text !== null) {
+            try { collection = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (error) { throw new ProtocolError(ERR.BAD_REQUEST, `${COLLECTION_FILE}: invalid JSON (${error.message})`); }
+        }
+        return { collection, hash: await hashData(collection) };
+    }
+
+    /** Replaces the collection; refused (conflict) when it changed since `hash` was read. */
+    async writeCollection({ collection, hash } = {}) {
+        const ok = collection && typeof collection === 'object' && !Array.isArray(collection) && Array.isArray(collection.prompts)
+            && collection.prompts.every(x => x && typeof x === 'object' && x.prompt && typeof x.prompt === 'object' && !Array.isArray(x.prompt));
+        if (!ok) throw new ProtocolError(ERR.BAD_REQUEST, 'collection must be { prompts: [{ prompt: {...} }] }');
+        return this.withLock(COLLECTION_FILE, async () => {
+            const current = await this.readCollection();
+            if (hash !== current.hash) throw new ProtocolError(ERR.CONFLICT, '收藏在别处被修改，请重新加载');
+            await this.ws.writeExtraFile(COLLECTION_FILE, JSON.stringify(collection, null, 2) + '\n');
+            this.scheduleSnapshot();
+            return { hash: await hashData(collection) };
+        });
+    }
+
     /**
      * Puts an item's files back as they were in a version (the user's other files in the folder stay). Nothing is
      * sent: the item then shows local changes and syncs the usual way (auto-sync items right away).
@@ -1109,6 +1135,7 @@ export class SyncEngine {
         for (const item of this.ws.manifest.items) {
             let localHash = null;
             let frameworks;
+            let parts;
             let world;
             let error;
             try {
@@ -1116,6 +1143,7 @@ export class SyncEngine {
                 localHash = local.hash;
                 if (item.kind === 'character') {
                     frameworks = detectFrameworks(local.data);
+                    parts = presentParts(local.data);
                     const name = linkedWorldName(local.data);
                     if (name) {
                         const targetId = Object.keys(item.bindings ?? {})[0];
@@ -1164,7 +1192,7 @@ export class SyncEngine {
                     ...(state.warnings?.length ? { warnings: state.warnings, warnedAt: state.warnedAt } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(world ? { world } : {}) });
+            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(parts ? { parts } : {}), ...(world ? { world } : {}) });
         }
         return {
             workspace: this.ws.root,

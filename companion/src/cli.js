@@ -35,7 +35,7 @@ const USAGE = `TavernCellar 伴侣程序
                                         取出到工作区（角色 id 为头像文件名，如 Alice.png）
                                         --with-world 一起取出角色绑定的世界书；--keep 见 cellar layout
   cellar layout <项路径> [--keep 部分,部分]   角色卡文件提取：--keep 列出不提取、留在 card.json 的部分（不写 = 全部提取）
-                                        部分: ${CHARACTER_PARTS.join(', ')}（greetings = 第一条消息 + 其他开场；
+                                        部分: ${CHARACTER_PARTS.join(', ')}（greetings = 第一条消息 + 其他开场；xiaobaix = 小白X，helper = 酒馆助手；
                                         描述、设定等基础字段始终提取）
   cellar sync <项路径> [--target ID] [--force]    把工作区修改同步到酒馆
   cellar pull <项路径> [--target ID] [--force]    把酒馆中的内容取回工作区
@@ -76,7 +76,7 @@ function parseArgs(argv) {
     return { positional, flags };
 }
 
-/** `--keep regex,scripts` -> ['regex', 'scripts']; the companion rejects unknown names. */
+/** `--keep regex,helper` -> ['regex', 'helper']; the companion rejects unknown names. */
 function parseParts(value) {
     if (value === true) return [];
     return String(value).split(',').map(s => s.trim()).filter(Boolean);

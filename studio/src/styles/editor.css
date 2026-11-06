@@ -16,6 +16,7 @@
 
 /* ---------- top bar: path + save state ---------- */
 .ce-bar { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-xs); margin-bottom: calc(-1 * var(--sp-3)); }
+.ce-hist { width: 24px; height: 24px; margin-right: calc(-1 * var(--sp-2)); flex: none; }
 .ce-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ce-save { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); white-space: nowrap; }
 .ce-save.busy { color: var(--text-2); }

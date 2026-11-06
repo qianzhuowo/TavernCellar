@@ -15,6 +15,7 @@ const acts = computed(() => [
   { key: 'library', icon: 'library', tip: '资料库', href: libraryHref(app.itemKind(pathOfKey(ui.route.key))) },
   { key: 'sync', icon: 'sync', tip: '同步', href: '#/sync', dot: app.conflictCount },
   { key: 'preview', icon: 'eye', tip: '预览', href: '#/preview' },
+  { key: 'workshop', icon: 'workshop', tip: '预设工坊', href: '#/workshop' },
   { key: 'history', icon: 'history', tip: '历史', href: '#/history' }
 ]);
 

@@ -7,17 +7,17 @@ const ls = {
 };
 
 /**
- * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history  #/preview  #/settings[/<section>]  #/wizard
+ * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history[/<encoded item path>]  #/workshop  #/preview  #/settings[/<section>]  #/wizard
  * Tab keys: 'item:<path>' | 'conflict:<path>' — only documents open as tabs; the activity-bar pages (资料库, 同步, 预览,
- * 历史, 设置) are switched from the activity bar and never become tabs.
+ * 预设工坊, 历史, 设置) are switched from the activity bar and never become tabs.
  */
 export function parseHash(/** @type {string} */ hash) {
   const h = hash.replace(/^#\/?/, '');
   const [name, ...rest] = h.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
   if ((name === 'item' || name === 'conflict') && arg) return { name, arg, key: name + ':' + arg };
-  if (['sync', 'history', 'preview', 'wizard'].includes(name)) return { name, arg: '', key: name };
-  if (name === 'settings' || name === 'library') return { name, arg, key: name };
+  if (['sync', 'preview', 'workshop', 'wizard'].includes(name)) return { name, arg: '', key: name };
+  if (name === 'settings' || name === 'library' || name === 'history') return { name, arg, key: name };
   return { name: 'library', arg: '', key: 'library' };
 }
 
@@ -29,6 +29,9 @@ export const hrefOf = (/** @type {string} */ key) => {
   const m = /^(item|conflict):(.*)$/s.exec(key);
   return m ? `#/${m[1]}/` + encodeURIComponent(m[2]) : '#/' + key;
 };
+
+/** Version history, optionally showing only one item. */
+export const historyHref = (/** @type {string} */ path = '') => (path ? '#/history/' + encodeURIComponent(path) : '#/history');
 
 let toastSeq = 0;
 

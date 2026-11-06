@@ -135,7 +135,9 @@
 
 /* ---------- history ---------- */
 /* version history (HistoryPage.vue) */
-.vh-filter { min-width: 180px; }
+/* the item switcher sits on top of the timeline it filters */
+.vh-side { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.vh-filter { width: 100%; }
 .vh-draft { padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-4); border-color: var(--accent); }
 .vh-draft.empty { border-color: var(--line); }
 .vh-draft-h { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }

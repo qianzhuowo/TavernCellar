@@ -4,7 +4,8 @@
  */
 import { deepClone, getPath, hasPath, isPlainObject, setPath, unsetPath } from './object-path.js';
 import { needsRaw, normalizeText } from './text.js';
-import { HELPER_PATH, LEGACY_SCRIPTS_PATH, REGEX_PATH, joinParts, ownsPartFile, splitParts } from './character-parts.js';
+import { HELPER_PATH, LEGACY_SCRIPTS_PATH, REGEX_PATH, hasHelper, joinParts, ownsPartFile, splitParts } from './character-parts.js';
+import { XB_TASKS_PATH, XB_TEMPLATE_PATH, XB_VARIABLES_PATH, hasXiaobaix, joinXiaobaix, ownsXiaobaixFile, splitXiaobaix } from './character-xiaobaix.js';
 import { joinBook, ownsBookFile, splitBook } from './character-book.js';
 
 export const META_FILE = 'cellar-item.json';
@@ -12,8 +13,10 @@ export const CARD_FILE = 'card.json';
 /**
  * 2: regex / Tavern Helper scripts / variables in their own files. 3: embedded character book entries too.
  * 4: "extraction" parts: the base text fields always have their own files; first_mes follows the greetings part.
+ * 5: Tavern Helper scripts + variables are one part ('helper'), extracted only when non-empty; LittleWhiteBox data
+ *    is the new 'xiaobaix' part.
  */
-export const CHARACTER_CODEC_VERSION = 4;
+export const CHARACTER_CODEC_VERSION = 5;
 const CODEC_VERSION = CHARACTER_CODEC_VERSION;
 
 /** Long text fields split into their own files: [file, card path]. */
@@ -49,7 +52,7 @@ const TEXT_FIELD_FILES = new Set(TEXT_FIELDS.map(([file]) => file));
 
 /** True for files the character codec reads or writes (see CODECS.owns). */
 export function ownsCharacterFile(rel) {
-    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel) || ownsBookFile(rel);
+    return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel) || ownsXiaobaixFile(rel) || ownsBookFile(rel);
 }
 
 /**
@@ -59,26 +62,43 @@ export function ownsCharacterFile(rel) {
  * character note, creator metadata, talkativeness) are always extracted.
  *   greetings       first_mes + alternate_greetings (开场白)
  *   regex           data.extensions.regex_scripts
- *   scripts         Tavern Helper scripts
- *   variables       Tavern Helper variables
+ *   xiaobaix        LittleWhiteBox (小白X) tasks, template and variables (character-xiaobaix.js)
+ *   helper          Tavern Helper scripts and variables
  *   character_book  embedded lorebook entries (checkout also takes the lorebook bound in extensions.world)
+ * xiaobaix and helper are optional: a card without such data has nothing to extract (see presentParts).
  */
-export const CHARACTER_PARTS = Object.freeze(['greetings', 'regex', 'scripts', 'variables', 'character_book']);
-/** Part ids of older workspaces that no longer exist (codec <= 3: 'fields' kept every text field in card.json). */
-export const RETIRED_PARTS = Object.freeze(['fields']);
+export const CHARACTER_PARTS = Object.freeze(['greetings', 'regex', 'xiaobaix', 'helper', 'character_book']);
+/** Part ids of older workspaces (codec <= 3 'fields'; codec <= 4 'scripts' / 'variables'), see migrateExclude. */
+export const RETIRED_PARTS = Object.freeze(['fields', 'scripts', 'variables']);
 
-/**
- * Card paths each part covers, for editors that load only the extracted parts. Tavern Helper variables live inside
- * the same object as the scripts and are small, so they are never left out on their own; leaving out the scripts
- * leaves out that whole object.
- */
+/** Card paths each part covers, for editors that load only the extracted parts. */
 const PART_PATHS = Object.freeze({
     greetings: [FIRST_MES_PATH, 'first_mes', GREETINGS_PATH],
     regex: [REGEX_PATH],
-    scripts: [HELPER_PATH, LEGACY_SCRIPTS_PATH],
-    variables: [],
+    xiaobaix: [XB_TASKS_PATH, XB_TEMPLATE_PATH, XB_VARIABLES_PATH],
+    helper: [HELPER_PATH, LEGACY_SCRIPTS_PATH],
     character_book: ['data.character_book'],
 });
+
+/** Optional parts the card actually has data for (Studio shows only those). */
+export function presentParts(card) {
+    return [...(hasXiaobaix(card) ? ['xiaobaix'] : []), ...(hasHelper(card) ? ['helper'] : [])];
+}
+
+/**
+ * Layout `exclude` of an item written by an older codec, in today's part ids. 'scripts' left out -> 'helper' left out
+ * ('variables' alone was never left out of the editor); 'fields' is gone. Before codec 5 LittleWhiteBox data stayed in
+ * card.json, so it stays there (not extracted) unless the user extracts it.
+ */
+export function migrateExclude(exclude, fromCodec) {
+    const out = new Set();
+    for (const part of exclude ?? []) {
+        if (part === 'scripts') out.add('helper');
+        else if (!RETIRED_PARTS.includes(part)) out.add(part);
+    }
+    if (fromCodec < 5) out.add('xiaobaix');
+    return CHARACTER_PARTS.filter(p => out.has(p));
+}
 
 /**
  * The card without the parts that are not extracted. `omitted` names the parts actually left out (a part the card
@@ -180,6 +200,7 @@ export function decodeCharacter(card, { exclude = [] } = {}) {
         unsetPath(rest, GREETINGS_PATH);
     }
 
+    if (!skip.has('xiaobaix')) splitXiaobaix(rest, files, meta);
     splitParts(rest, files, meta, skip);
     if (!skip.has('character_book')) splitBook(rest, files, meta);
 
@@ -213,6 +234,7 @@ export function encodeCharacter(files) {
     }
 
     joinParts(card, files, meta);
+    joinXiaobaix(card, files, meta);
     joinBook(card, files, meta);
 
     for (const top of meta.mirrors ?? []) {

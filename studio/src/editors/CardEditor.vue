@@ -5,7 +5,7 @@ import { ref, shallowRef, computed, watch, toRef, toRaw, onBeforeUnmount, nextTi
 import { Star } from 'lucide-vue-next';
 import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
-import { useUi } from '../stores/ui.js';
+import { useUi, historyHref } from '../stores/ui.js';
 import Avatar from '../components/Avatar.vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
@@ -159,6 +159,8 @@ const scriptCount = computed(() => {
   return Array.isArray(s) ? s.length : 0;
 });
 
+const hasXiaobaix = computed(() => (app.item(props.path)?.parts || []).includes('xiaobaix'));
+
 /** @typedef {{id: string, label: string, adv?: boolean, sub?: boolean, count?: number, greet?: number, file?: string, view?: string}} OutlineItem */
 const outline = computed(() => {
   /** @type {OutlineItem[]} */
@@ -180,7 +182,8 @@ const outline = computed(() => {
   );
   if (extracted.value.has('character_book')) out.push({ id: '', label: world.value ? '世界书 · ' + world.value : '世界书', count: worldPath.value ? undefined : bookCount.value, view: 'world' });
   if (extracted.value.has('regex')) out.push({ id: '', label: '角色正则', count: regexCount.value, view: 'regex' });
-  if (extracted.value.has('scripts') && scriptCount.value) out.push({ id: '', label: '酒馆助手脚本', count: scriptCount.value, file: 'scripts' });
+  if (extracted.value.has('xiaobaix') && hasXiaobaix.value) out.push({ id: '', label: '小白X脚本及变量', file: 'xiaobaix' });
+  if (extracted.value.has('helper') && scriptCount.value) out.push({ id: '', label: '酒馆助手脚本', count: scriptCount.value, file: 'scripts' });
   return out;
 });
 
@@ -242,6 +245,7 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
 
     <template v-else>
       <div class="ce-bar">
+        <button class="icon-btn ce-hist" type="button" title="版本历史：只看这个角色的版本，可对比、恢复" aria-label="版本历史" @click="ui.go(historyHref(path))"><Icon name="history" size="sm" /></button>
         <span class="mono faint ce-path">{{ path }}/</span>
         <span class="ce-save" :class="{ busy: it.saving.value || it.dirty.value }">
           <template v-if="it.saving.value"><Icon name="spin" size="sm" />正在写入…</template>

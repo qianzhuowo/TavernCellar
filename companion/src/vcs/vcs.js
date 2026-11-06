@@ -5,7 +5,8 @@
  *   - The draft `@` is the branch tip marked by refs/cellar/draft. Snapshots amend it (same parent, new tree), so
  *     saving often does not litter the history. Only a commit that is both the draft ref and the branch tip is ever
  *     replaced; anything else (the user's own commits) is left alone and a new draft starts on top.
- *   - "Record a version" (commit) = describe the draft and end it; the next change starts a new draft.
+ *   - "Record a version" (commit) or tagging the draft = end it; the next change starts a new draft. Everything else
+ *     (edits, checkouts, pulls and merges from a tavern, restores) only goes into the draft.
  *   - Deployed pointers refs/cellar/deployed/<target>/<encoded item path> name the version an item was last synced
  *     to a tavern. They are history information only; sync decisions use .cellar/state.json and .cellar/base.
  *
@@ -200,34 +201,26 @@ export class Vcs {
 
     /** "Record a version": describe the draft and end it. Returns the recorded commit, or null when nothing changed. */
     commit(message) {
-        return this.record(message?.trim() || UNDESCRIBED);
-    }
-
-    /** Ends the draft as it is (the next change starts a new one). Snapshots first so nothing on disk is lost. */
-    endDraft() {
+        const text = message?.trim() || UNDESCRIBED;
         return this.serial(async () => {
-            const oid = await this.#snapshotLocked();
+            if (!(await this.#snapshotLocked())) return null;
+            const oid = await this.#snapshotLocked(text);
             await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
             return oid;
         });
     }
 
     /**
-     * Records the current files as a finished version with `message` (also used for changes pulled from a tavern).
-     * Returns the commit, or null when the files equal the last version.
+     * Tags a version (default: the branch tip). Tagging the draft is a checkpoint like "record a version": the draft
+     * takes the current files and ends, keeping its description, and the tag names that finished version.
      */
-    record(message) {
-        return this.serial(async () => {
-            if (!(await this.#snapshotLocked())) return null;
-            const oid = await this.#snapshotLocked(message);
-            await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
-            return oid;
-        });
-    }
-
     tag(name, rev) {
         return this.serial(async () => {
-            const oid = rev ? await this.#resolveLocked(rev) : await this.#head();
+            let oid = rev ? await this.#resolveLocked(rev) : await this.#head();
+            if (oid && oid === await this.#draft()) {
+                oid = (await this.#snapshotLocked()) ?? await this.#head();
+                await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
+            }
             if (!oid) throw new Error('没有可以打标签的版本');
             await git.tag(this.#opts({ ref: name, object: oid }));
             return oid;

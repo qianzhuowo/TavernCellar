@@ -13,6 +13,7 @@ import CardText from '../components/card/CardText.vue';
 import RegexList from './RegexList.vue';
 import { presetRef } from '../lib/status.js';
 import { api, errorText } from '../api.js';
+import { FILTER_TIPS, PROMPT_FILTERS, filterPrompts, globalOrderOf, orderedPrompts, promptsOf } from '../lib/presetPrompts.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const it = useItem(toRef(props, 'path'));
@@ -36,33 +37,33 @@ watch(isChat, (c) => { if (!c) tab.value = 'params'; }, { immediate: true });
 // ---- prompts ----------------------------------------------------------------
 const ROLES = [{ value: 'system', label: '系统' }, { value: 'user', label: '用户' }, { value: 'assistant', label: 'AI' }];
 const POSITIONS = [{ value: 0, label: '相对' }, { value: 1, label: '聊天中' }];
-const prompts = computed(() => (Array.isArray(data.value?.prompts) ? data.value.prompts : []));
+// `data` is mutated in place (same object): depend on rev so these follow edits
+const prompts = computed(() => { void rev.value; return promptsOf(data.value); });
 /** The global prompt order (character_id 100001) decides order and on/off in ST's prompt manager. */
-const globalOrder = computed(() => {
-  const po = data.value?.prompt_order;
-  const g = Array.isArray(po) ? po.find((/** @type {any} */ x) => String(x?.character_id) === '100001') : null;
-  return Array.isArray(g?.order) ? g.order : null;
-});
-const ordered = computed(() => {
-  const byId = new Map(prompts.value.map((p) => [p.identifier, p]));
-  const out = [];
-  const seen = new Set();
-  for (const o of globalOrder.value || []) {
-    const p = byId.get(o.identifier);
-    if (p && !seen.has(p)) { out.push({ p, o }); seen.add(p); }
-  }
-  for (const p of prompts.value) if (!seen.has(p)) out.push({ p, o: null });
-  return out;
-});
+const globalOrder = computed(() => { void rev.value; return globalOrderOf(data.value); });
+const ordered = computed(() => { void rev.value; return orderedPrompts(data.value); });
 const selectedId = ref('');
 const pq = ref('');
-const shownPrompts = computed(() => {
-  const q = pq.value.trim().toLowerCase();
-  return q ? ordered.value.filter(({ p }) => String(p.name || '').toLowerCase().includes(q) || String(p.content || '').toLowerCase().includes(q)) : ordered.value;
-});
+/** 默认 hides the prompts that are not in the order (未插入), as ST's prompt manager does. */
+const pfilter = ref('default');
+const shownPrompts = computed(() => filterPrompts(ordered.value, pfilter.value, pq.value));
+const hiddenCount = computed(() => ordered.value.length - shownPrompts.value.length);
 const current = computed(() => prompts.value.find((p) => p.identifier === selectedId.value) || null);
 const currentOrder = computed(() => (globalOrder.value || []).find((/** @type {any} */ o) => o.identifier === selectedId.value) || null);
-watch(ordered, (l) => { if (l.length && !l.some(({ p }) => p.identifier === selectedId.value)) selectedId.value = l[0].p.identifier; }, { immediate: true });
+watch(shownPrompts, (l) => { if (l.length && !l.some(({ p }) => p.identifier === selectedId.value)) selectedId.value = l[0].p.identifier; }, { immediate: true });
+/** Puts a 未插入 prompt at the end of the order, off (as ST's "insert" does, but without turning it on). */
+function insertPrompt() {
+  const p = current.value;
+  if (!p || currentOrder.value) return;
+  let list = globalOrder.value;
+  if (!list) {
+    if (!Array.isArray(data.value.prompt_order)) data.value.prompt_order = [];
+    list = [];
+    data.value.prompt_order.push({ character_id: 100001, order: list });
+  }
+  list.push({ identifier: p.identifier, enabled: false });
+  edited();
+}
 
 /** @param {string} key @param {any} value */
 function setPrompt(key, value) { if (!current.value) return; current.value[key] = value; edited(); }
@@ -173,24 +174,30 @@ async function keepMine() {
             <label class="search grow"><Icon name="search" size="sm" /><input v-model="pq" class="input" data-find placeholder="搜索名称或内容" /></label>
             <button class="btn sm primary" type="button" @click="addPrompt"><Icon name="plus" size="sm" />新建</button>
           </div>
+          <div class="pe-filter">
+            <label class="mini-select" :class="{ active: pfilter !== 'default' }" :title="FILTER_TIPS[pfilter]"><span>显示</span>
+              <select v-model="pfilter"><option v-for="x in PROMPT_FILTERS" :key="x.value" :value="x.value">{{ x.label }}</option></select><Icon name="chevDown" size="sm" />
+            </label>
+            <span v-if="hiddenCount" class="faint pe-hidden">另有 {{ hiddenCount }} 条未显示</span>
+          </div>
           <div class="rx-rows">
             <div
-              v-for="({ p, o }, i) in shownPrompts"
+              v-for="({ p, o, n }, i) in shownPrompts"
               :key="p.identifier || i"
               class="rx-row"
-              :class="{ on: p.identifier === selectedId, off: o && !o.enabled }"
+              :class="{ on: p.identifier === selectedId, off: o && !o.enabled, out: !o }"
               tabindex="0"
               @click="selectedId = p.identifier"
               @keydown.enter="selectedId = p.identifier"
             >
-              <span class="rx-no mono faint">{{ o ? i + 1 : '–' }}</span>
+              <span class="rx-no mono faint">{{ n || '–' }}</span>
               <div class="grow rx-row-main">
-                <div class="rx-name">{{ p.name || p.identifier }}</div>
+                <div class="rx-name">{{ p.name || p.identifier }}<span v-if="!o" class="pe-out">未插入</span></div>
                 <div class="rx-sub faint">{{ p.marker ? '占位（内容由酒馆生成）' : (p.content || '').slice(0, 80) || '（空）' }}</div>
               </div>
               <Toggle v-if="o" :model-value="!!o.enabled" :title="o.enabled ? '已启用' : '已停用'" @click.stop @update:model-value="toggleOrder(o)" />
             </div>
-            <div v-if="!shownPrompts.length" class="faint rx-empty">{{ pq ? '没有匹配的提示词' : '这个预设没有提示词' }}</div>
+            <div v-if="!shownPrompts.length" class="faint rx-empty">{{ pq || (ordered.length && pfilter !== 'all') ? '没有匹配的提示词' : '这个预设没有提示词' }}</div>
           </div>
           <div class="rx-foot faint">
             <span class="ce-save" :class="{ busy: saveState !== 'saved' }">
@@ -209,6 +216,11 @@ async function keepMine() {
             <button class="icon-btn" type="button" :title="current.system_prompt || current.marker ? '内置提示词不能删除' : '删除这条提示词'" :disabled="current.system_prompt || current.marker" @click="removePrompt"><Icon name="trash" size="sm" /></button>
           </div>
           <div class="faint mono pe-id">{{ current.identifier }}</div>
+          <div v-if="!currentOrder" class="banner">
+            <Icon name="info" />
+            <div class="grow">这条提示词没有插入提示词顺序，酒馆不会使用它（在酒馆提示词管理器的「插入」列表里）。</div>
+            <button class="btn sm" type="button" @click="insertPrompt"><Icon name="plus" size="sm" />插入到提示词顺序</button>
+          </div>
           <div v-if="current.marker" class="banner"><Icon name="info" /><div class="grow">这是占位提示词，内容由酒馆在生成时填入（如聊天记录、世界书），这里只能调整名称、顺序和开关。</div></div>
           <template v-else>
             <div class="rx-grid">
@@ -276,6 +288,10 @@ async function keepMine() {
 .rx-row:hover { background: var(--bg-3); }
 .rx-row.on { background: var(--accent-soft); border-left-color: var(--accent); }
 .rx-row.off .rx-name { color: var(--text-3); text-decoration: line-through; }
+.pe-filter { display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) var(--sp-2); }
+.pe-hidden { font-size: var(--fs-xs); }
+.rx-row.out .rx-name { color: var(--text-3); }
+.pe-out { margin-left: 6px; font-size: 10px; padding: 0 5px; border-radius: var(--r-pill); border: 1px dashed var(--line-strong); color: var(--text-3); }
 .rx-no { width: 22px; text-align: right; font-size: var(--fs-xs); flex: none; }
 .rx-row-main { min-width: 0; flex: 1; }
 .rx-name, .rx-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

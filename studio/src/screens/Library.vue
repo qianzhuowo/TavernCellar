@@ -209,6 +209,8 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
               <span>{{ p.label }}</span>
               <span v-if="p.id === 'character_book'" class="faint lib-extract-tip">绑定的世界书会一起取出到工作区</span>
               <span v-else-if="p.id === 'regex'" class="faint lib-extract-tip">在角色的「角色正则」页编辑</span>
+              <span v-else-if="p.optional" class="faint lib-extract-tip">卡中没有时不会生成文件</span>
+              <span v-else-if="p.optional" class="faint lib-extract-tip">卡中没有这类数据时不会生成文件</span>
             </label>
           </section>
         </div>

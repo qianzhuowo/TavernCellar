@@ -104,7 +104,8 @@ function readHelper(card) {
 /**
  * Moves regex scripts, Tavern Helper scripts and variables out of `rest` (the card being decoded) into `files`.
  * Records what it did in `meta` (`meta.raw`, `meta.emptyArrays`, `meta.helper`). Parts named in `exclude`
- * ('regex', 'scripts', 'variables') stay in card.json.
+ * ('regex', 'helper') stay in card.json. Tavern Helper data is extracted only when non-empty (an empty script list or
+ * variables object gets no file).
  */
 export function splitParts(rest, files, meta, exclude = new Set()) {
     const regex = getPath(rest, REGEX_PATH);
@@ -113,16 +114,17 @@ export function splitParts(rest, files, meta, exclude = new Set()) {
         unsetPath(rest, REGEX_PATH);
     }
 
+    if (exclude.has('helper')) return;
     const found = readHelper(rest);
     if (!found) return;
     const { form, helper } = found;
     const info = { form };
     const remaining = { ...helper };
-    if (!exclude.has('scripts') && Array.isArray(helper.scripts) && splitList(helper.scripts, SCRIPT_SPEC, files, meta)) {
+    if (Array.isArray(helper.scripts) && helper.scripts.length && splitList(helper.scripts, SCRIPT_SPEC, files, meta)) {
         info.scripts = true;
         delete remaining.scripts;
     }
-    if (!exclude.has('variables') && form !== 'legacy' && isPlainObject(helper.variables)) {
+    if (form !== 'legacy' && isPlainObject(helper.variables) && Object.keys(helper.variables).length) {
         files[VARIABLES_FILE] = json(helper.variables);
         info.variables = true;
         delete remaining.variables;
@@ -138,6 +140,14 @@ export function splitParts(rest, files, meta, exclude = new Set()) {
         setPath(rest, HELPER_PATH, remaining);
     }
     meta.helper = info;
+}
+
+/** Whether the card holds Tavern Helper scripts or variables that would be extracted (non-empty). */
+export function hasHelper(card) {
+    const found = readHelper(card);
+    if (!found) return false;
+    const { form, helper } = found;
+    return (Array.isArray(helper.scripts) && helper.scripts.length > 0) || (form !== 'legacy' && isPlainObject(helper.variables) && Object.keys(helper.variables).length > 0);
 }
 
 /** Inverse of splitParts: puts the parts from `files` back into `card`. */

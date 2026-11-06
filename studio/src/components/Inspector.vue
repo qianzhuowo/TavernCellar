@@ -6,7 +6,7 @@ import StatusBadge from './StatusBadge.vue';
 import CardParts from './card/CardParts.vue';
 import { kindOf } from '../lib/kinds.js';
 import { useApp } from '../stores/app.js';
-import { useUi } from '../stores/ui.js';
+import { useUi, historyHref } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, removeItem } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
@@ -88,7 +88,7 @@ async function confirmRemove() {
             <Icon name="pin" size="sm" /><span class="grow">{{ pinText(b.pinned) }}</span>
             <button class="btn sm" :disabled="!!busy[b.target]" @click="follow(b)">跟随最新</button>
           </div>
-          <a v-else-if="b.deployed" class="sync-note sync-dep" href="#/history" title="在版本历史中查看"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
+          <a v-else-if="b.deployed" class="sync-note sync-dep" :href="historyHref(props.path)" title="在版本历史中查看这一项"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
           <div v-if="isConflict(uiStatus(b.status))" class="sync-note err">
             <Icon name="alert" size="sm" /><span class="grow">两边都改了同一处</span>
             <a v-if="ui.route.name !== 'conflict'" href="#" @click.prevent="ui.openConflict(props.path)">处理冲突</a>

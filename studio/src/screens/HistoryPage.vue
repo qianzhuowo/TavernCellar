@@ -1,13 +1,13 @@
 <script setup>
-// Version history (docs/versioning.md, docs/studio-design.md §4.7). The draft @ collects every change on its own;
-// "记录版本" gives it a description and finishes it. Selecting a version shows its field-level changes against the
+// Version history (docs/versioning.md, docs/studio-design.md §4.7). The draft @ collects every change (edits,
+// checkouts, pulls, merges, restores); only "记录版本" or tagging the draft finishes it, as in jj. Selecting a version shows its field-level changes against the
 // previous version (or any other version picked for comparison); an item can be restored from there.
 import { ref, computed, watch, onMounted } from 'vue';
 import Icon from '../components/Icon.vue';
 import SlotDiff from '../components/SlotDiff.vue';
 import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
-import { useUi, hrefOf } from '../stores/ui.js';
+import { useUi, hrefOf, historyHref } from '../stores/ui.js';
 import { itemName, relTime } from '../lib/status.js';
 import { kindOf } from '../lib/kinds.js';
 
@@ -15,7 +15,11 @@ const UNDESCRIBED = '(未写说明)';
 const app = useApp();
 const ui = useUi();
 
-const filter = ref('');
+/** item shown alone ('' = all): the route #/history/<path> holds it, so links can open one item's history */
+const filter = computed({
+  get: () => (ui.route.name === 'history' ? ui.route.arg : ''),
+  set: (p) => ui.go(historyHref(p)),
+});
 /** @type {import('vue').Ref<any>} */
 const hist = ref(null);
 const loading = ref(false);
@@ -105,13 +109,18 @@ async function act(/** @type {string} */ kind, /** @type {() => Promise<any>} */
   }
 }
 
-const describe = () => act('describe', () => api.describeDraft(message.value), '草稿说明已保存');
 const record = () => act('record', async () => {
   const r = await api.recordVersion(message.value);
   message.value = '';
   selected.value = r.id;
 }, '已记录版本');
-const tag = () => act('tag', async () => { await api.tagVersion(tagName.value.trim(), selected.value); tagName.value = ''; }, '已打标签');
+// Tagging the draft records it first (companion vcs.tag); the finished version replaces the draft in the list.
+const tag = () => act('tag', async () => {
+  const wasDraft = sel.value && sel.value.draft;
+  const r = await api.tagVersion(tagName.value.trim(), selected.value);
+  tagName.value = '';
+  if (wasDraft) { message.value = ''; selected.value = r.id; }
+}, '已打标签');
 
 // ---- push a version to one tavern (docs/versioning.md §3): the workspace stays, the bindings get pinned ----
 const pushTarget = ref('');
@@ -145,7 +154,7 @@ watch(selected, () => { pushed.value = null; });
 function restore(/** @type {string} */ path) {
   if (armedRestore.value !== path) { armedRestore.value = path; return; }
   armedRestore.value = '';
-  act('restore', () => api.restoreVersion(selected.value, path), `${itemName(path)} 已恢复到这个版本，同步后酒馆中也会变回这样`);
+  act('restore', () => api.restoreVersion(selected.value, path), `${itemName(path)} 已恢复成「${versionName(selected.value)}」中的内容，同步后酒馆中也会变回这样`);
 }
 
 const statusText = { added: '新增', removed: '删除', changed: '修改', unreadable: '无法读取' };
@@ -164,13 +173,7 @@ onMounted(load);
     <div class="page-head">
       <div>
         <h2><Icon name="history" />版本历史</h2>
-        <p class="muted">修改会自动进入「草稿」。写上说明并「记录版本」，就能随时对比、恢复，或把某个版本推送到一个酒馆。标记了酒馆名的版本，就是该酒馆里现在的样子；带 📌 的表示该酒馆固定在那个版本。</p>
-      </div>
-      <div class="page-actions">
-        <select v-model="filter" class="input vh-filter" aria-label="只看某一项">
-          <option value="">全部资料项</option>
-          <option v-for="p in itemPaths" :key="p" :value="p">{{ itemName(p) }}</option>
-        </select>
+        <p class="muted">修改、取出、从酒馆取回的内容都先进入「草稿」，直到你「记录版本」或给草稿打标签，才成为一个版本；记录后就能随时对比、恢复，或把某个版本推送到一个酒馆。标记了酒馆名的版本，就是该酒馆里现在的样子；带 📌 的表示该酒馆固定在那个版本。</p>
       </div>
     </div>
 
@@ -182,16 +185,20 @@ onMounted(load);
         <strong>草稿</strong>
         <span v-if="draftItems.length" class="muted">{{ draftItems.length }} 项有修改：</span>
         <span v-else class="faint">没有未记录的修改</span>
-        <a v-for="p in draftItems" :key="p" class="chip vh-item" :href="hrefOf({ name: 'item', arg: p })">{{ itemName(p) }}</a>
+        <a v-for="p in draftItems" :key="p" class="chip vh-item" :href="hrefOf('item:' + p)">{{ itemName(p) }}</a>
       </div>
       <div v-if="draftItems.length" class="vh-draft-f">
         <input v-model="message" class="input" :placeholder="draft && draft.message && draft.message !== UNDESCRIBED ? draft.message : '这次改了什么？（可不写）'" @keydown.enter="record" />
-        <button class="btn" :disabled="!!busy || !message.trim()" @click="describe">只写说明</button>
         <button class="btn primary" :disabled="!!busy" @click="record"><Icon name="check" size="sm" />记录版本</button>
       </div>
     </section>
 
     <div class="vh-main">
+      <div class="vh-side">
+      <select v-model="filter" class="input vh-filter" aria-label="只看某一项" title="切换要查看的资料项">
+        <option value="">全部资料项</option>
+        <option v-for="p in itemPaths" :key="p" :value="p">{{ itemName(p) }}</option>
+      </select>
       <ol class="vh-list" aria-label="版本列表">
         <li v-if="loading && !versions.length" class="faint vh-empty">载入中…</li>
         <li v-else-if="!versions.length" class="faint vh-empty">还没有版本</li>
@@ -211,6 +218,7 @@ onMounted(load);
           </button>
         </li>
       </ol>
+      </div>
 
       <section v-if="sel" class="card vh-detail">
         <div class="vh-detail-h">
@@ -226,7 +234,7 @@ onMounted(load);
           </label>
           <div class="vh-tagbox">
             <input v-model="tagName" class="input" placeholder="标签名，如 v1.0" @keydown.enter="tagName.trim() && tag()" />
-            <button class="btn" :disabled="!!busy || !tagName.trim()" @click="tag"><Icon name="tag" size="sm" />打标签</button>
+            <button class="btn" :disabled="!!busy || !tagName.trim()" :title="sel.draft ? '把草稿记录为版本，并给它打上这个标签' : ''" @click="tag"><Icon name="tag" size="sm" />{{ sel.draft ? '记录并打标签' : '打标签' }}</button>
           </div>
           <div v-if="pushTargets.length" class="vh-pushbox" title="把这个版本写到所选酒馆（只包括绑定了该酒馆的项），工作区不变；之后这些项在该酒馆固定在此版本，直到改为跟随最新">
             <select v-model="pushTarget" class="input" aria-label="推送到哪个酒馆">
@@ -244,7 +252,7 @@ onMounted(load);
             <span v-if="x.result === 'failed'" class="faint">{{ x.error }}</span>
             <span class="grow" />
             <template v-if="x.result === 'tavern-changed'">
-              <a class="btn sm" :href="hrefOf({ name: 'sync' })">去同步页取回</a>
+              <a class="btn sm" :href="hrefOf('sync')">去同步页取回</a>
               <button class="btn sm danger" :disabled="!!busy" @click="push(true, [x.path])">覆盖酒馆的修改</button>
             </template>
           </div>
@@ -261,8 +269,8 @@ onMounted(load);
               <span class="badge">{{ statusText[it.status] }}</span>
               <span v-if="it.slots.length" class="faint">{{ it.slots.length }} 处</span>
               <span class="grow" />
-              <button v-if="it.status !== 'removed' && app.item(it.path)" class="btn sm" :class="{ danger: armedRestore === it.path }" :disabled="!!busy" @click="restore(it.path)">
-                <Icon name="history" size="sm" />{{ armedRestore === it.path ? '确定恢复？工作区的这项会被替换' : '把这项恢复成这个版本' }}
+              <button v-if="!sel.draft && it.status !== 'removed' && app.item(it.path)" class="btn sm" :class="{ danger: armedRestore === it.path }" :disabled="!!busy" :title="`把工作区里的「${itemName(it.path)}」换成「${versionName(sel.id)}」中的内容（不是对比的那个版本）；之后照常同步`" @click="restore(it.path)">
+                <Icon name="history" size="sm" />{{ armedRestore === it.path ? '确定恢复？工作区的这项会被替换' : '恢复成所选版本' }}<span class="mono faint">{{ short(sel.id) }}</span>
               </button>
             </div>
             <div v-if="it.error" class="sync-note err">{{ it.error }}</div>

@@ -74,7 +74,13 @@ characters/Alice/
 ├─ scripts/                    酒馆助手脚本
 │   ├─ 01-MVU.json             一个脚本（不含 content）
 │   └─ 01-MVU.js               它的 content
-└─ variables.json              酒馆助手变量
+├─ variables.json              酒馆助手变量
+└─ xiaobaix/                   小白X（LittleWhiteBox）
+    ├─ tasks/01-开场.json       一个定时任务（data.extensions.xiaobaix-tasks.tasks，不含 commands）
+    ├─ tasks/01-开场.txt        它的 commands（脚本）
+    ├─ template.json           data.extensions.xiaobaix-template（不含 template）
+    ├─ template.html           它的 template
+    └─ variables.json          data.extensions.LittleWhiteBox
 ```
 
 规则：
@@ -86,15 +92,16 @@ characters/Alice/
 - 正则与脚本：文件名 `NN-名称`，**编号决定顺序**，名称只是方便辨认（取自 scriptName / name）。改编号即调整顺序；删掉一对文件即删除该条；复制一对并改编号即新增。`.json` 里仍可修改其他参数（禁用、作用范围等）。
 - 酒馆助手有三种存储形态：对象 `tavern_helper: { scripts, variables }`、键值对数组 `tavern_helper: [["scripts", …], ["variables", …]]`、旧版 `TavernHelper_scripts: […]`。取出时记录形态（元数据 `helper`），写回时按原形态还原；`tavern_helper` 中的其他键留在 `card.json`。
 - 无法识别的形态（例如数组中有非对象元素、脚本 content 不是字符串）整段原样留在 `card.json`，不拆分。
-- 小白X（`xiaobaix-*`）、MVU 变量组等其他扩展字段暂留在 `card.json`。
-- **文件提取**：角色的基础文本字段（角色描述、角色设定、创作者的注释等 `.md`）始终各自成文件；下列部分可选提取：`greetings`（开场白：`first_mes.md` 与 `alternate_greetings/`）、`regex`、`scripts`、`variables`、`character_book`。`cellar.json` 中资料项的 `layout.exclude` 列出**未提取**的部分，它们留在 `card.json` 里；没有 `layout` 的旧资料项等于全部提取。可在取出时指定（`POST /api/checkout` 的 `exclude`，命令行 `checkout --keep`），也可之后修改（`POST /api/layout { path, exclude }`，`cellar layout`）。修改只重排文件，内容哈希不变；若会变则拒绝并恢复原布局。
+- 酒馆助手与小白X的数据**只在非空时**拆出：空脚本列表、空变量对象、空模板不生成文件，原样留在 `card.json`。小白X 无法识别的形态同样留在 `card.json`；`xiaobaix-tasks` 中 `tasks` 以外的键也留在那里。
+- MVU 变量组等其他扩展字段留在 `card.json`。
+- **文件提取**：角色的基础文本字段（角色描述、角色设定、创作者的注释等 `.md`）始终各自成文件；下列部分可选提取：`greetings`（开场白：`first_mes.md` 与 `alternate_greetings/`）、`regex`、`xiaobaix`（小白X脚本及变量）、`helper`（酒馆助手脚本及变量）、`character_book`。状态中角色资料项的 `parts` 列出卡中实际有数据的可选部分（`xiaobaix` / `helper`），Studio 只为这些显示勾选项。`cellar.json` 中资料项的 `layout.exclude` 列出**未提取**的部分，它们留在 `card.json` 里；没有 `layout` 的旧资料项等于全部提取。可在取出时指定（`POST /api/checkout` 的 `exclude`，命令行 `checkout --keep`），也可之后修改（`POST /api/layout { path, exclude }`，`cellar layout`）。修改只重排文件，内容哈希不变；若会变则拒绝并恢复原布局。
   - 编辑器只加载提取的部分：`GET /api/item` 返回的 `data` 不含未提取部分，另附 `omitted`（被省略的路径）；`PUT /api/item` 带回 `omitted`，伴侣程序从磁盘上的完整卡按原键位补回这些部分再写入。未提取的内容同步时原样保留。
   - 运行时生效的是 `data.extensions.world` 绑定的世界书（ST 保存角色时从它生成 `character_book` 副本）。Studio 提取「角色世界书」时把绑定的书作为独立世界书资料项一起取出，在角色的「世界书」页编辑。
 - **框架识别**：取出结果和状态中的 `frameworks` 列出卡依赖的脚本框架（酒馆助手、MVU、小白X）及依据，用于提示“这张卡需要在酒馆中安装哪些插件”。
 - **内嵌世界书**（`data.character_book`）：每个条目拆成 `character_book/NNNN-<comment>.md`（YAML 头为除 `content` 外的字段，正文为 `content`），编号决定顺序；书的其他字段留在 `card.json`。条目形态无法识别时整本留在 `card.json`。可用 `layout.exclude` 的 `character_book` 保留在 `card.json`。
 - **连同绑定世界书取出**：取出角色时传 `withWorld: true`，会把 `data.extensions.world` 指向的世界书一起取出；该书若已从同一酒馆取出则直接引用，不重复取出。关联不单独保存：状态中的 `world: { name, path }` 每次从卡的内容推导，`path` 为 null 表示绑定的书不在工作区。
 
-格式版本：元数据 `codec` 为 4。伴侣程序启动时把旧版本的资料项自动重新排布（`codec: 1` 的正则和脚本还在 `card.json` 里；`codec` 3 及以前的 `layout.exclude` 可含已取消的 `fields`，升级时去掉，基础文本字段重新各自成文件）；内容不变，哈希和同步状态不受影响，失败则回滚。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
+格式版本：元数据 `codec` 为 5。伴侣程序启动时把旧版本的资料项自动重新排布（`codec: 1` 的正则和脚本还在 `card.json` 里；`codec` 3 及以前的 `layout.exclude` 可含已取消的 `fields`，升级时去掉，基础文本字段重新各自成文件；`codec` 4 的 `scripts` 改为 `helper`、`variables` 去掉，并加入 `xiaobaix`——小白X数据在用户勾选前仍留在 `card.json`）；内容不变，哈希和同步状态不受影响，失败则回滚。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。
 
 ## 4. 世界书
 
@@ -187,5 +194,9 @@ presets/openai-<名称>/
 - 不支持改名、新建、删除（在酒馆里做）。
 
 ## 7. 无损往返
+
+### 预设工坊收藏 `workshop/prompts.json`
+
+不属于任何资料项的工作区文件，随工作区一起进入版本历史。内容为 `{ version: 1, prompts: [{ id, title, from, savedAt, enabled, prompt }] }`，`prompt` 是收藏时预设中那条提示词的完整对象。读写：`POST /api/workshop/collection` 返回 `{ collection, hash }`；`PUT /api/workshop/collection { collection, hash }` 在文件已被别处修改时拒绝（`conflict`）。
 
 对任意卡片、世界书、全局正则或预设数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。
