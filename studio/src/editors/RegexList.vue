@@ -37,16 +37,18 @@ const NEW_SCRIPT = {
 
 const rev = ref(0);
 /** @type {import('vue').ComputedRef<any[]>} */
+// The scripts array may be plain (not reactive) data: every computed reading it also reads `rev`, which edits bump.
 const list = computed(() => { void rev.value; return /** @type {any[]} */ (props.scripts); });
 const selectedId = ref('');
 const query = ref('');
 const shown = computed(() => {
+  void rev.value;
   const all = list.value.map((s, i) => ({ s, i }));
   const q = query.value.trim().toLowerCase();
   return q ? all.filter(({ s }) => String(s.scriptName || '').toLowerCase().includes(q) || String(s.findRegex || '').toLowerCase().includes(q)) : all;
 });
-const current = computed(() => list.value.find((s) => s.id === selectedId.value) || null);
-watch(list, (l) => {
+const current = computed(() => { void rev.value; return list.value.find((s) => s.id === selectedId.value) || null; });
+watch([list, rev], ([l]) => {
   if (l.length && !l.some((s) => s.id === selectedId.value)) selectedId.value = l[0].id;
 }, { immediate: true });
 
@@ -152,7 +154,7 @@ const test = computed(() => {
         <template v-else-if="saveState === 'dirty'"><Icon name="dot" size="sm" />未写入</template>
         <template v-else><Icon name="check" size="sm" />已写入工作区</template>
       </span>
-      <span class="spacer" />{{ list.length }} 条 · 按顺序执行
+      <span class="spacer" />{{ shown.length === list.length ? list.length : shown.length + ' / ' + list.length }} 条 · 按顺序执行
     </div>
   </aside>
 
@@ -164,10 +166,9 @@ const test = computed(() => {
       <button class="icon-btn" type="button" title="删除这条正则" @click="remove(list.indexOf(current))"><Icon name="trash" size="sm" /></button>
     </div>
 
-    <div class="field">
-      <label>查找（正则表达式）<span class="hint"> · 写成 /表达式/标志，例如 /&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g</span></label>
-      <input class="input mono" :value="current.findRegex" spellcheck="false" @input="set('findRegex', /** @type {any} */ ($event.target).value)" />
-    </div>
+    <CardText class="rx-find" label="查找（正则表达式）" code :rows="1" :model-value="current.findRegex" @update:model-value="set('findRegex', $event)">
+      <template #label>查找（正则表达式）<span class="hint"> · 写成 /表达式/标志，例如 /&lt;think&gt;[\s\S]*?&lt;\/think&gt;/g</span></template>
+    </CardText>
     <CardText label="替换为" code :rows="3" hint="可用 {{match}} 或 $1 引用匹配内容" :model-value="current.replaceString" @update:model-value="set('replaceString', $event)" />
     <CardText label="修剪掉" code :rows="2" hint="每行一个，替换前从匹配内容中删去" :model-value="trimText" @update:model-value="setTrim($event)" />
 
@@ -245,6 +246,8 @@ const test = computed(() => {
 .rx-depth { display: flex; align-items: center; gap: var(--sp-2); }
 .rx-test { padding: var(--sp-3) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
 .rx-test-out { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; padding: var(--sp-2); background: var(--bg-input); border-radius: var(--r-md); }
+.rx-detail :deep(.textarea.code) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rx-find :deep(.textarea) { min-height: 0; }
 .rx-test-err { color: var(--st-conflict); display: flex; gap: 6px; align-items: center; font-size: var(--fs-sm); }
 .grow { flex: 1; min-width: 0; }
 </style>

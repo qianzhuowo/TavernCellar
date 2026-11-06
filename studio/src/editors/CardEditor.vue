@@ -14,7 +14,10 @@ import GreetingList from '../components/card/GreetingList.vue';
 import TagInput from '../components/card/TagInput.vue';
 import WorldPicker from '../components/card/WorldPicker.vue';
 import ItemFiles from '../components/ItemFiles.vue';
+import LorebookEditor from './LorebookEditor.vue';
+import RegexList from './RegexList.vue';
 import { getField, setField, extraFields } from '../components/card/cardFields.js';
+import { extractedOf } from '../lib/cardParts.js';
 import { api, errorText } from '../api.js';
 
 const props = defineProps({ path: { type: String, required: true } });
@@ -116,52 +119,75 @@ function toggleAdv() {
   localStorage.setItem(advKey.value, advOpen.value ? '1' : '0');
 }
 
-// ---- form / files ----
-const view = computed(() => ui.itemView[props.path]?.view || 'form');
+// ---- views: 角色 / 世界书 / 角色正则 / 文件 (like the preset editor's pages) ----
+// Only the extracted parts are loaded (companion omitParts); 世界书 and 角色正则 appear when those parts are extracted.
+const extracted = computed(() => extractedOf(item.value));
+const VIEWS = computed(() => [
+  { value: 'form', label: '角色' },
+  ...(extracted.value.has('character_book') ? [{ value: 'world', label: '世界书' }] : []),
+  ...(extracted.value.has('regex') ? [{ value: 'regex', label: '角色正则' }] : []),
+  { value: 'files', label: '文件' }
+]);
+const view = computed(() => {
+  const v = ui.itemView[props.path]?.view || 'form';
+  return VIEWS.value.some((o) => o.value === v) ? v : 'form';
+});
 const filesInitial = computed(() => ui.itemView[props.path]?.file || '');
-const VIEWS = [{ value: 'form', label: '表单' }, { value: 'files', label: '文件' }];
+
+// The editor holds only what was extracted when it loaded: reload when the extraction changes.
+const layoutKey = computed(() => (item.value?.layout?.exclude || []).join());
+watch(layoutKey, async () => {
+  if (it.dirty.value || it.saving.value) await it.save();
+  if (!it.externalChange.value) await it.load();
+});
+
+// ---- 世界书: the bound lorebook is its own workspace item, edited here with the lorebook editor ----
+const worldPath = computed(() => item.value?.world?.path || '');
+
+// ---- 角色正则: data.extensions.regex_scripts, same list editor as preset regex ----
+const regexScripts = computed(() => { const s = f('extensions.regex_scripts'); return Array.isArray(s) ? s : null; });
+const saveState = computed(() => (it.saving.value ? 'saving' : it.dirty.value && !it.externalChange.value ? 'dirty' : 'saved'));
+function regexEdited() { rev.value++; it.touch(); }
 
 // ---- outline: jump to a part of the card ----
 const bookCount = computed(() => { const e = f('character_book.entries'); return Array.isArray(e) ? e.length : 0; });
-const regexCount = computed(() => { const r = f('extensions.regex_scripts'); return Array.isArray(r) ? r.length : 0; });
+const regexCount = computed(() => regexScripts.value?.length || 0);
 /** Tavern Helper scripts: an object with `scripts`, or the older list of [key, value] pairs. */
 const scriptCount = computed(() => {
   const th = f('extensions.tavern_helper');
-  const s = Array.isArray(th) ? th.find((p) => Array.isArray(p) && p[0] === 'scripts')?.[1] : th?.scripts;
+  const s = Array.isArray(th) ? th.find((p) => Array.isArray(p) && p[0] === 'scripts')?.[1] : th?.scripts ?? f('extensions.TavernHelper_scripts');
   return Array.isArray(s) ? s.length : 0;
 });
-const layoutExclude = computed(() => new Set(item.value?.layout?.exclude || []));
-/** A part kept in card.json opens card.json; a split part opens its folder in the file view. */
-const partFile = (/** @type {string} */ part, /** @type {string} */ folder) => (layoutExclude.value.has(part) ? 'card.json' : folder);
 
-/** @typedef {{id: string, label: string, adv?: boolean, sub?: boolean, count?: number, greet?: number, file?: string}} OutlineItem */
+/** @typedef {{id: string, label: string, adv?: boolean, sub?: boolean, count?: number, greet?: number, file?: string, view?: string}} OutlineItem */
 const outline = computed(() => {
   /** @type {OutlineItem[]} */
   const out = [
     { id: 'ce-sec-head', label: '名称与标签' },
-    { id: 'ce-sec-desc', label: '角色描述' },
-    { id: 'ce-sec-first', label: '第一条消息' },
-    { id: 'ce-sec-greets', label: '其他开场', count: greetings.value.length }
+    { id: 'ce-sec-desc', label: '角色描述' }
   ];
-  greetings.value.forEach((g, i) => out.push({ id: 'ce-greet-' + i, label: '#' + (i + 1) + ' ' + (String(g || '').split('\n').find((l) => l.trim()) || '（空）').replace(/[*"]/g, '').trim(), sub: true, greet: i }));
+  if (extracted.value.has('greetings')) {
+    out.push({ id: 'ce-sec-first', label: '第一条消息' }, { id: 'ce-sec-greets', label: '其他开场', count: greetings.value.length });
+    greetings.value.forEach((g, i) => out.push({ id: 'ce-greet-' + i, label: '#' + (i + 1) + ' ' + (String(g || '').split('\n').find((l) => l.trim()) || '（空）').replace(/[*"]/g, '').trim(), sub: true, greet: i }));
+  }
   out.push(
     { id: 'ce-sec-prompt', label: '提示词覆盖', adv: true },
     { id: 'ce-sec-persona', label: '角色设定', adv: true },
     { id: 'ce-sec-note', label: '角色备注', adv: true },
     { id: 'ce-sec-creator', label: '创作者的元数据', adv: true },
     { id: 'ce-sec-group', label: '群聊', adv: true },
-    { id: 'ce-sec-world', label: world.value ? '世界书 · ' + world.value : '世界书（未绑定）', adv: true },
     { id: 'ce-sec-extra', label: '其他字段', adv: true }
   );
-  if (bookCount.value) out.push({ id: '', label: '内嵌世界书', count: bookCount.value, file: partFile('character_book', 'character_book') });
-  if (regexCount.value) out.push({ id: '', label: '角色正则', count: regexCount.value, file: partFile('regex', 'regex') });
-  if (scriptCount.value) out.push({ id: '', label: '酒馆助手脚本', count: scriptCount.value, file: partFile('scripts', 'scripts') });
+  if (extracted.value.has('character_book')) out.push({ id: '', label: world.value ? '世界书 · ' + world.value : '世界书', count: worldPath.value ? undefined : bookCount.value, view: 'world' });
+  if (extracted.value.has('regex')) out.push({ id: '', label: '角色正则', count: regexCount.value, view: 'regex' });
+  if (extracted.value.has('scripts') && scriptCount.value) out.push({ id: '', label: '酒馆助手脚本', count: scriptCount.value, file: 'scripts' });
   return out;
 });
 
 const greetList = ref(/** @type {any} */ (null));
 const activeId = ref('ce-sec-head');
 async function jump(/** @type {OutlineItem} */ o) {
+  if (o.view) { ui.setItemView(props.path, o.view); return; }
   if (o.file) { ui.setItemView(props.path, 'files', o.file); return; }
   if (o.adv && !advOpen.value) toggleAdv();
   if (o.greet !== undefined) greetList.value?.reveal(o.greet);
@@ -199,7 +225,7 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
 </script>
 
 <template>
-  <div class="ce">
+  <div class="ce" :class="{ wide: it.data.value && (view === 'world' || view === 'regex') }">
     <div v-if="it.externalChange.value" class="banner warn">
       <Icon name="alert" />
       <div class="grow"><b>文件在别处被修改</b><span class="muted"> · 工作区里的文件在你编辑时被改动了（VS Code 或从酒馆取回），暂停写入。重新加载会丢弃这里尚未写入的修改；保留我的修改会用这里的内容覆盖那些改动。</span></div>
@@ -227,6 +253,41 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
       </div>
 
       <ItemFiles v-if="view === 'files'" :path="path" :initial="filesInitial" />
+
+      <!-- 世界书: the bound lorebook (its own workspace item) in the lorebook editor -->
+      <div v-else-if="view === 'world'" class="ce-pane ce-world-pane">
+        <div class="ce-world-head">
+          <WorldPicker :model-value="world" :binding="binding" @update:model-value="set('extensions.world', $event)" />
+          <p v-if="worldPath" class="faint ce-world-note"><Icon name="info" size="sm" />「{{ world }}」是工作区中的独立世界书资料项（{{ worldPath }}），在这里编辑即修改它；它单独同步，同步状态见左侧「世界书」分组或同步页。</p>
+        </div>
+        <LorebookEditor v-if="worldPath" :key="worldPath" :path="worldPath" />
+        <div v-else class="empty grow">
+          <Icon name="book" />
+          <template v-if="world">
+            <h3>绑定的世界书「{{ world }}」还不在工作区</h3>
+            <p class="muted">用上方的「一起取出」把它取出到工作区，就能在这里编辑。</p>
+          </template>
+          <template v-else-if="bookCount">
+            <h3>这张卡带有内嵌世界书（{{ bookCount }} 个条目），但没有绑定世界书</h3>
+            <p class="muted">酒馆只在导入内嵌世界书后使用它（导入后会绑定到这张卡）。可以在酒馆的角色面板中导入，再在上方选择并取出；也可以直接编辑内嵌条目的文件。</p>
+            <button class="btn" type="button" @click="ui.setItemView(path, 'files', 'character_book')"><Icon name="file" size="sm" />编辑内嵌条目文件</button>
+          </template>
+          <template v-else>
+            <h3>这张卡没有绑定世界书</h3>
+            <p class="muted">在上方选择一本世界书绑定到这张卡。</p>
+          </template>
+        </div>
+      </div>
+
+      <!-- 角色正则: data.extensions.regex_scripts -->
+      <div v-else-if="view === 'regex'" class="ce-pane">
+        <RegexList v-if="regexScripts" :key="it.version.value" :scripts="regexScripts" :save-state="saveState" empty-text="这张卡还没有角色正则 · 点「新建」添加" @edited="regexEdited" />
+        <div v-else class="empty grow">
+          <Icon name="regex" /><h3>这张卡没有角色正则</h3>
+          <p class="muted">角色正则随卡片保存在 extensions.regex_scripts 里，只对这个角色生效。</p>
+          <button class="btn" type="button" @click="set('extensions.regex_scripts', [])"><Icon name="plus" size="sm" />添加角色正则</button>
+        </div>
+      </div>
       <div v-else class="ce-layout">
       <nav class="ce-outline" aria-label="大纲">
         <div class="ce-outline-h"><Icon name="outline" size="sm" />大纲</div>
@@ -235,13 +296,14 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
           :key="o.label + o.id"
           type="button"
           class="ce-ol"
-          :class="{ on: !!o.id && o.id === activeId, sub: o.sub, file: !!o.file }"
-          :title="o.file ? '在「文件」中打开' : o.label"
+          :class="{ on: !!o.id && o.id === activeId, sub: o.sub, file: !!o.file || !!o.view }"
+          :title="o.view ? '切换到「' + o.label.split(' · ')[0] + '」页' : o.file ? '在「文件」中打开' : o.label"
           @click="jump(o)"
         >
           <span class="ce-ol-t">{{ o.label }}</span>
           <span v-if="o.count" class="ce-ol-n">{{ o.count }}</span>
-          <Icon v-if="o.file" name="file" size="sm" />
+          <Icon v-if="o.view" name="chevRight" size="sm" />
+          <Icon v-else-if="o.file" name="file" size="sm" />
         </button>
       </nav>
       <div class="ce-form">
@@ -285,13 +347,15 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
       </div>
 
       <CardText id="ce-sec-desc" big label="角色描述" :rows="8" :was="was('description')" :model-value="f('description')" @update:model-value="set('description', $event)" />
-      <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :was="was('first_mes')" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
-      <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
+      <template v-if="extracted.has('greetings')">
+        <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :was="was('first_mes')" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
+        <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
+      </template>
 
       <div class="card ce-adv-wrap" :class="{ collapsed: !advOpen }">
         <button class="collapse-head" type="button" :aria-expanded="advOpen" @click="toggleAdv">
           <span class="chev"><Icon name="chevDown" size="sm" /></span>高级定义
-          <span class="meta">提示词覆盖 · 角色设定 · 角色备注 · 创作者的元数据 · 群聊 · 世界书</span>
+          <span class="meta">提示词覆盖 · 角色设定 · 角色备注 · 创作者的元数据 · 群聊</span>
         </button>
         <div v-if="advOpen" class="collapse-body ce-adv">
           <section id="ce-sec-prompt" class="ce-block">
@@ -353,12 +417,6 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
                   <output class="badge">{{ talk.toFixed(2) }}</output>
                 </div>
               </div>
-            </div>
-          </section>
-          <section id="ce-sec-world" class="ce-block">
-            <div class="ce-block-title"><h3>世界书</h3></div>
-            <div class="ce-block-body">
-              <WorldPicker :model-value="world" :binding="binding" @update:model-value="set('extensions.world', $event)" />
             </div>
           </section>
           <section id="ce-sec-extra" class="ce-block">

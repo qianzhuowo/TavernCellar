@@ -250,3 +250,12 @@
 .preset-group { margin-bottom: var(--sp-4); }
 .preset-group-head { font-size: var(--fs-xs); margin: 0 0 var(--sp-2) var(--sp-1); display: flex; gap: var(--sp-2); align-items: center; }
 .preset-cur { margin-left: var(--sp-2); font-size: var(--fs-xs); }
+
+/* ---- library preview: 文件提取 before taking a character out ---- */
+.lib-extract { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: var(--sp-3); }
+.lib-extract h4 { margin: 0; font-size: var(--fs-sm); }
+.lib-extract p { margin: 0; font-size: var(--fs-xs); line-height: 1.6; }
+.lib-extract-base { display: flex; gap: 6px; align-items: flex-start; font-size: var(--fs-xs); line-height: 1.6; padding: 2px 0 4px; }
+.lib-extract-base > svg { flex: none; margin-top: 3px; color: var(--st-ok, var(--accent)); }
+.lib-extract-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); padding: 2px 0; }
+.lib-extract-tip { margin-left: auto; font-size: var(--fs-xs); }

@@ -11,7 +11,7 @@
 import { hashData } from '../../shared/hash.js';
 import { ERR, MSG, ProtocolError, assertItemRef, parsePresetId } from '../../shared/protocol.js';
 import { CODECS, codecFor } from './codec/index.js';
-import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE } from './codec/character.js';
+import { CHARACTER_PARTS, RETIRED_PARTS, META_FILE as ITEM_META_FILE, omitParts, restoreParts } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
 import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
 
@@ -63,22 +63,34 @@ export class SyncEngine {
 
     // ---- item editing (Studio editors, docs/studio-design.md §6) -----------------------------------------------
 
-    /** Structured data of a workspace item and its workspace hash; lorebooks also return the new-entry template. */
+    /**
+     * Structured data of a workspace item and its workspace hash; lorebooks also return the new-entry template.
+     * Characters come without the parts that are not extracted (`omitted`, see omitParts): the editor only loads what
+     * the user took out to edit, and hands `omitted` back when saving so those parts are kept as stored.
+     */
     async readItemData(path) {
         const item = this.requireItem(path);
         const { data, hash } = await this.encodeItem(item);
         const out = { path: item.path, kind: item.kind, data, hash };
         if (item.kind === 'lorebook') out.entryTemplate = (await this.decodeOptions(item)).template ?? null;
+        if (item.kind === 'character') Object.assign(out, omitParts(data, item.layout?.exclude ?? []));
         return out;
     }
 
-    /** Writes edited data to the workspace files when `hash` still matches them (else `conflict`: changed elsewhere). */
-    async writeItemData(path, { data, hash } = {}) {
+    /**
+     * Writes edited data to the workspace files when `hash` still matches them (else `conflict`: changed elsewhere).
+     * `omitted` (characters): parts the editor did not load, put back from the workspace.
+     */
+    async writeItemData(path, { data, hash, omitted } = {}) {
         const item = this.requireItem(path);
         if (data === null || typeof data !== 'object' || Array.isArray(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
+        if (omitted !== undefined && (item.kind !== 'character' || !Array.isArray(omitted) || omitted.some(p => !CHARACTER_PARTS.includes(p)))) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `omitted must list character parts: ${CHARACTER_PARTS.join(', ')}`);
+        }
         return this.withLock(item.path, async () => {
             const current = await this.encodeItem(item);
             if (hash !== current.hash) throw new ProtocolError(ERR.CONFLICT, `${item.path} 在别处被修改了`, { hash: current.hash });
+            if (omitted?.length) restoreParts(data, current.data, omitted);
             return { path: item.path, hash: await this.writeItem(item, data) };
         });
     }
@@ -208,8 +220,9 @@ export class SyncEngine {
      * Items whose files cannot be encoded right now (user mid-edit) are left alone and retried next start.
      */
     /**
-     * Changes which parts of a character are kept in card.json (`exclude`, see CHARACTER_PARTS) and re-lays out its
-     * files. Only the layout changes: the content hash must stay the same, otherwise nothing is saved.
+     * Changes which parts of a character are extracted (`exclude` lists the ones that are not, see CHARACTER_PARTS)
+     * and re-lays out its files. Only the layout changes: the content hash must stay the same, otherwise nothing is
+     * saved.
      */
     async setLayout(path, { exclude = [] } = {}) {
         const item = this.requireItem(path);
@@ -228,29 +241,42 @@ export class SyncEngine {
                 throw new ProtocolError(ERR.HOST_ERROR, 'Re-layout would change the content; layout not changed');
             }
             await this.ws.saveManifest();
-            this.log(`layout of ${path}: ${exclude.length ? `keeping ${exclude.join(', ')} in card.json` : 'everything split'}`);
+            this.log(`layout of ${path}: ${exclude.length ? `not extracting ${exclude.join(', ')}` : 'everything extracted'}`);
             return { path, layout: item.layout ?? { exclude: [] } };
         });
     }
 
     async upgradeLayouts() {
+        let manifestChanged = false;
         for (const item of this.ws.manifest.items) {
             await this.withLock(item.path, async () => {
                 const files = await this.ws.readItemFiles(item.path).catch(() => null);
                 const codec = codecFor(item.kind);
                 let version = 0;
                 try { version = JSON.parse(files?.['cellar-item.json'] ?? '{}').codec ?? 0; } catch { return; }
-                if (!files || version >= codec.version) return;
+                const retired = (item.layout?.exclude ?? []).filter(p => RETIRED_PARTS.includes(p));
+                if (!files || (version >= codec.version && !retired.length)) return;
+                const previous = item.layout;
+                let before = null;
                 try {
-                    const before = await this.encodeItem(item);
+                    before = await this.encodeItem(item);
+                    if (retired.length) {
+                        const exclude = item.layout.exclude.filter(p => !RETIRED_PARTS.includes(p));
+                        if (exclude.length) item.layout = { ...item.layout, exclude };
+                        else delete item.layout;
+                    }
                     const hash = await this.writeItem(item, before.data);
                     if (hash !== before.hash) throw new Error('content changed during re-layout');
+                    if (retired.length) manifestChanged = true;
                     this.log(`upgraded layout of ${item.path} (codec ${version} -> ${codec.version})`);
                 } catch (error) {
+                    if (previous) item.layout = previous;
+                    if (before && retired.length) await this.writeItem(item, before.data).catch(() => {});
                     this.log(`could not upgrade layout of ${item.path}: ${error.message}`);
                 }
             });
         }
+        if (manifestChanged) await this.ws.saveManifest();
     }
 
     requireItem(path) {

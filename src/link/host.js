@@ -445,7 +445,7 @@ export class Host {
                 : kind === 'regex' ? await writeGlobalRegex(data.scripts)
                     : kind === 'preset' ? await writePreset(id, data)
                         : await readLorebookFromDisk(id);
-            const sent = kind === 'character' ? characterPayload(id, data) : data;
+            const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
             const hash = await hashData(stored);
             const sentHash = await hashData(sent);
             if (hash === currentHash && sentHash !== currentHash) {

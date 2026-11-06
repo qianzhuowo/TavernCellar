@@ -1,12 +1,14 @@
 <script setup>
-// Inspector sections for a character item: script frameworks the card depends on (status `frameworks`) and which
-// parts are split into their own files (item layout, POST /api/layout). Re-layout only moves content between files;
-// the companion refuses it if the content hash would change (docs/workspace-format.md, 选择性拆出).
+// Inspector sections for a character item: script frameworks the card depends on (status `frameworks`) and 文件提取:
+// which parts are taken out to edit (item layout, POST /api/layout). An extracted part gets its own files and is
+// loaded by the card editor; the rest stays in card.json, untouched. Changing it only moves content between files;
+// the companion refuses it if the content hash would change (docs/workspace-format.md §3, 文件提取).
 import { computed, ref } from 'vue';
 import Icon from '../Icon.vue';
 import { api, errorText } from '../../api.js';
 import { useApp } from '../../stores/app.js';
 import { useUi } from '../../stores/ui.js';
+import { CARD_PARTS, BASE_SECTIONS, extractedOf, excludeFor } from '../../lib/cardParts.js';
 
 const props = defineProps({ item: { type: Object, required: true } });
 const app = useApp();
@@ -20,30 +22,44 @@ const FRAMEWORK = {
 };
 const frameworks = computed(() => (props.item.frameworks || []).map((f) => ({ ...f, ...(FRAMEWORK[f.id] || { name: f.name, need: '' }) })));
 
-/** Same order and ids as CHARACTER_PARTS in companion/src/codec/character.js. */
-const PARTS = [
-  { id: 'fields', label: '正文字段', tip: '描述、第一条消息、设定等各为一个 .md 文件', file: 'description.md' },
-  { id: 'greetings', label: '其他开场', tip: 'alternate_greetings/NN.md，每条一个文件', file: 'alternate_greetings' },
-  { id: 'regex', label: '角色正则', tip: 'regex/NN-名称.json + 替换文本', file: 'regex' },
-  { id: 'scripts', label: '酒馆助手脚本', tip: 'scripts/NN-名称.json + .js', file: 'scripts' },
-  { id: 'variables', label: '酒馆助手变量', tip: 'variables.json', file: 'variables.json' },
-  { id: 'character_book', label: '内嵌世界书', tip: 'character_book/NNNN-备注.md，每个条目一个文件', file: 'character_book' }
-];
-const exclude = computed(() => new Set(props.item.layout?.exclude || []));
+const extracted = computed(() => extractedOf(props.item));
 const busy = ref('');
 
-async function toggle(/** @type {string} */ part, /** @type {boolean} */ split) {
-  const next = new Set(exclude.value);
-  if (split) next.delete(part); else next.add(part);
+/** Where an extracted part is edited: its editor page, or its files. */
+function openPart(/** @type {import('../../lib/cardParts.js').CardPart} */ p) {
+  if (p.id === 'character_book') ui.setItemView(props.item.path, 'world');
+  else if (p.id === 'regex') ui.setItemView(props.item.path, 'regex');
+  else if (p.id === 'greetings') ui.setItemView(props.item.path, 'form');
+  else ui.setItemView(props.item.path, 'files', p.file);
+}
+
+async function toggle(/** @type {string} */ part, /** @type {boolean} */ on) {
+  const next = new Set(extracted.value);
+  if (on) next.add(part); else next.delete(part);
   busy.value = part;
   try {
-    await api.setLayout(props.item.path, PARTS.map((p) => p.id).filter((id) => next.has(id)));
+    await api.setLayout(props.item.path, excludeFor(next));
     await app.refreshStatus();
-    ui.toast(split ? '已拆成单独文件' : '已并回 card.json', 'check');
+    ui.toast(on ? '已提取，可以在编辑器中编辑' : '已取消提取：内容留在 card.json，编辑器不再加载', 'check');
+    if (on && part === 'character_book') await takeWorld();
   } catch (e) {
-    ui.toast('无法修改拆分方式：' + errorText(e), 'alert');
+    ui.toast('无法修改文件提取：' + errorText(e), 'alert');
   } finally {
     busy.value = '';
+  }
+}
+
+/** Extracting 角色世界书 also takes the bound lorebook out, as checkout does (a book already there is reused). */
+async function takeWorld() {
+  const w = app.item(props.item.path)?.world;
+  const target = props.item.bindings?.[0]?.target;
+  if (!w?.name || w.path || !target) return;
+  try {
+    await api.checkout(target, 'lorebook', w.name);
+    await app.refreshStatus();
+    ui.toast(`绑定的世界书「${w.name}」已取出到工作区`, 'check');
+  } catch (e) {
+    ui.toast(`绑定的世界书「${w.name}」没能取出：${errorText(e)}；可在「世界书」页重试`, 'alert');
   }
 }
 </script>
@@ -62,13 +78,14 @@ async function toggle(/** @type {string} */ part, /** @type {boolean} */ split) 
     </div>
   </section>
   <section class="insp-sec">
-    <h4 class="parts-h">文件拆分<button class="btn sm ghost" type="button" title="在编辑器中查看、编辑这些文件" @click="ui.setItemView(item.path, 'files')"><Icon name="file" size="sm" />查看文件</button></h4>
-    <div class="faint parts-hint">勾选的部分拆成单独文件，未勾选的留在 card.json。只移动文件，不改变内容和同步状态。</div>
-    <label v-for="p in PARTS" :key="p.id" class="check parts-row" :title="p.tip">
-      <input type="checkbox" :checked="!exclude.has(p.id)" :disabled="!!busy || !!item.error" @change="toggle(p.id, $event.target.checked)" />
+    <h4 class="parts-h">文件提取<button class="btn sm ghost" type="button" title="在编辑器中查看、编辑这些文件" @click="ui.setItemView(item.path, 'files')"><Icon name="file" size="sm" />查看文件</button></h4>
+    <div class="faint parts-hint">勾选要编辑的部分。没勾选的留在 card.json 里，编辑器不加载，同步时原样保留。只移动文件，不改变内容和同步状态。</div>
+    <div class="faint parts-hint">始终提取：{{ BASE_SECTIONS }}</div>
+    <label v-for="p in CARD_PARTS" :key="p.id" class="check parts-row" :title="p.tip">
+      <input type="checkbox" :checked="extracted.has(p.id)" :disabled="!!busy || !!item.error" @change="toggle(p.id, $event.target.checked)" />
       <span class="grow">{{ p.label }}</span>
       <Icon v-if="busy === p.id" name="spin" size="sm" />
-      <button v-else-if="!exclude.has(p.id)" class="icon-btn parts-open" type="button" :title="'查看拆出的文件：' + p.tip" @click.prevent="ui.setItemView(item.path, 'files', p.file)"><Icon name="file" size="sm" /></button>
+      <button v-else-if="extracted.has(p.id)" class="icon-btn parts-open" type="button" :title="'打开：' + p.tip" @click.prevent="openPart(p)"><Icon name="chevRight" size="sm" /></button>
     </label>
   </section>
 </template>

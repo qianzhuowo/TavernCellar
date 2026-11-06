@@ -293,7 +293,10 @@ async function keepMine() {
 .pe-pf { max-width: 320px; }
 .pe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-3) var(--sp-4); }
 .pe-grid .wide { grid-column: 1 / -1; }
-.pe-grid label.mono { font-size: 12px; }
+.pe-grid > .field { min-width: 0; }
+.pe-grid label.mono { font-size: 12px; overflow-wrap: anywhere; }
+/* numbers fill their cell like the text inputs (the global .input.num is a short fixed width) */
+.pe-grid .input.num { width: 100%; text-align: left; }
 .pe-err { color: var(--st-conflict); font-size: var(--fs-xs); display: flex; gap: 6px; align-items: center; }
 .pe-foot { font-size: var(--fs-xs); }
 .grow { flex: 1; min-width: 0; }

@@ -163,3 +163,18 @@
 
 /* broken item: its files, so it can be fixed in place */
 .item-page > .item-fix { margin-top: var(--sp-3); }
+
+/* ---------- 世界书 / 角色正则 pages: full width and height, like the lorebook and preset editors ---------- */
+.item-page.character:has(> .ce.wide) { max-width: none; height: 100%; padding: 0; gap: 0; }
+.item-page.character:has(> .ce.wide) > .item-banners { padding: var(--sp-2) var(--sp-4) 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ce.wide { flex: 1; min-height: 0; gap: 0; }
+.ce.wide > .banner { margin: var(--sp-3) var(--sp-4) 0; }
+.ce.wide > .ce-bar { margin: 0; padding: var(--sp-2) var(--sp-4); border-bottom: 1px solid var(--line); }
+.ce-pane { flex: 1; min-height: 0; display: flex; }
+.ce-pane > .empty { flex: 1; align-self: center; }
+.ce-world-pane { flex-direction: column; }
+.ce-world-head { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-6); align-items: flex-start; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
+.ce-world-head > .field { flex: 1 1 420px; max-width: 720px; }
+.ce-world-note { flex: 1 1 260px; margin: 0; font-size: var(--fs-xs); line-height: 1.6; display: flex; gap: 6px; align-items: flex-start; }
+.ce-world-note > svg { flex: none; margin-top: 3px; }
+.ce-world-pane > .lb { flex: 1; min-height: 0; height: auto; }

@@ -109,16 +109,16 @@ export const useLibrary = defineStore('library', {
         if (seq === this.seq) { this.loading = false; this.slow = false; }
       }
     },
-    /** @param {any} entry */
-    async checkout(entry) {
+    /** @param {any} entry @param {{exclude?: string[], withWorld?: boolean}} [opts] characters: file extraction */
+    async checkout(entry, opts) {
       const ui = useUi();
       const app = useApp();
       this.busy = { ...this.busy, [entry.id]: true };
       try {
-        const r = await api.checkout(this.target, this.kind, entry.id);
+        const r = await api.checkout(this.target, this.kind, entry.id, opts);
         entry.checkedOut = r.path;
         await app.refreshStatus();
-        ui.toast('已取出到工作区：' + r.path);
+        ui.toast('已取出到工作区：' + r.path + (r.world?.checkedOut ? '，绑定的世界书「' + r.world.name + '」也已取出' : ''));
         if (r.warnings && r.warnings.length) {
           const lang = app.settings?.ui?.messageLang;
           setTimeout(() => ui.toast(r.warnings.map((/** @type {any} */ w) => warningText(w, lang)).join('；'), 'alert'), 1200);

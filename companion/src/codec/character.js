@@ -2,15 +2,18 @@
  * Character card <-> workspace files. See docs/workspace-format.md §3.
  * Input/output is the canonical card JSON (what the PNG stores; JSON.parse(json_data)).
  */
-import { deepClone, getPath, hasPath, setPath, unsetPath } from './object-path.js';
+import { deepClone, getPath, hasPath, isPlainObject, setPath, unsetPath } from './object-path.js';
 import { needsRaw, normalizeText } from './text.js';
-import { joinParts, ownsPartFile, splitParts } from './character-parts.js';
+import { HELPER_PATH, LEGACY_SCRIPTS_PATH, REGEX_PATH, joinParts, ownsPartFile, splitParts } from './character-parts.js';
 import { joinBook, ownsBookFile, splitBook } from './character-book.js';
 
 export const META_FILE = 'cellar-item.json';
 export const CARD_FILE = 'card.json';
-/** 2: regex / Tavern Helper scripts / variables in their own files. 3: embedded character book entries too. */
-export const CHARACTER_CODEC_VERSION = 3;
+/**
+ * 2: regex / Tavern Helper scripts / variables in their own files. 3: embedded character book entries too.
+ * 4: "extraction" parts: the base text fields always have their own files; first_mes follows the greetings part.
+ */
+export const CHARACTER_CODEC_VERSION = 4;
 const CODEC_VERSION = CHARACTER_CODEC_VERSION;
 
 /** Long text fields split into their own files: [file, card path]. */
@@ -40,6 +43,7 @@ export const V1_MIRRORS = Object.freeze([
 ]);
 
 const GREETINGS_PATH = 'data.alternate_greetings';
+const FIRST_MES_PATH = 'data.first_mes';
 const GREETING_FILE_RE = /^alternate_greetings\/(\d+)\.md$/;
 const TEXT_FIELD_FILES = new Set(TEXT_FIELDS.map(([file]) => file));
 
@@ -48,12 +52,97 @@ export function ownsCharacterFile(rel) {
     return rel === CARD_FILE || rel === META_FILE || TEXT_FIELD_FILES.has(rel) || GREETING_FILE_RE.test(rel) || ownsPartFile(rel) || ownsBookFile(rel);
 }
 
-/** Parts of a character card that can be kept inside card.json instead of their own files (item layout `exclude`). */
-export const CHARACTER_PARTS = Object.freeze(['fields', 'greetings', 'regex', 'scripts', 'variables', 'character_book']);
+/**
+ * Parts of a character card the user extracts for editing ("文件提取"). An extracted part gets its own files and is
+ * loaded by Studio's editor; a part that is not extracted stays inside card.json and is not loaded (item layout
+ * `exclude` lists those). The base fields (name, description, personality, scenario, mes_example, prompt overrides,
+ * character note, creator metadata, talkativeness) are always extracted.
+ *   greetings       first_mes + alternate_greetings (开场白)
+ *   regex           data.extensions.regex_scripts
+ *   scripts         Tavern Helper scripts
+ *   variables       Tavern Helper variables
+ *   character_book  embedded lorebook entries (checkout also takes the lorebook bound in extensions.world)
+ */
+export const CHARACTER_PARTS = Object.freeze(['greetings', 'regex', 'scripts', 'variables', 'character_book']);
+/** Part ids of older workspaces that no longer exist (codec <= 3: 'fields' kept every text field in card.json). */
+export const RETIRED_PARTS = Object.freeze(['fields']);
+
+/**
+ * Card paths each part covers, for editors that load only the extracted parts. Tavern Helper variables live inside
+ * the same object as the scripts and are small, so they are never left out on their own; leaving out the scripts
+ * leaves out that whole object.
+ */
+const PART_PATHS = Object.freeze({
+    greetings: [FIRST_MES_PATH, 'first_mes', GREETINGS_PATH],
+    regex: [REGEX_PATH],
+    scripts: [HELPER_PATH, LEGACY_SCRIPTS_PATH],
+    variables: [],
+    character_book: ['data.character_book'],
+});
+
+/**
+ * The card without the parts that are not extracted. `omitted` names the parts actually left out (a part the card
+ * does not have is not listed); hand it back to restoreParts when saving.
+ * @param {object} card canonical card JSON
+ * @param {string[]} exclude parts that are not extracted
+ * @returns {{data: object, omitted: string[]}}
+ */
+export function omitParts(card, exclude) {
+    const data = deepClone(card);
+    const omitted = [];
+    for (const part of CHARACTER_PARTS) {
+        if (!exclude.includes(part)) continue;
+        const present = PART_PATHS[part].filter(path => hasPath(data, path));
+        if (!present.length) continue;
+        for (const path of present) unsetPath(data, path);
+        omitted.push(part);
+    }
+    return { data, omitted };
+}
+
+/**
+ * Puts the parts an editor did not load back from `full` (the card as stored), at their original key positions, so
+ * a partial edit never drops or reorders them. Changes `data` in place.
+ * @param {object} data card from the editor
+ * @param {object} full card as stored in the workspace
+ * @param {string[]} omitted parts the editor did not load (from omitParts)
+ */
+export function restoreParts(data, full, omitted) {
+    for (const part of omitted) {
+        if (!Object.hasOwn(PART_PATHS, part)) throw new Error(`Unknown part: ${part}`);
+        for (const path of PART_PATHS[part]) putBack(data, full, path);
+    }
+    return data;
+}
+
+function putBack(target, source, path) {
+    const keys = path.split('.');
+    const leaf = keys.pop();
+    const parentPath = keys.join('.');
+    const src = parentPath ? getPath(source, parentPath) : source;
+    if (!isPlainObject(src) || !Object.hasOwn(src, leaf)) {
+        unsetPath(target, path);
+        return;
+    }
+    const value = deepClone(src[leaf]);
+    const dst = parentPath ? getPath(target, parentPath) : target;
+    if (!isPlainObject(dst)) {
+        setPath(target, path, value);
+        return;
+    }
+    // Insert before the first key that follows it in the stored card, keeping the stored key order.
+    const order = Object.keys(src);
+    const later = new Set(order.slice(order.indexOf(leaf) + 1));
+    const entries = Object.entries(dst).filter(([key]) => key !== leaf);
+    const at = entries.findIndex(([key]) => later.has(key));
+    entries.splice(at < 0 ? entries.length : at, 0, [leaf, value]);
+    for (const key of Object.keys(dst)) delete dst[key];
+    for (const [key, v] of entries) Object.defineProperty(dst, key, { value: v, enumerable: true, writable: true, configurable: true });
+}
 
 /**
  * @param {object} card canonical card JSON
- * @param {{exclude?: string[]}} [options] parts to keep in card.json (see CHARACTER_PARTS)
+ * @param {{exclude?: string[]}} [options] parts that are not extracted and stay in card.json (see CHARACTER_PARTS)
  * @returns {Record<string,string>} files keyed by item-relative path ("/" separated)
  */
 export function decodeCharacter(card, { exclude = [] } = {}) {
@@ -71,7 +160,7 @@ export function decodeCharacter(card, { exclude = [] } = {}) {
     }
 
     for (const [file, path] of TEXT_FIELDS) {
-        if (skip.has('fields')) break;
+        if (path === FIRST_MES_PATH && skip.has('greetings')) continue;
         const value = getPath(rest, path);
         if (hasPath(rest, path) && typeof value === 'string') {
             files[file] = value;

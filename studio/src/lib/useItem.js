@@ -44,6 +44,8 @@ export function useItem(pathRef) {
   const externalChange = ref(false);
   /** Bumped on every (re)load so views can reset local UI state derived from data. */
   const version = ref(0);
+  /** Characters: parts not loaded because they are not extracted; sent back on save so they are kept. */
+  const omitted = ref(/** @type {string[]} */ ([]));
   let timer = 0;
   /** Plain copy of the data as last loaded or written (lorebooks: base for entry-by-entry writes). */
   let written = null;
@@ -58,6 +60,7 @@ export function useItem(pathRef) {
       hash.value = r.hash;
       written = clone(r.data);
       entryTemplate.value = r.entryTemplate ?? null;
+      omitted.value = r.omitted ?? [];
       dirty.value = false;
       externalChange.value = false;
       version.value++;
@@ -98,7 +101,7 @@ export function useItem(pathRef) {
           version.value++;
         }
       } else {
-        const r = await api.putItem(pathRef.value, sent, hash.value);
+        const r = await api.putItem(pathRef.value, sent, hash.value, omitted.value.length ? omitted.value : undefined);
         hash.value = r.hash;
         written = sent;
       }
@@ -163,5 +166,5 @@ export function useItem(pathRef) {
     if (dirty.value) save();
   });
 
-  return { data, hash, entryTemplate, loading, saving, dirty, error, externalChange, version, load, touch, save, entryOps };
+  return { data, hash, entryTemplate, omitted, loading, saving, dirty, error, externalChange, version, load, touch, save, entryOps };
 }

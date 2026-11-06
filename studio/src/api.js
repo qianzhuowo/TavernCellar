@@ -82,7 +82,8 @@ export const api = {
   /** @param {{target: string, kind: string, query?: string, offset?: number, limit?: number}} q @param {AbortSignal} [signal] */
   catalog: (q, signal) => call('POST', '/api/catalog', q, { signal }),
   /** @param {string} target @param {string} kind @param {string} id */
-  checkout: (target, kind, id) => call('POST', '/api/checkout', { target, kind, id }),
+  /** @param {{exclude?: string[], withWorld?: boolean}} [opts] characters: parts not extracted; also take the bound lorebook */
+  checkout: (target, kind, id, opts = {}) => call('POST', '/api/checkout', { target, kind, id, ...opts }),
   /** @param {string} path @param {string} [target] */
   sync: (path, target) => call('POST', '/api/sync', { path, target }),
   /** @param {string} path @param {string} [target] */
@@ -101,7 +102,8 @@ export const api = {
   resolveConflict: (path, target, choices) => call('POST', '/api/conflict/resolve', { path, target, choices }),
   // Editors (S2/S3): structured item data guarded by the workspace hash.
   item: (path) => call('POST', '/api/item', { path }),
-  putItem: (path, data, hash) => call('PUT', '/api/item', { path, data, hash }),
+  /** @param {string[]} [omitted] character parts the editor did not load (from item()); kept as stored */
+  putItem: (path, data, hash, omitted) => call('PUT', '/api/item', { path, data, hash, omitted }),
   editEntries: (path, hash, ops) => call('POST', '/api/item/entries', { path, hash, ops }),
   /** Character parts kept in card.json instead of their own files. @param {string} path @param {string[]} exclude */
   setLayout: (path, exclude) => call('POST', '/api/layout', { path, exclude }),

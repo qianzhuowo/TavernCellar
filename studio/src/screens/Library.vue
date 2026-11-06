@@ -8,6 +8,7 @@ import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { initialOf, relTime, STALE_HINT, presetRef } from '../lib/status.js';
 import { LIB_KINDS, kindOf, libraryHref } from '../lib/kinds.js';
+import { CARD_PARTS, BASE_SECTIONS, excludeFor, lastExtraction, rememberExtraction } from '../lib/cardParts.js';
 
 const app = useApp();
 const ui = useUi();
@@ -48,11 +49,24 @@ const presetGroups = computed(() => {
 
 function open(/** @type {any} */ e) {
   if (e.checkedOut) ui.openItem(e.checkedOut);
-  else preview.value = e;
+  else { extract.value = lastExtraction(); preview.value = e; }
+}
+
+/** 文件提取 picked in the preview drawer before a character is taken out. */
+const extract = ref(lastExtraction());
+function toggleExtract(/** @type {string} */ id, /** @type {boolean} */ on) {
+  const next = new Set(extract.value);
+  if (on) next.add(id); else next.delete(id);
+  extract.value = next;
 }
 
 async function take(/** @type {any} */ e, /** @type {boolean} */ thenOpen) {
-  const p = await lib.checkout(e);
+  let opts;
+  if (lib.kind === 'character') {
+    rememberExtraction(extract.value);
+    opts = { exclude: excludeFor(extract.value), withWorld: extract.value.has('character_book') };
+  }
+  const p = await lib.checkout(e, opts);
   if (p && thenOpen) { preview.value = null; ui.openItem(p); }
 }
 
@@ -186,6 +200,17 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
             <dt>来源</dt><dd>{{ cur && (cur.live ? 'Cellar Link' : '数据目录（离线）') }}</dd>
           </dl>
           <div class="dt-note faint"><Icon name="info" size="sm" /><div>描述与开场白预览将在后续版本提供。取出后可在工作区中查看。</div></div>
+          <section v-if="lib.kind === 'character'" class="lib-extract">
+            <h4>文件提取</h4>
+            <p class="faint">只提取要编辑的部分，没勾选的留在 card.json 里、编辑器不加载，同步时原样保留。以后可在检查栏修改。</p>
+            <div class="lib-extract-base faint"><Icon name="check" size="sm" /><div>始终提取：{{ BASE_SECTIONS }}</div></div>
+            <label v-for="p in CARD_PARTS" :key="p.id" class="check lib-extract-row" :title="p.tip">
+              <input type="checkbox" :checked="extract.has(p.id)" @change="toggleExtract(p.id, /** @type {any} */ ($event.target).checked)" />
+              <span>{{ p.label }}</span>
+              <span v-if="p.id === 'character_book'" class="faint lib-extract-tip">绑定的世界书会一起取出到工作区</span>
+              <span v-else-if="p.id === 'regex'" class="faint lib-extract-tip">在角色的「角色正则」页编辑</span>
+            </label>
+          </section>
         </div>
         <div class="drawer-foot">
           <button class="btn ghost" @click="preview = null">关闭</button>

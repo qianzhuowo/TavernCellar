@@ -8,6 +8,7 @@ import { useUi, hrefOf, pathOfKey } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
 import { LIB_KINDS, libraryHref } from '../lib/kinds.js';
+import { extractedOf } from '../lib/cardParts.js';
 
 const app = useApp();
 const ui = useUi();
@@ -32,6 +33,19 @@ const SETTINGS_NAV = [
 
 /** A global regex item is named after its tavern: every tavern has exactly one. */
 const regexName = (/** @type {any} */ it) => '全局正则' + (it.bindings?.length === 1 ? ' · ' + app.targetName(it.bindings[0].target) : '');
+/**
+ * A character's extracted 世界书 / 角色正则 shown under it; each opens that page of the card editor. The bound
+ * lorebook is also its own item in the 世界书 group.
+ * @param {any} it
+ */
+function subRows(it) {
+  if (it.kind !== 'character' || it.error) return [];
+  const ex = extractedOf(it);
+  const rows = [];
+  if (ex.has('character_book') && it.world?.name) rows.push({ view: 'world', icon: 'book', label: '世界书 · ' + it.world.name, title: it.world.path ? '绑定的世界书（工作区 ' + it.world.path + '）' : '绑定的世界书（尚未取出）' });
+  if (ex.has('regex')) rows.push({ view: 'regex', icon: 'regex', label: '角色正则', title: '这张卡的角色正则' });
+  return rows;
+}
 const hostMark = (/** @type {string} */ id) => { const t = app.target(id); return t.host ? HOST[t.host].mark : '?'; };
 const sourceLabel = (/** @type {any} */ t) => app.targetName(t.id) + (t.live ? '' : ' (离线)');
 function jump(/** @type {string} */ id) {
@@ -96,9 +110,8 @@ function jump(/** @type {string} */ id) {
             <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span><a class="tg-add icon-btn" :href="libraryHref(g.key)" :title="'从资料库取出' + g.title" @click.stop><Icon name="plus" size="sm" /></a>
           </div>
           <template v-if="!ui.collapsed[g.key]">
+            <template v-for="it in g.items" :key="it.path">
             <a
-              v-for="it in g.items"
-              :key="it.path"
               class="tree-item"
               :class="{ on: ui.route.key === 'item:' + it.path }"
               :href="hrefOf('item:' + it.path)"
@@ -117,6 +130,18 @@ function jump(/** @type {string} */ id) {
                 />
               </span>
             </a>
+            <a
+              v-for="s in subRows(it)"
+              :key="s.view"
+              class="tree-item tree-sub"
+              :class="{ on: ui.route.key === 'item:' + it.path && (ui.itemView[it.path]?.view || 'form') === s.view }"
+              :href="hrefOf('item:' + it.path)"
+              :title="s.title"
+              @click="ui.setItemView(it.path, s.view)"
+            >
+              <Icon :name="s.icon" size="sm" /><span class="name">{{ s.label }}</span>
+            </a>
+            </template>
             <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a :href="libraryHref(g.key)">去资料库取出</a></div>
           </template>
         </div>

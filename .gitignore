@@ -121,6 +121,10 @@ backups/
 .test-output/
 *.img
 *.bin
+# Redirected stdout/stderr of live-test processes (ST server, companion, Electron) and Cygwin/MSYS crash dumps
+*.out
+*.err
+*.stackdump
 
 # Local AI-agent / tool state
 .limcode/

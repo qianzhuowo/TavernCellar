@@ -146,6 +146,9 @@ svg.ic.lg { width: 20px; height: 20px; }
 .tree-item .badges { display: flex; gap: 3px; }
 .tree-item.reserved { opacity: .5; cursor: default; }
 .tree-item.reserved:hover { background: none; color: var(--text-2); }
+/* a character's extracted 世界书 / 角色正则 under it */
+.tree-item.tree-sub { height: 28px; padding-left: 36px; font-size: var(--fs-sm); color: var(--text-3); }
+.tree-item.tree-sub > svg { flex: none; opacity: .75; }
 
 /* ---------- Main / tabs ---------- */
 .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg-1); }
