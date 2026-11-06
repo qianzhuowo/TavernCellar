@@ -29,7 +29,10 @@
 
 /* matrix */
 .sx .matrix-wrap { max-height: none; }
+/* min-width: max-content keeps narrow windows scrolling with the item column pinned. The item column has no percentage
+   width here: a % column inflates the table's max-content width, which left a scrollbar over empty space. */
 .sx-matrix { min-width: max-content; }
+.sx-matrix .item-col { width: auto; }
 .sx-matrix thead th { position: sticky; top: 0; z-index: 2; }
 .sx-sticky { position: sticky; left: 0; z-index: 1; background: var(--bg-2); }
 .sx-matrix thead .sx-sticky { z-index: 3; background: var(--bg-3); }

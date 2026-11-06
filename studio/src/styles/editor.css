@@ -167,10 +167,11 @@
 .ce-world-head { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
 .ce-world-pane > .lb { flex: 1; min-height: 0; height: auto; }
 
-/* 角色世界书 picker (components/card/WorldPicker.vue) */
-.wp { display: flex; flex-direction: column; gap: var(--sp-2); }
-.wp-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.wp-title h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+/* 角色世界书 picker (components/card/WorldPicker.vue): title, ⓘ, hint and the dropdown share one line when they fit,
+   otherwise the dropdown row wraps under the title */
+.wp { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); }
+.wp-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 0 1 auto; }
+.wp-title h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; white-space: nowrap; }
 .wp-help { font-size: var(--fs-xs); display: inline-flex; align-items: center; gap: 4px; margin-left: var(--sp-2); }
 .wp-info { position: relative; display: inline-grid; place-items: center; color: var(--text-3); cursor: help; border-radius: 50%; }
 .wp-info:hover, .wp-info:focus-visible { color: var(--accent-text); outline: none; }
@@ -180,7 +181,7 @@
   box-shadow: var(--shadow-2); font-size: var(--fs-sm); font-weight: 400; line-height: 1.6; white-space: normal; cursor: default;
 }
 .wp-info:hover .wp-tip, .wp-info:focus-visible .wp-tip { display: block; }
-.wp-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.wp-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); flex: 1 1 460px; min-width: 0; }
 .wp-state { font-size: var(--fs-sm); }
 .wp-combo { position: relative; flex: 0 1 460px; min-width: 220px; }
 .wp-trigger {
