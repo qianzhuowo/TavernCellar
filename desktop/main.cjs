@@ -1,7 +1,8 @@
 /**
  * Cellar Studio desktop shell (Electron main process).
  * Runs the companion in-process (startServer) and shows the Studio UI it serves at /studio/.
- * The UI talks to the companion over HTTP + SSE only; IPC is limited to three native helpers (see preload.cjs).
+ * The UI talks to the companion over HTTP + SSE only; IPC is limited to a few native helpers and the app update
+ * (see preload.cjs).
  * See docs/studio-design.md §2.
  */
 // CommonJS on purpose: Electron 33's ESM main crashes on named imports from 'electron'.
@@ -92,7 +93,120 @@ function fromStudio(event) {
     return typeof event.senderFrame?.url === 'string' && event.senderFrame.url.startsWith(studioUrl);
 }
 
+// ---- updates: published GitHub releases only (docs/studio-design.md §4.6) -------------------------------------
+// The check reads the repository's releases (drafts and pre-releases excluded) so every newer version's notes can
+// be shown. Installing goes through electron-updater (latest.yml attached by the release workflow); it only applies
+// to the installed app: the portable exe and a source checkout can only be pointed to the download page.
+const UPDATE_REPO = 'qianzhuowo/TavernCellar';
+const RELEASES_PAGE = `https://github.com/${UPDATE_REPO}/releases`;
+/** @type {any} electron-updater's autoUpdater, loaded on first download */
+let updater = null;
+let downloaded = '';
+
+/** 'installer' | 'portable' | 'source' */
+function updateMode() {
+    if (!app.isPackaged) return 'source';
+    return process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installer';
+}
+
+const VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)$/;
+function compareVersions(a, b) {
+    const x = VERSION_RE.exec(a)?.slice(1).map(Number) ?? [0, 0, 0];
+    const y = VERSION_RE.exec(b)?.slice(1).map(Number) ?? [0, 0, 0];
+    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+    return 0;
+}
+
+async function checkUpdate() {
+    const current = app.getVersion();
+    const mode = updateMode();
+    let res;
+    try {
+        res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases?per_page=30`, {
+            headers: { Accept: 'application/vnd.github+json', 'User-Agent': `CellarStudio/${current}` },
+            signal: AbortSignal.timeout(15000),
+        });
+    } catch (error) {
+        return { error: `无法连接 GitHub：${error.cause?.code ?? error.message}`, current, mode, page: RELEASES_PAGE };
+    }
+    if (!res.ok) {
+        const limited = res.status === 403 || res.status === 429;
+        return { error: limited ? 'GitHub 暂时限制了查询次数，请稍后再试' : `GitHub 返回 ${res.status}`, current, mode, page: RELEASES_PAGE };
+    }
+    const releases = (await res.json())
+        .filter(r => !r.draft && !r.prerelease && VERSION_RE.test(r.tag_name))
+        .map(r => ({
+            version: r.tag_name.replace(/^v/, ''), name: r.name || r.tag_name, notes: r.body || '', date: r.published_at, url: r.html_url,
+            installable: (r.assets ?? []).some(a => a.name === 'latest.yml'),
+        }))
+        .sort((a, b) => compareVersions(b.version, a.version));
+    const newer = releases.filter(r => compareVersions(r.version, current) > 0);
+    log(`update check: current ${current}, latest ${releases[0]?.version ?? 'none'}`);
+    return {
+        current, mode, page: RELEASES_PAGE, latest: releases[0] ?? null, newer,
+        canInstall: mode === 'installer' && Boolean(newer[0]?.installable),
+        downloaded: downloaded && newer[0] && downloaded === newer[0].version ? downloaded : '',
+    };
+}
+
+function getUpdater() {
+    if (updater) return updater;
+    ({ autoUpdater: updater } = require('electron-updater'));
+    updater.autoDownload = false;
+    updater.autoInstallOnAppQuit = false;
+    updater.allowPrerelease = false;
+    updater.allowDowngrade = false;
+    updater.logger = { info: m => log(`updater: ${m}`), warn: m => log(`updater: ${m}`), error: m => log(`updater: ${m}`), debug: () => {} };
+    updater.on('download-progress', p => {
+        win?.webContents.send('cellar:update-progress', { percent: p.percent, transferred: p.transferred, total: p.total });
+    });
+    return updater;
+}
+
+async function downloadUpdate() {
+    if (updateMode() !== 'installer') return { error: '只有安装版可以自动更新；请在下载页获取新版本' };
+    try {
+        const u = getUpdater();
+        const result = await u.checkForUpdates();
+        const version = result?.updateInfo?.version;
+        if (!version || compareVersions(version, app.getVersion()) <= 0) return { error: '没有可以安装的新版本' };
+        await u.downloadUpdate();
+        downloaded = version;
+        return { version };
+    } catch (error) {
+        log(`update download failed: ${error.stack ?? error.message}`);
+        return { error: `下载更新失败：${String(error.message).split('\n')[0]}` };
+    }
+}
+
+/** Stops the companion first (so the workspace and the port are released), then runs the installer and restarts. */
+async function installUpdate() {
+    if (!downloaded || !updater) throw new Error('更新还没有下载完成');
+    log(`installing update ${downloaded}`);
+    quitting = true;
+    const s = server;
+    server = null;
+    if (s) await Promise.race([s.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 3000))]);
+    tray?.destroy();
+    tray = null;
+    // silent: the installer reuses the folder of the installed app (and keeps its workspace); then starts it again
+    setImmediate(() => updater.quitAndInstall(true, true));
+}
+
 function registerIpc() {
+    ipcMain.handle('cellar:update-check', async event => {
+        if (!fromStudio(event)) return null;
+        return checkUpdate();
+    });
+    ipcMain.handle('cellar:update-download', async event => {
+        if (!fromStudio(event)) return null;
+        return downloadUpdate();
+    });
+    ipcMain.handle('cellar:update-install', async event => {
+        if (!fromStudio(event)) return false;
+        await installUpdate();
+        return true;
+    });
     ipcMain.handle('cellar:pick-directory', async event => {
         if (!fromStudio(event)) return null;
         const result = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });

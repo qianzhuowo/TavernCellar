@@ -18,6 +18,10 @@ import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/
 
 /** Re-merge attempts when the tavern changes again between our merge and the write (rule 6). */
 const MAX_MERGE_ATTEMPTS = 2;
+/** Undo steps kept per item (in memory, for this run of the companion). */
+const UNDO_LIMIT = 30;
+/** Editor auto-saves this close together count as one undo step (typing a sentence is one step, not five). */
+const UNDO_MERGE_MS = 1500;
 
 /** Name of the lorebook a character is bound to (data.extensions.world), if any. */
 function linkedWorldName(card) {
@@ -36,6 +40,10 @@ export const COLLECTION_FILE = 'workshop/prompts.json';
 
 const ENTRY_TEMPLATE = 'worldinfo-entry';
 
+const MB = 1024 * 1024;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const mb = bytes => `${(bytes / MB).toFixed(bytes < 10 * MB ? 2 : 1)} MB`;
+
 export class SyncEngine {
     /**
      * @param {{workspace: import('./workspace/workspace.js').Workspace, targets: import('./targets.js').TargetRegistry, log?: Function}} deps
@@ -51,6 +59,13 @@ export class SyncEngine {
         /** Called after the version history changed (server: tells Studio to refresh). */
         this.onHistory = () => {};
         this.snapshotTimer = null;
+        /**
+         * Undo / redo per item path: {undo: files[], redo: files[], after, at, mergeable}. Each step is a snapshot
+         * of the item folder taken before a write made through the companion; `after` fingerprints the files that
+         * write left, so a change made anywhere else (an editor, a pull) is noticed and never undone blindly.
+         * @type {Map<string, {undo: Record<string,string>[], redo: Record<string,string>[], after: string, at: number, mergeable: boolean}>}
+         */
+        this.edits = new Map();
     }
 
     /** Runs fn exclusively for one item path. */
@@ -100,7 +115,7 @@ export class SyncEngine {
             const current = await this.encodeItem(item);
             if (hash !== current.hash) throw new ProtocolError(ERR.CONFLICT, `${item.path} 在别处被修改了`, { hash: current.hash });
             if (omitted?.length) restoreParts(data, current.data, omitted);
-            return { path: item.path, hash: await this.writeItem(item, data) };
+            return { path: item.path, hash: await this.#undoable(item, () => this.writeItem(item, data), { mergeable: true }) };
         });
     }
 
@@ -143,7 +158,7 @@ export class SyncEngine {
                     throw new ProtocolError(ERR.BAD_REQUEST, `Unknown entry op: ${op?.op}`);
                 }
             }
-            return { path: item.path, hash: await this.writeItem(item, data), created };
+            return { path: item.path, hash: await this.#undoable(item, () => this.writeItem(item, data), { mergeable: true }), created };
         });
     }
 
@@ -178,7 +193,7 @@ export class SyncEngine {
         const written = await this.withLock(item.path, async () => {
             const current = await this.#itemFileText(item, file);
             if (hash !== await hashData(current)) throw new ProtocolError(ERR.CONFLICT, `${file} 在别处被修改了`, { hash: await hashData(current) });
-            await this.ws.writeItemFile(item.path, file, text);
+            await this.#undoable(item, () => this.ws.writeItemFile(item.path, file, text), { mergeable: true });
             return { path: item.path, file, hash: await hashData(text) };
         });
         await this.onFilesChanged(item.path);
@@ -201,6 +216,79 @@ export class SyncEngine {
         await this.ws.writeItemFiles(item.path, codec.decode(data, await this.decodeOptions(item)), codec.owns);
         const { hash } = await this.encodeItem(item);
         return hash;
+    }
+
+    // ---- undo / redo (Studio's 撤回 / 取消撤回, docs/versioning.md §6) ----------------------------------------
+
+    /** Fingerprint of an item folder's files (undo steps compare it to notice changes made elsewhere). */
+    async #filesPrint(path) {
+        return hashData(await this.ws.readItemFiles(path));
+    }
+
+    /**
+     * Runs a write of an item's files (caller holds the item lock) and records the files before it as one undo step.
+     * A change made elsewhere since the last recorded write (external editor, pull, merge) starts the stack over:
+     * stepping back across it would silently drop that change. `mergeable` writes (editor auto-saves) within
+     * UNDO_MERGE_MS of the previous one join its step.
+     */
+    async #undoable(item, write, { mergeable = false } = {}) {
+        const before = await this.ws.readItemFiles(item.path);
+        const beforePrint = await hashData(before);
+        const result = await write();
+        const afterPrint = await this.#filesPrint(item.path);
+        if (afterPrint === beforePrint) return result;
+        let stack = this.edits.get(item.path);
+        if (!stack || stack.after !== beforePrint) stack = { undo: [], redo: [], after: '', at: 0, mergeable: false };
+        const now = Date.now();
+        const join = mergeable && stack.mergeable && stack.undo.length && now - stack.at < UNDO_MERGE_MS;
+        if (!join) {
+            stack.undo.push(before);
+            if (stack.undo.length > UNDO_LIMIT) stack.undo.shift();
+        }
+        stack.redo = [];
+        stack.after = afterPrint;
+        stack.at = now;
+        stack.mergeable = mergeable;
+        this.edits.set(item.path, stack);
+        return result;
+    }
+
+    /** Whether undo / redo can run for an item now (false when its files changed elsewhere since). */
+    async undoState(path) {
+        const stack = this.edits.get(path);
+        if (!stack || (!stack.undo.length && !stack.redo.length)) return { undo: false, redo: false };
+        const valid = stack.after === await this.#filesPrint(path).catch(() => '');
+        return { undo: valid && stack.undo.length > 0, redo: valid && stack.redo.length > 0 };
+    }
+
+    /** 撤回: puts the item's files back as they were before the last write made through the companion. */
+    undo(path) { return this.#step(path, 'undo'); }
+
+    /** 取消撤回: redoes the last undone step. */
+    redo(path) { return this.#step(path, 'redo'); }
+
+    async #step(path, dir) {
+        const item = this.requireItem(path);
+        const result = await this.withLock(item.path, async () => {
+            const stack = this.edits.get(item.path);
+            const from = dir === 'undo' ? stack?.undo : stack?.redo;
+            if (!from?.length) throw new ProtocolError(ERR.BAD_REQUEST, dir === 'undo' ? '没有可以撤回的修改' : '没有可以取消的撤回');
+            const current = await this.ws.readItemFiles(item.path);
+            if (stack.after !== await hashData(current)) {
+                this.edits.delete(item.path);
+                throw new ProtocolError(ERR.CONFLICT, `${item.path} 之后在别处被修改过（外部编辑或从酒馆取回），不能再撤回那之前的修改`);
+            }
+            const files = from.pop();
+            (dir === 'undo' ? stack.redo : stack.undo).push(current);
+            await this.ws.writeItemFiles(item.path, files, codecFor(item.kind).owns);
+            stack.after = await this.#filesPrint(item.path);
+            stack.at = 0;
+            stack.mergeable = false;
+            return { path: item.path, undo: stack.undo.length > 0, redo: stack.redo.length > 0 };
+        });
+        this.log(`${dir === 'undo' ? 'undid' : 'redid'} an edit of ${item.path}`);
+        await this.onFilesChanged(item.path);
+        return { ...result, hash: (await this.encodeItem(item).catch(() => null))?.hash ?? null };
     }
 
     /**
@@ -435,6 +523,7 @@ export class SyncEngine {
             await this.ws.saveManifest();
             await this.ws.saveState();
             await this.#deployed(item, target.id);
+            await this.#markOrigin(item);
             await this.pushWatchList(target.id);
             const warnings = [];
             if (written !== remote.hash) {
@@ -620,8 +709,10 @@ export class SyncEngine {
         return this.withLock(path, async () => {
             const targets = Object.keys(item.bindings ?? {});
             for (const targetId of targets) await this.ws.vcs.dropDeployed(targetId, item.path).catch(() => {});
+            await this.ws.vcs.dropOrigin(item.path).catch(() => {});
             const kept = await this.ws.removeItem(item.path, codecFor(item.kind).owns, { deleteFiles: !keepFiles });
             this.local.delete(item.path);
+            this.edits.delete(item.path);
             for (const targetId of targets) {
                 await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
             }
@@ -693,7 +784,8 @@ export class SyncEngine {
             const options = kind === 'preset' ? { apiId: parsePresetId(id).apiId } : await this.decodeOptions(item);
             await this.ws.writeItemFiles(path, codec.decode(data, options), codec.owns);
             await this.ws.saveManifest();
-            await this.#draftChanged();
+            await this.#markOrigin(item);
+            this.onHistory();
             this.log(`created ${kind} ${path}`);
             return { path, kind, id };
         });
@@ -1108,17 +1200,83 @@ export class SyncEngine {
         const vcs = await this.versions();
         let id;
         try { id = await vcs.resolve(rev); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
+        return this.#restoreTo(vcs, item, id);
+    }
+
+    /**
+     * 撤销当前的修改: the item goes back to the last recorded version (the draft's parent), dropping its part of the
+     * draft; an item that entered the workspace after that version goes back to how it was when it was taken out /
+     * created. The same write as restoring a version, so it can be undone.
+     */
+    async revertItem(path) {
+        const item = this.requireItem(path);
+        const vcs = await this.versions();
+        await vcs.snapshot();
+        const point = await vcs.revertPoint(item.path);
+        if (!point) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 没有记录过的版本，也没有取出时的状态可以恢复`);
+        return { ...(await this.#restoreTo(vcs, item, point.oid)), origin: point.origin };
+    }
+
+    /** Remembers the item as it is now (just taken out / created) as its 撤销当前的修改 point for the open draft. */
+    async #markOrigin(item) {
+        try {
+            const vcs = await this.versions();
+            const oid = (await vcs.snapshot()) ?? await vcs.resolve('HEAD');
+            await vcs.setOrigin(item.path, oid);
+        } catch (error) {
+            this.log(`version history: ${error.message}`);
+        }
+    }
+
+    async #restoreTo(vcs, item, id) {
         const files = await vcs.readItemAt(id, item.path);
         if (!files) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 在版本 ${id.slice(0, 8)} 中不存在`);
         const result = await this.withLock(item.path, async () => {
             const options = item.kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
             try { codecFor(item.kind).encode(files, options); } catch (error) { throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${error.message}`); }
-            await this.ws.writeItemFiles(item.path, files, codecFor(item.kind).owns);
+            await this.#undoable(item, () => this.ws.writeItemFiles(item.path, files, codecFor(item.kind).owns));
             return { path: item.path, rev: id, hash: (await this.encodeItem(item)).hash };
         });
         await vcs.snapshot();
         this.log(`restored ${item.path} to version ${id.slice(0, 8)}`);
         this.onHistory();
+        return result;
+    }
+
+    // ---- 压缩历史 (docs/versioning.md §7.1) ------------------------------------------------------------------
+
+    /** What the history takes on disk, how much of it nothing uses any more, and the last compaction. */
+    async historyStorage() {
+        const vcs = await this.versions();
+        return { ...(await vcs.storage({ unused: true })), compacted: this.ws.state.history?.compacted ?? null };
+    }
+
+    /**
+     * Deletes the replaced draft states and files only they used, and packs the rest into one file. Every version,
+     * tag, draft and deployed pointer stays. `reason` names the automatic rule that ran it.
+     */
+    async compactHistory({ reason = '' } = {}) {
+        const vcs = await this.versions();
+        await vcs.snapshot(); // the files on disk are in the draft before anything is judged unused
+        const result = await vcs.compact();
+        this.ws.state.history = { ...this.ws.state.history, compacted: { at: new Date().toISOString(), bytes: result.afterBytes, ...(reason ? { reason } : {}) } };
+        await this.ws.saveState();
+        this.log(`压缩历史${reason ? `（自动：${reason}）` : ''}：${mb(result.beforeBytes)} → ${mb(result.afterBytes)}，删除 ${result.removed} 个不再使用的对象`);
+        return result;
+    }
+
+    /**
+     * Automatic cleanup (设置 → 版本历史): above `maxMB` the history is compacted, but again only once it grew by a
+     * fifth since the last compaction (history that is simply that big is not repacked every time); otherwise
+     * unused objects older than `keepDays` are deleted.
+     */
+    async autoCleanHistory({ maxMB, keepDays }) {
+        const vcs = await this.versions();
+        const { bytes } = await vcs.storage();
+        const last = this.ws.state.history?.compacted?.bytes ?? 0;
+        if (bytes > maxMB * MB && bytes > last * 1.2) return this.compactHistory({ reason: `超过 ${maxMB} MB` });
+        const result = await vcs.compact({ keepMs: keepDays * DAY_MS, pack: false });
+        if (result.removed) this.log(`清理历史：删除 ${result.removed} 个超过 ${keepDays} 天不再使用的对象（${mb(result.beforeBytes - result.afterBytes)}）`);
         return result;
     }
 
@@ -1272,7 +1430,7 @@ export class SyncEngine {
                     ...(state.warnings?.length ? { warnings: state.warnings, warnedAt: state.warnedAt } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(parts ? { parts } : {}), ...(world ? { world } : {}) });
+            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, edits: await this.undoState(item.path), ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(parts ? { parts } : {}), ...(world ? { world } : {}) });
         }
         return {
             workspace: this.ws.root,

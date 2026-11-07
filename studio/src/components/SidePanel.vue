@@ -10,6 +10,8 @@ import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
 import { LIB_KINDS, libraryHref } from '../lib/kinds.js';
 import { extractedOf } from '../lib/cardParts.js';
 import { api, errorText } from '../api.js';
+import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
+import { editStep } from '../lib/syncOps.js';
 
 const app = useApp();
 const ui = useUi();
@@ -29,6 +31,7 @@ const SETTINGS_NAV = [
   { id: 'conn', icon: 'plug', label: '连接' },
   { id: 'editor', icon: 'palette', label: '外观' },
   { id: 'text', icon: 'code', label: '编辑器' },
+  { id: 'history', icon: 'history', label: '版本历史' },
   { id: 'app', icon: 'box', label: '关于' }
 ];
 
@@ -68,9 +71,45 @@ function closeMenu() { menu.value = null; naming.value = ''; }
 function onDocDown(/** @type {MouseEvent} */ ev) {
   const el = /** @type {HTMLElement} */ (ev.target);
   if (menu.value && !el.closest('.ws-menu') && !el.closest('.ws-add')) closeMenu();
+  if (ctx.value && !el.closest('.ws-ctx')) closeCtx();
 }
+const closeCtx = () => { ctx.value = null; ctxArmed.value = false; };
+const onKey = (/** @type {KeyboardEvent} */ ev) => { if (ev.key === 'Escape') { closeCtx(); if (menu.value && !naming.value) closeMenu(); } };
 document.addEventListener('mousedown', onDocDown);
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown));
+document.addEventListener('keydown', onKey);
+window.addEventListener('blur', closeCtx);
+window.addEventListener('resize', closeCtx);
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocDown);
+  document.removeEventListener('keydown', onKey);
+  window.removeEventListener('blur', closeCtx);
+  window.removeEventListener('resize', closeCtx);
+});
+
+// ---- right-click menu of a workspace item (same actions as the inspector) ----
+/** @type {import('vue').Ref<{path: string, x: number, y: number} | null>} */
+const ctx = ref(null);
+const ctxArmed = ref(false);
+const editor = computed(() => app.settings?.ui?.externalEditor || 'system');
+function openCtx(/** @type {MouseEvent} */ ev, /** @type {string} */ path) {
+  closeMenu();
+  ctxArmed.value = false;
+  // keep the menu inside the window (it is about 230 × 220 px)
+  ctx.value = { path, x: Math.min(ev.clientX, window.innerWidth - 236), y: Math.min(ev.clientY, window.innerHeight - 230) };
+}
+async function ctxRun(/** @type {string} */ action) {
+  const c = ctx.value;
+  if (!c) return;
+  // 撤销 takes two clicks, like the inspector: the first arms it and keeps the menu open
+  if (action === 'revert' && !ctxArmed.value) { ctxArmed.value = true; return; }
+  closeCtx();
+  const abs = joinPath(app.workspace, c.path);
+  if (action === 'reveal') await openNative('showInFolder', abs, ui.toast);
+  else if (action === 'open') await openExternalEditor(abs, editor.value, ui.toast);
+  else if (action === 'copy') await copyPathToast(abs, ui.toast);
+  else if (action === 'revert') await editStep(app, ui, c.path, 'revert');
+  else if (action === 'remove') ui.removeAsk = c.path;
+}
 async function pickNew(/** @type {string} */ kind) {
   if (kind === 'regex') { await newRegexScript(); return; }
   naming.value = kind;
@@ -178,6 +217,7 @@ function jump(/** @type {string} */ id) {
               :class="{ on: ui.route.key === 'item:' + it.path }"
               :href="hrefOf('item:' + it.path)"
               :title="it.kind === 'preset' ? (presetRef(it.bindings?.[0]?.id)?.type || '') + ' · ' + it.path : it.path"
+              @contextmenu.prevent="openCtx($event, it.path)"
             >
               <span class="name">{{ it.kind === 'regex' ? regexName(it) : displayName(it) }}</span>
               <span class="badges">
@@ -200,6 +240,7 @@ function jump(/** @type {string} */ id) {
               :href="hrefOf('item:' + it.path)"
               :title="s.title"
               @click="ui.setItemView(it.path, s.view)"
+              @contextmenu.prevent="openCtx($event, it.path)"
             >
               <Icon :name="s.icon" size="sm" /><span class="name">{{ s.label }}</span>
             </a>
@@ -224,6 +265,17 @@ function jump(/** @type {string} */ id) {
               <button class="btn sm primary" type="submit" :disabled="menuBusy || !newName.trim()">{{ menuBusy ? '创建中…' : '创建' }}</button>
             </div>
           </form>
+        </div>
+        <div v-if="ctx" class="ws-menu ws-ctx" role="menu" :style="{ left: ctx.x + 'px', top: ctx.y + 'px' }" @contextmenu.prevent>
+          <template v-if="desktop.available">
+            <button class="ws-mi" role="menuitem" type="button" @click="ctxRun('reveal')"><Icon name="folderOpen" size="sm" />在资源管理器中显示</button>
+          </template>
+          <button v-if="desktop.available || editor === 'vscode'" class="ws-mi" role="menuitem" type="button" @click="ctxRun('open')"><Icon :name="editor === 'vscode' ? 'code' : 'external'" size="sm" />{{ editor === 'vscode' ? '在 VS Code 中打开' : '打开文件夹' }}</button>
+          <button class="ws-mi" role="menuitem" type="button" @click="ctxRun('copy')"><Icon name="copy" size="sm" />复制路径</button>
+          <div class="ws-sep" />
+          <button class="ws-mi" :class="{ danger: ctxArmed }" role="menuitem" type="button" :disabled="!app.inDraft(ctx.path)" :title="app.inDraft(ctx.path) ? '恢复成最近一次记录的版本（还没记录过时恢复成刚取出 / 新建时的样子），之后可在检查栏撤回' : '这一项没有未记录的修改'" @click="ctxRun('revert')"><Icon name="revert" size="sm" />{{ ctxArmed ? '确定撤销当前的修改？' : '撤销当前的修改' }}</button>
+          <div class="ws-sep" />
+          <button class="ws-mi danger" role="menuitem" type="button" @click="ctxRun('remove')"><Icon name="trash" size="sm" />从工作区移除…</button>
         </div>
       </Teleport>
     </template>

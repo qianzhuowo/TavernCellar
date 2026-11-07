@@ -5,9 +5,10 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import Icon from '../components/Icon.vue';
 import SlotDiff from '../components/SlotDiff.vue';
+import LazyMount from '../components/LazyMount.vue';
 import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
-import { useUi, hrefOf, historyHref } from '../stores/ui.js';
+import { useUi, hrefOf, historyHref, HISTORY_ALL } from '../stores/ui.js';
 import { itemName, relTime } from '../lib/status.js';
 import { kindOf } from '../lib/kinds.js';
 
@@ -15,11 +16,29 @@ const UNDESCRIBED = '(未写说明)';
 const app = useApp();
 const ui = useUi();
 
-/** item shown alone ('' = all): the route #/history/<path> holds it, so links can open one item's history */
+/**
+ * Item shown alone ('' = all items). The route #/history/<path> (or #/history/all) holds it, so links can open one
+ * item's history; a bare #/history is redirected to what was shown last (see resolveBare).
+ */
 const filter = computed({
-  get: () => (ui.route.name === 'history' ? ui.route.arg : ''),
-  set: (p) => ui.go(historyHref(p)),
+  get: () => (ui.route.name === 'history' && ui.route.arg !== HISTORY_ALL ? ui.route.arg : ''),
+  set: (p) => ui.go(historyHref(p || HISTORY_ALL)),
 });
+/** The route names what to show (a bare #/history waits for the redirect). */
+const routed = computed(() => ui.route.name === 'history' && !!ui.route.arg);
+/**
+ * #/history without an item: the choice made last time; the first time (or when that item is gone) the item being
+ * edited, else the first item. "All items" is only shown when chosen, as it is the slowest view.
+ */
+function resolveBare() {
+  if (ui.route.name !== 'history' || ui.route.arg) return;
+  const has = (/** @type {string} */ p) => !!p && app.items.some((/** @type {any} */ i) => i.path === p);
+  const last = ui.lastHistory;
+  const next = last === HISTORY_ALL || has(last) ? last
+    : has(ui.lastItem) ? ui.lastItem
+    : app.items.length ? app.items[0].path : HISTORY_ALL;
+  ui.replace(historyHref(next));
+}
 /** @type {import('vue').Ref<any>} */
 const hist = ref(null);
 const loading = ref(false);
@@ -49,6 +68,7 @@ const versionName = (/** @type {string} */ id) => {
 };
 
 async function load() {
+  if (!routed.value) return;
   loading.value = true;
   error.value = '';
   try {
@@ -161,11 +181,18 @@ const statusText = { added: '新增', removed: '删除', changed: '修改', unre
 const slotView = (/** @type {any} */ s) => ({ ...s, workspace: s.to, tavern: s.from, base: { value: null, present: false } });
 const itemPaths = computed(() => app.items.map((/** @type {any} */ i) => i.path));
 
-watch(filter, load);
+watch(() => (routed.value ? ui.route.arg : ''), (arg) => {
+  if (!arg) return;
+  // another item (or all): start from its newest version (the draft, when the draft touches it)
+  selected.value = '';
+  diff.value = null;
+  load();
+});
+watch(() => ui.route.arg, resolveBare);
 watch(compareWith, loadDiff);
 // The companion announces history changes (snapshots, syncs, pulls) through status events.
 watch(() => app.status, () => { if (!busy.value) load(); });
-onMounted(load);
+onMounted(() => { resolveBare(); load(); });
 </script>
 
 <template>
@@ -185,7 +212,7 @@ onMounted(load);
         <strong>草稿</strong>
         <span v-if="draftItems.length" class="muted">{{ draftItems.length }} 项有修改：</span>
         <span v-else class="faint">没有未记录的修改</span>
-        <a v-for="p in draftItems" :key="p" class="chip vh-item" :href="hrefOf('item:' + p)">{{ itemName(p) }}</a>
+        <a v-for="p in draftItems" :key="p" class="chip vh-item" :href="historyHref(p)" :title="`查看「${itemName(p)}」的版本历史`"><span class="ell">{{ itemName(p) }}</span></a>
       </div>
       <div v-if="draftItems.length" class="vh-draft-f">
         <input v-model="message" class="input" :placeholder="draft && draft.message && draft.message !== UNDESCRIBED ? draft.message : '这次改了什么？（可不写）'" @keydown.enter="record" />
@@ -207,14 +234,14 @@ onMounted(load);
             <span class="vh-dot" />
             <span class="vh-msg">
               <span v-if="v.draft" class="vh-at sm">@</span>
-              <span :class="{ faint: !label(v) }">{{ label(v) || (v.draft ? '草稿（未写说明）' : '未写说明') }}</span>
+              <span :class="{ faint: !label(v) }" class="ell">{{ label(v) || (v.draft ? '草稿（未写说明）' : '未写说明') }}</span>
             </span>
             <span class="vh-meta faint"><span class="mono">{{ short(v.id) }}</span> · {{ relTime(v.time) }}</span>
             <span class="vh-tags">
-              <span v-for="t in v.tags" :key="t" class="badge vh-tag"><Icon name="tag" size="sm" />{{ t }}</span>
-              <span v-for="d in deployedAt(v.id)" :key="d.target + d.path" class="badge vh-dep" :class="{ earlier: d.earlier, pinned: d.pinned }" :title="(d.pinned ? `${d.label} 中的 ${itemName(d.path)} 固定在这个版本，工作区的新修改不会同步过去。` : '') + (d.earlier ? `${d.label} 中的 ${itemName(d.path)} 是这个版本较早的状态（${short(d.rev)}），之后又有修改` : `${d.label} 中的 ${itemName(d.path)} 是这个版本`)"><Icon v-if="d.pinned" name="pin" size="sm" />{{ d.label }} · {{ itemName(d.path) }}{{ d.earlier ? '（较早状态）' : '' }}</span>
+              <span v-for="t in v.tags" :key="t" class="badge vh-tag" :title="t"><Icon name="tag" size="sm" /><span class="ell">{{ t }}</span></span>
+              <span v-for="d in deployedAt(v.id)" :key="d.target + d.path" class="badge vh-dep" :class="{ earlier: d.earlier, pinned: d.pinned }" :title="(d.pinned ? `${d.label} 中的 ${itemName(d.path)} 固定在这个版本，工作区的新修改不会同步过去。` : '') + (d.earlier ? `${d.label} 中的 ${itemName(d.path)} 是这个版本较早的状态（${short(d.rev)}），之后又有修改` : `${d.label} 中的 ${itemName(d.path)} 是这个版本`)"><Icon v-if="d.pinned" name="pin" size="sm" /><span class="ell">{{ d.label }} · {{ itemName(d.path) }}{{ d.earlier ? '（较早状态）' : '' }}</span></span>
             </span>
-            <span class="vh-items faint">{{ v.items.filter(isItemPath).map(itemName).join('、') || '（工作区设置）' }}</span>
+            <span class="vh-items faint" :title="v.items.filter(isItemPath).map(itemName).join('、')">{{ v.items.filter(isItemPath).map(itemName).join('、') || '（工作区设置）' }}</span>
           </button>
         </li>
       </ol>
@@ -265,7 +292,7 @@ onMounted(load);
           <div v-for="it in diff.items" :key="it.path" class="vh-ditem">
             <div class="vh-ditem-h">
               <Icon :name="kindOf(it.kind).icon" size="sm" />
-              <strong>{{ itemName(it.path) }}</strong>
+              <strong class="ell" :title="itemName(it.path)">{{ itemName(it.path) }}</strong>
               <span class="badge">{{ statusText[it.status] }}</span>
               <span v-if="it.slots.length" class="faint">{{ it.slots.length }} 处</span>
               <span class="grow" />
@@ -274,10 +301,10 @@ onMounted(load);
               </button>
             </div>
             <div v-if="it.error" class="sync-note err">{{ it.error }}</div>
-            <div v-for="s in it.slots" :key="s.slot" class="vh-slot">
+            <LazyMount v-for="s in it.slots" :key="s.slot" class="vh-slot" :min-height="s.eolOnly ? 20 : 90">
               <div class="vh-slot-h">{{ s.label }}<span v-if="s.eolOnly" class="faint">（只有换行符不同，内容相同）</span></div>
               <SlotDiff v-if="!s.eolOnly" :slot-view="slotView(s)" :sides="{ workspace: '此版本', tavern: compareWith ? versionName(compareWith) : '上一个版本' }" />
-            </div>
+            </LazyMount>
           </div>
         </template>
       </section>

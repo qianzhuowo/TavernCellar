@@ -1,5 +1,5 @@
 # Builds the Cellar Studio Windows installer and portable exe when a version tag (v*) is pushed, and attaches them
-# to a GitHub Release. The tag must match desktop/package.json "version" (e.g. tag v0.1.0 for version 0.1.0).
+# to a GitHub Release. The tag must match desktop/package.json "version" (e.g. tag v0.2.0 for version 0.2.0).
 name: Release
 
 on:
@@ -53,13 +53,28 @@ jobs:
           name: CellarStudio-windows
           path: |
             desktop/release/CellarStudio-Setup-*.exe
+            desktop/release/CellarStudio-Setup-*.exe.blockmap
             desktop/release/CellarStudio-Portable-*.exe
+            desktop/release/latest.yml
+
+      # Release notes (shown in Studio's 检查更新): docs/release-notes/<tag>.md when present, followed by the
+      # generated list of changes.
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          f="docs/release-notes/$GITHUB_REF_NAME.md"
+          if [ -f "$f" ]; then cp "$f" release-notes.md; else : > release-notes.md; fi
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           generate_release_notes: true
+          # latest.yml + blockmap: what the installed app's updater (electron-updater) reads and downloads
           files: |
             desktop/release/CellarStudio-Setup-*.exe
+            desktop/release/CellarStudio-Setup-*.exe.blockmap
             desktop/release/CellarStudio-Portable-*.exe
+            desktop/release/latest.yml

@@ -31,21 +31,28 @@ await copy('shared');
 await copy('studio/dist');
 await copy('LICENSE');
 
-// Runtime dependencies of the companion (copied, not reinstalled, so the bundle matches what the tests ran).
+// Runtime dependencies of the companion and of the desktop shell (copied, not reinstalled, so the bundle matches what
+// the tests ran). A name both need is taken from the companion.
 const companionPkg = JSON.parse(await readFile(join(repo, 'companion', 'package.json'), 'utf8'));
-const seen = new Set();
-async function copyDep(name) {
+const desktopPkg = JSON.parse(await readFile(join(desktop, 'package.json'), 'utf8'));
+/** name -> installed version (written into the staged package.json; electron-builder checks e.g. electron-updater's) */
+const seen = new Map();
+async function copyDep(modules, name) {
     if (seen.has(name)) return;
-    seen.add(name);
-    const from = join(repo, 'companion', 'node_modules', name);
-    if (!await exists(from)) throw new Error(`companion/node_modules/${name} is missing; run npm install in companion/`);
+    seen.set(name, '*');
+    const from = join(modules, name);
+    if (!await exists(from)) throw new Error(`${from} is missing; run npm install in ${dirname(modules)}`);
     await cp(from, join(stage, 'node_modules', name), { recursive: true });
     const pkg = JSON.parse(await readFile(join(from, 'package.json'), 'utf8'));
-    for (const dep of Object.keys(pkg.dependencies ?? {})) await copyDep(dep);
+    seen.set(name, pkg.version);
+    for (const dep of Object.keys(pkg.dependencies ?? {})) {
+        // nested copies (version conflicts) came along with the package folder
+        if (!await exists(join(from, 'node_modules', dep))) await copyDep(modules, dep);
+    }
 }
-for (const dep of Object.keys(companionPkg.dependencies ?? {})) await copyDep(dep);
+for (const dep of Object.keys(companionPkg.dependencies ?? {})) await copyDep(join(repo, 'companion', 'node_modules'), dep);
+for (const dep of Object.keys(desktopPkg.dependencies ?? {})) await copyDep(join(desktop, 'node_modules'), dep);
 
-const desktopPkg = JSON.parse(await readFile(join(desktop, 'package.json'), 'utf8'));
 await writeFile(join(stage, 'package.json'), JSON.stringify({
     name: desktopPkg.name,
     productName: desktopPkg.productName,
@@ -55,7 +62,7 @@ await writeFile(join(stage, 'package.json'), JSON.stringify({
     author: 'TavernCellar',
     type: 'module', // shared/*.js are ES modules without their own package.json
     main: 'desktop/main.cjs',
-    dependencies: Object.fromEntries([...seen].map(n => [n, '*'])),
+    dependencies: Object.fromEntries(seen),
 }, null, 2));
 
 console.log(`staged ${stage} (deps: ${[...seen].join(', ')})`);

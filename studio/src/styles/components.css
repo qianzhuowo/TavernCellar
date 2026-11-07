@@ -261,3 +261,13 @@ kbd {
 .qo-confirm p { margin: 0; }
 .qo-targets { margin: 0; padding-left: 1.4em; }
 .qo-foot { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+
+/* ---------- Confirmation dialog (RemoveDialog) ---------- */
+.dlg {
+  position: fixed; top: 22vh; left: 50%; transform: translateX(-50%); z-index: 71;
+  width: 440px; max-width: 92vw; padding: var(--sp-5, 20px); display: flex; flex-direction: column; gap: 12px;
+  background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-2);
+}
+.dlg h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: var(--fs-md); overflow-wrap: anywhere; }
+.dlg p { margin: 0; font-size: var(--fs-sm); line-height: 1.6; }
+.dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }

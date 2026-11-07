@@ -1,6 +1,6 @@
 {
     "name": "tavern-cellar",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "TavernCellar companion: local workspace and sync bridge for SillyTavern / TauriTavern cards and lorebooks.",
     "type": "module",
     "private": true,
@@ -16,6 +16,7 @@
         "serve": "node src/cli.js serve"
     },
     "dependencies": {
+        "ignore": "^5.3.2",
         "isomorphic-git": "^1.44.8",
         "js-yaml": "^4.1.0",
         "ws": "^8.18.0"

@@ -1,13 +1,14 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
 import Toggle from '../components/Toggle.vue';
 import TavernList from '../components/TavernList.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
-import { errorText } from '../api.js';
-import { desktop, copyText, openNative, copyPathToast } from '../lib/desktop.js';
+import { api, errorText } from '../api.js';
+import { flushAll } from '../lib/useItem.js';
+import { desktop, copyText, openNative, copyPathToast, updater } from '../lib/desktop.js';
 
 const app = useApp();
 const ui = useUi();
@@ -57,6 +58,63 @@ async function applyWs() {
 
 async function copyWs() { await copyPathToast(app.workspace, ui.toast); }
 function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/wizard')); }
+
+// ---- 版本历史占用与压缩 (docs/versioning.md §7.1) ----
+/** @type {import('vue').Ref<any>} */
+const storage = ref(null);
+const compacting = ref(false);
+const MAX_MB = [20, 50, 100, 200, 500];
+const KEEP_DAYS = [7, 14, 30, 60, 90];
+const fmtBytes = (/** @type {number} */ n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 2 : 1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+async function loadStorage() {
+  try { storage.value = await api.historyStorage(); } catch (e) { storage.value = { error: errorText(e) }; }
+}
+async function compact() {
+  compacting.value = true;
+  try {
+    const r = await api.compactHistory();
+    ui.toast(`已压缩历史：${fmtBytes(r.beforeBytes)} → ${fmtBytes(r.afterBytes)}`, 'check');
+    await loadStorage();
+  } catch (e) { ui.toast(errorText(e), 'alert'); } finally { compacting.value = false; }
+}
+onMounted(loadStorage);
+
+// ---- 检查更新 (desktop shell only; published releases only) ----
+/** @type {import('vue').Ref<any>} */
+const upd = ref(null);
+/** '' | 'check' | 'download' | 'install' */
+const updBusy = ref('');
+const updPercent = ref(0);
+const updReady = ref('');
+const MODE_TEXT = { installer: '安装版', portable: '便携版', source: '源码运行' };
+let stopProgress = () => {};
+onBeforeUnmount(() => stopProgress());
+async function checkUpdate() {
+  updBusy.value = 'check';
+  try {
+    upd.value = await updater.check();
+    if (upd.value && upd.value.downloaded) updReady.value = upd.value.downloaded;
+  } catch (e) { upd.value = { error: errorText(e) }; } finally { updBusy.value = ''; }
+}
+async function downloadUpdate() {
+  updBusy.value = 'download';
+  updPercent.value = 0;
+  stopProgress = updater.onProgress((p) => { updPercent.value = Math.round(p.percent || 0); });
+  try {
+    const r = await updater.download();
+    if (r && r.error) ui.toast(r.error, 'alert');
+    else if (r) updReady.value = r.version || '';
+  } catch (e) { ui.toast(errorText(e), 'alert'); } finally { stopProgress(); updBusy.value = ''; }
+}
+async function installUpdate() {
+  updBusy.value = 'install';
+  // write what the editors still hold before the companion stops
+  try { await flushAll(); } catch (e) { /* the companion reports failed saves itself */ }
+  try { await updater.install(); } catch (e) { ui.toast(errorText(e), 'alert'); updBusy.value = ''; }
+}
+function openReleases() { window.open((upd.value && upd.value.page) || RELEASES, '_blank', 'noopener'); }
+const RELEASES = 'https://github.com/qianzhuowo/TavernCellar/releases';
+const fmtDate = (/** @type {string} */ d) => (d ? new Date(d).toLocaleDateString() : '');
 </script>
 
 <template>
@@ -177,8 +235,86 @@ function rerunWizard() { app.saveUi({ wizardDone: false }).then(() => ui.go('#/w
       </div>
     </section>
 
+    <section id="set-history" class="set-sec card">
+      <h3><Icon name="history" />版本历史</h3>
+      <div class="set-row">
+        <div class="set-label">
+          <div>占用空间</div>
+          <div class="faint">
+            <template v-if="storage && storage.error">{{ storage.error }}</template>
+            <template v-else-if="storage">
+              {{ fmtBytes(storage.bytes) }}，{{ storage.files }} 个文件<template v-if="storage.unusedBytes">；其中 {{ fmtBytes(storage.unusedBytes) }} 是不再使用的草稿中间状态</template>。
+              <template v-if="storage.compacted">上次压缩：{{ new Date(storage.compacted.at).toLocaleString() }}{{ storage.compacted.reason ? '（自动，' + storage.compacted.reason + '）' : '' }}。</template>
+            </template>
+            <template v-else>读取中…</template>
+          </div>
+        </div>
+        <div class="set-ctl">
+          <button class="btn sm" :disabled="compacting || !storage || !!storage.error" title="删除不再使用的草稿中间状态，并把其余内容打包成一个文件。所有版本、标签、草稿和部署记录都保留" @click="compact">
+            <Icon :name="compacting ? 'spin' : 'box'" size="sm" />压缩历史
+          </button>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><div>自动清理</div><div class="faint">启动 1 分钟后和之后每 12 小时检查一次；只删除不再使用的草稿中间状态，不影响任何版本</div></div>
+        <div class="set-ctl"><Toggle :model-value="app.settings.ui.historyAutoClean" @update:model-value="(v) => app.saveUi({ historyAutoClean: v })" /></div>
+      </div>
+      <div class="set-row" :class="{ 'set-off': !app.settings.ui.historyAutoClean }">
+        <div class="set-label"><div>超过此大小时压缩</div><div class="faint">历史超过这个大小时自动「压缩历史」（压缩后若仍超过，要再增长 20% 才会再压缩）</div></div>
+        <div class="set-ctl">
+          <select class="select" style="width: 110px" :disabled="!app.settings.ui.historyAutoClean" :value="app.settings.ui.historyMaxMB" @change="app.saveUi({ historyMaxMB: Number(/** @type {any} */ ($event.target).value) })">
+            <option v-for="n in MAX_MB" :key="n" :value="n">{{ n }} MB</option>
+          </select>
+        </div>
+      </div>
+      <div class="set-row" :class="{ 'set-off': !app.settings.ui.historyAutoClean }">
+        <div class="set-label"><div>清理多久以前的中间状态</div><div class="faint">没超过大小时，只删除这么久以前就不再使用的草稿中间状态</div></div>
+        <div class="set-ctl">
+          <select class="select" style="width: 110px" :disabled="!app.settings.ui.historyAutoClean" :value="app.settings.ui.historyKeepDays" @change="app.saveUi({ historyKeepDays: Number(/** @type {any} */ ($event.target).value) })">
+            <option v-for="n in KEEP_DAYS" :key="n" :value="n">{{ n }} 天</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
     <section id="set-app" class="set-sec card">
       <h3><Icon name="box" />关于</h3>
+      <div class="set-row">
+        <div class="set-label">
+          <div>检查更新</div>
+          <div class="faint">
+            <template v-if="upd && upd.current">当前版本 {{ upd.current }}（{{ MODE_TEXT[upd.mode] || upd.mode }}）。</template>
+            只检查作者发布的正式版本。
+          </div>
+        </div>
+        <div class="set-ctl">
+          <button v-if="updater.available" class="btn sm" :disabled="!!updBusy" @click="checkUpdate"><Icon :name="updBusy === 'check' ? 'spin' : 'update'" size="sm" />检查更新</button>
+          <a v-else class="btn sm" :href="RELEASES" target="_blank" rel="noopener"><Icon name="external" size="sm" />查看发布页</a>
+        </div>
+      </div>
+      <div v-if="upd" class="upd">
+        <div v-if="upd.error" class="sync-note err"><Icon name="alert" size="sm" />{{ upd.error }}</div>
+        <div v-else-if="!upd.newer || !upd.newer.length" class="sync-note ok"><Icon name="ok" size="sm" />已是最新版本{{ upd.latest ? '（' + upd.latest.version + '）' : '' }}</div>
+        <template v-else>
+          <div class="upd-head">
+            <b>有新版本 {{ upd.newer[0].version }}</b>
+            <span class="faint">{{ upd.newer.length > 1 ? '（共 ' + upd.newer.length + ' 个新版本）' : '' }}</span>
+            <span class="grow" />
+            <template v-if="upd.canInstall">
+              <button v-if="updReady" class="btn sm primary" :disabled="updBusy === 'install'" @click="installUpdate"><Icon :name="updBusy === 'install' ? 'spin' : 'update'" size="sm" />重启并安装</button>
+              <button v-else class="btn sm primary" :disabled="!!updBusy" @click="downloadUpdate"><Icon :name="updBusy === 'download' ? 'spin' : 'download'" size="sm" />{{ updBusy === 'download' ? '下载中 ' + updPercent + '%' : '下载更新' }}</button>
+            </template>
+            <button class="btn sm" @click="openReleases"><Icon name="external" size="sm" />前往下载页</button>
+          </div>
+          <div v-if="!upd.canInstall" class="faint upd-tip">{{ upd.mode === 'installer' ? '这个版本没有提供自动更新，请在下载页获取安装程序。' : '便携版不能自动更新：请在下载页获取新版，替换原来的 exe（工作区不受影响）。' }}</div>
+          <div v-else-if="updReady" class="faint upd-tip">已下载 {{ updReady }}。重启时会先保存正在编辑的内容，工作区保持不变。</div>
+          <div class="faint upd-tip">Cellar Link 插件请在酒馆的「管理扩展」中更新。</div>
+          <article v-for="r in upd.newer" :key="r.version" class="upd-rel">
+            <div class="upd-rel-h"><b>{{ r.name }}</b><span class="faint">{{ fmtDate(r.date) }}</span></div>
+            <div class="upd-notes">{{ r.notes || '（没有更新说明）' }}</div>
+          </article>
+        </template>
+      </div>
       <div class="set-row">
         <div class="set-label"><div>首次启动向导</div><div class="faint">重新选择工作区、查看 Cellar Link 安装方法</div></div>
         <div class="set-ctl"><button class="btn sm" @click="rerunWizard">重新运行</button></div>

@@ -3,6 +3,7 @@
 import { api, errorText } from '../api.js';
 import { uiStatus, isConflict } from './status.js';
 import { useLibrary } from '../stores/library.js';
+import { flushItem } from './useItem.js';
 
 /**
  * Sync (workspace -> tavern) or pull (tavern -> workspace) one binding, then refresh the store.
@@ -132,6 +133,28 @@ export async function removeItem(app, ui, path, keepFiles) {
     ui.toast('已从工作区移除 ' + path + (r.kept && r.kept.length ? '（保留了你自己的 ' + r.kept.length + ' 个文件）' : ''));
     return true;
   } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    return false;
+  }
+}
+
+const EDIT_DONE = { undo: '已撤回', redo: '已取消撤回', revert: '已撤销当前的修改，恢复成上一个版本' };
+
+/**
+ * 撤回 / 取消撤回 / 撤销当前的修改 of one item (the companion keeps the steps, docs/versioning.md §6). Pending
+ * editor edits are written first so they are part of what is undone; the open editor reloads from the new files.
+ * @param {any} app @param {any} ui @param {string} path @param {'undo'|'redo'|'revert'} op
+ * @returns {Promise<boolean>}
+ */
+export async function editStep(app, ui, path, op) {
+  try {
+    await flushItem(path);
+    const r = await (op === 'undo' ? api.undoItem(path) : op === 'redo' ? api.redoItem(path) : api.revertItem(path));
+    await app.refreshStatus();
+    ui.toast(op === 'revert' && r && r.origin ? '已撤销当前的修改，恢复成刚取出 / 新建时的样子' : EDIT_DONE[op], 'check');
+    return true;
+  } catch (e) {
+    await app.refreshStatus();
     ui.toast(errorText(e), 'alert');
     return false;
   }

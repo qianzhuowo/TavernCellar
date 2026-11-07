@@ -1,7 +1,7 @@
 {
     "name": "cellar-studio",
     "productName": "Cellar Studio",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Cellar Studio: desktop editor for TavernCellar workspaces (bundles the companion).",
     "private": true,
     "license": "AGPL-3.0-only",
@@ -16,5 +16,8 @@
     "devDependencies": {
         "electron": "^33.2.1",
         "electron-builder": "^25.1.8"
+    },
+    "dependencies": {
+        "electron-updater": "^6.8.11"
     }
 }

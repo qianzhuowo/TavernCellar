@@ -25,7 +25,7 @@ import { AssetCache } from './assets.js';
 import { previewPrompt } from './preview.js';
 
 export const SERVER_NAME = 'TavernCellar';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.2.0';
 export const STUDIO_PATH = '/studio/';
 
 /** Folder served at /studio/: the built Studio UI when present, otherwise the prototype. */
@@ -132,11 +132,19 @@ function readCookie(req, name) {
     return undefined;
 }
 
-const UI_DEFAULTS = { theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh', font: 'sans', fontSize: 15, wordCount: true, externalEditor: 'system' };
+const UI_DEFAULTS = {
+    theme: 'dark', density: 'comfortable', wizardDone: false, messageLang: 'zh', font: 'sans', fontSize: 15, wordCount: true, externalEditor: 'system',
+    historyAutoClean: true, historyMaxMB: 50, historyKeepDays: 30,
+};
 const UI_RULES = {
     theme: ['dark', 'light'], density: ['comfortable', 'compact'], wizardDone: [true, false], messageLang: ['zh', 'en'],
     font: ['sans', 'serif', 'mono'], fontSize: [13, 14, 15, 16, 17, 18, 20], wordCount: [true, false], externalEditor: ['system', 'vscode'],
+    // 版本历史的自动清理 (docs/versioning.md §7.1)
+    historyAutoClean: [true, false], historyMaxMB: [20, 50, 100, 200, 500], historyKeepDays: [7, 14, 30, 60, 90],
 };
+/** Automatic history cleanup: first check a minute after start, then twice a day. */
+const HISTORY_CLEAN_FIRST_MS = 60 * 1000;
+const HISTORY_CLEAN_EVERY_MS = 12 * 60 * 60 * 1000;
 
 /** Heartbeat: a frozen tavern tab keeps its socket open but runs no JavaScript, so only an app-level ping reveals it. */
 const HEARTBEAT_INTERVAL_MS = 15000;
@@ -353,6 +361,17 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     engine.onHistory = () => emit('status', { reason: 'history' });
     await engine.upgradeLayouts();
     await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
+    const cleanHistory = () => {
+        const ui = { ...UI_DEFAULTS, ...config.ui };
+        if (!ui.historyAutoClean) return;
+        engine.autoCleanHistory({ maxMB: ui.historyMaxMB, keepDays: ui.historyKeepDays }).catch(error => log(`清理历史失败：${error.message}`));
+    };
+    let cleanTimer;
+    const scheduleClean = delay => {
+        cleanTimer = setTimeout(() => { cleanHistory(); scheduleClean(HISTORY_CLEAN_EVERY_MS); }, delay);
+        cleanTimer.unref?.();
+    };
+    scheduleClean(HISTORY_CLEAN_FIRST_MS);
     const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
     let port = config.port;
     let stopWatching = () => {};
@@ -441,6 +460,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         workspace = next;
         engine.ws = next;
         engine.local.clear();
+        engine.edits.clear();
         await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
         stopWatching = startWatching();
         config.workspace = next.root;
@@ -556,6 +576,11 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/history/tag': b => engine.tagVersion(b),
         'POST /api/history/diff': b => engine.diffVersions(b),
         'POST /api/history/restore': b => engine.restoreVersion(b),
+        'GET /api/history/storage': () => engine.historyStorage(),
+        'POST /api/history/compact': () => engine.compactHistory(),
+        'POST /api/item/undo': b => engine.undo(b.path),
+        'POST /api/item/redo': b => engine.redo(b.path),
+        'POST /api/item/revert': b => engine.revertItem(b.path),
         'POST /api/history/item': b => engine.itemAtVersion(b),
         'POST /api/workshop/collection': () => engine.readCollection(),
         'PUT /api/workshop/collection': b => engine.writeCollection(b),
@@ -658,6 +683,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         /** Session cookie value (tests / desktop shell). */
         sessionId,
         async close() {
+            clearTimeout(cleanTimer);
             stopWatching();
             engine.stopSnapshots();
             for (const res of eventClients) res.end();

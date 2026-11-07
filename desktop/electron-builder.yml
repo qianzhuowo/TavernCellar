@@ -10,6 +10,14 @@ npmRebuild: false
 asar: true
 files:
   - "**/*"
+# Writes resources/app-update.yml (where electron-updater looks for releases) and release/latest.yml; the release
+# workflow attaches latest.yml and the blockmap to the GitHub Release. Nothing is uploaded by electron-builder itself
+# (the workflow runs it with --publish never).
+publish:
+  provider: github
+  owner: qianzhuowo
+  repo: TavernCellar
+  releaseType: release
 win:
   icon: assets/icon.png
   target:

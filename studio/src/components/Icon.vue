@@ -5,7 +5,7 @@ import {
   TriangleAlert, Minus, Circle, Plus, X, Search, ChevronDown, ChevronRight, ExternalLink, Copy, Info, Plug, Palette,
   Box, Sun, Moon, Wine, FolderOpen, Download, Upload, Trash2, Link, PanelRight, PanelLeft, LoaderCircle, Code, Terminal,
   CircleCheck, CircleAlert, WifiOff, HardDrive, Puzzle, ArrowLeft, ArrowRight, Hourglass, Tag, Pin, FileText, ListTree, Save, Eye, Sparkles,
-  GitCompareArrows, Bookmark, BookmarkPlus, GripVertical, CopyPlus
+  GitCompareArrows, Bookmark, BookmarkPlus, GripVertical, CopyPlus, Undo2, Redo2, RotateCcw, RefreshCcwDot
 } from 'lucide-vue-next';
 
 const MAP = {
@@ -18,7 +18,8 @@ const MAP = {
   code: Code, terminal: Terminal, ok: CircleCheck, err: CircleAlert, offline: WifiOff, disk: HardDrive,
   puzzle: Puzzle, back: ArrowLeft, next: ArrowRight, wait: Hourglass, tag: Tag, pin: Pin,
   file: FileText, outline: ListTree, save: Save, eye: Eye, fired: Sparkles,
-  workshop: GitCompareArrows, bookmark: Bookmark, bookmarkPlus: BookmarkPlus, grip: GripVertical, copyPlus: CopyPlus
+  workshop: GitCompareArrows, bookmark: Bookmark, bookmarkPlus: BookmarkPlus, grip: GripVertical, copyPlus: CopyPlus,
+  undo: Undo2, redo: Redo2, revert: RotateCcw, update: RefreshCcwDot
 };
 
 defineProps({ name: { type: String, required: true }, size: { type: String, default: '' } });

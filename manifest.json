@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Qianzhuo",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "homePage": "https://github.com/qianzhuowo/TavernCellar",
     "auto_update": true,
     "description": "连接本地 TavernCellar 伴侣程序：把角色卡、世界书取出到本地工作区编辑，并同步回 SillyTavern / TauriTavern。"

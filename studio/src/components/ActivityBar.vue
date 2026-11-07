@@ -11,7 +11,8 @@ const ui = useUi();
 // 工作区 first (the daily entry), then 资料库 / 同步 / 预览 / 历史. These are pages, not documents: they never become tabs.
 // From an open item (e.g. a lorebook) the 资料库 opens on that item's kind; elsewhere it keeps the last kind.
 const acts = computed(() => [
-  { key: 'item', icon: 'folder', tip: '工作区', href: ui.lastItem ? '#/item/' + encodeURIComponent(ui.lastItem) : null },
+  // the last open item while it is still in the workspace, else the empty 工作区 page
+  { key: 'item', icon: 'folder', tip: '工作区', href: ui.lastItem && app.item(ui.lastItem) ? '#/item/' + encodeURIComponent(ui.lastItem) : '#/workspace' },
   { key: 'library', icon: 'library', tip: '资料库', href: libraryHref(app.itemKind(pathOfKey(ui.route.key))) },
   { key: 'sync', icon: 'sync', tip: '同步', href: '#/sync', dot: app.conflictCount },
   { key: 'preview', icon: 'eye', tip: '预览', href: '#/preview' },
@@ -22,9 +23,10 @@ const acts = computed(() => [
 const light = computed(() => app.settings?.ui?.theme === 'light');
 const toggleTheme = () => app.saveUi({ theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
 
+const active = (/** @type {string} */ key) => ui.route.name === key || (key === 'item' && ui.route.name === 'workspace');
+
 function click(/** @type {any} */ a) {
-  if (a.key === 'item' && !a.href) { if (!ui.side) ui.toggleSide(); return; }
-  if (a.key === ui.route.name && a.key !== 'item') { ui.toggleSide(); return; }
+  if (a.key === ui.route.name ? a.key !== 'item' : a.key === 'item' && ui.route.name === 'workspace') { ui.toggleSide(); return; }
   if (!ui.side) ui.toggleSide();
   ui.go(a.href);
 }
@@ -36,7 +38,7 @@ function click(/** @type {any} */ a) {
       v-for="a in acts"
       :key="a.key"
       class="act"
-      :class="{ on: ui.route.name === a.key }"
+      :class="{ on: active(a.key) }"
       :data-tip="a.tip"
       :aria-label="a.tip"
       @click="click(a)"

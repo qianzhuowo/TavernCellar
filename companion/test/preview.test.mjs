@@ -19,7 +19,8 @@ async function setup(t) {
     const api = async (path, body) => (await fetch(`http://127.0.0.1:${server.port}${path}`, {
         method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: body === undefined ? undefined : JSON.stringify(body),
     })).json();
-    t.after(async () => { await server.close(); await rm(dir, { recursive: true, force: true }); });
+    // the fake tavern's handshake (template write) can still be finishing on Windows when the test ends: retry the cleanup
+    t.after(async () => { await server.close(); await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
     return { server, api };
 }
 

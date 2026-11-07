@@ -14,6 +14,22 @@ export const desktop = {
   openInEditor(p) { return callNative('openInEditor', p); }
 };
 
+/**
+ * App updates through the desktop shell (published GitHub releases only; docs/studio-design.md §4.6).
+ * Absent in a plain browser and in shells older than the update support.
+ */
+export const updater = {
+  get available() { const n = native(); return !!(n && n.checkUpdate); },
+  /** @returns {Promise<any>} {current, mode, page, latest, newer, canInstall, downloaded} or {error, current, mode, page} */
+  check() { return native().checkUpdate(); },
+  /** @returns {Promise<{version?: string, error?: string}>} */
+  download() { return native().downloadUpdate(); },
+  /** Closes the app, installs the downloaded update and restarts. */
+  install() { return native().installUpdate(); },
+  /** @param {(p: {percent: number}) => void} cb @returns {() => void} */
+  onProgress(cb) { const n = native(); return n && n.onUpdateProgress ? n.onUpdateProgress(cb) : () => {}; }
+};
+
 /** The shell answers false when it refused or the OS could not open the path; a missing helper counts as false. */
 async function callNative(/** @type {'showInFolder'|'openInEditor'} */ name, /** @type {string} */ p) {
   const n = native();

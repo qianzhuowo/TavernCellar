@@ -109,6 +109,8 @@ export const useApp = defineStore('app', {
     conflictCount() { return this.items.filter((i) => i.bindings.some((b) => isConflict(uiStatus(b.status)))).length; },
     /** items changed in the version-history draft (not yet recorded as a version) */
     draftCount: (s) => ((s.status && s.status.draft && s.status.draft.items) || []).filter((/** @type {string} */ p) => p.includes('/')).length,
+    /** Whether an item has changes not yet recorded as a version (撤销当前的修改 has something to undo). @returns {(path: string) => boolean} */
+    inDraft: (s) => (path) => !!(s.status && s.status.draft && (s.status.draft.items || []).includes(path)),
 
     /** @returns {(path: string) => any} */
     item() { return (path) => this.items.find((i) => i.path === path) || null; },

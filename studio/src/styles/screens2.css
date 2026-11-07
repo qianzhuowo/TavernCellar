@@ -145,12 +145,14 @@
 .vh-draft-f .input { flex: 1; }
 .vh-at { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-text); font-weight: 700; font-size: 13px; }
 .vh-at.sm { width: 16px; height: 16px; font-size: 11px; margin-right: 4px; }
-.vh-item { text-decoration: none; color: inherit; }
+.vh-item { text-decoration: none; color: inherit; max-width: 240px; min-width: 0; }
+.vh-item:hover { border-color: var(--accent); }
+.vh-draft-h .ell, .vh-row .ell, .vh-ditem-h .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vh-main { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: var(--sp-4); align-items: start; }
 .vh-list { list-style: none; margin: 0; padding: 0; position: relative; }
 .vh-list::before { content: ''; position: absolute; left: 11px; top: 8px; bottom: 8px; width: 1px; background: var(--line); }
 .vh-row {
-  position: relative; display: grid; grid-template-columns: 24px 1fr; column-gap: 4px; row-gap: 2px; width: 100%; text-align: left;
+  position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 4px; row-gap: 2px; width: 100%; text-align: left;
   padding: 8px 8px 8px 0; border: 0; border-radius: var(--r-md); background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
 .vh-row > :not(.vh-dot) { grid-column: 2; }
@@ -162,7 +164,8 @@
 .vh-row.draft .vh-dot { border-style: dashed; border-color: var(--accent); }
 .vh-msg { display: flex; align-items: center; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vh-meta, .vh-items { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vh-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.vh-tags { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.vh-tags .badge { max-width: 100%; min-width: 0; }
 .vh-tags:empty { display: none; }
 .vh-tag { display: inline-flex; align-items: center; gap: 3px; }
 .vh-dep { background: var(--ok-soft, var(--accent-soft)); color: var(--ok, var(--accent-text)); }
@@ -185,7 +188,8 @@
 .vh-dep .ic { margin-right: 2px; }
 .vh-ditem { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
 .vh-ditem:last-child { border-bottom: 0; }
-.vh-ditem-h { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.vh-ditem-h { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); min-width: 0; }
+.vh-ditem-h > :not(.ell) { flex-shrink: 0; }
 .vh-ditem-h .grow { flex: 1; }
 .vh-slot { margin-top: var(--sp-3); }
 .vh-slot-h { font-size: var(--fs-sm); color: var(--text-2); margin-bottom: 4px; }
@@ -261,3 +265,24 @@
 .lib-extract-base > svg { flex: none; margin-top: 3px; color: var(--st-ok, var(--accent)); }
 .lib-extract-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); padding: 2px 0; }
 .lib-extract-tip { margin-left: auto; font-size: var(--fs-xs); }
+
+/* ---- 设置 · 关于 · 检查更新 ---- */
+.upd { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 12px; }
+.upd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.upd-head .grow { flex: 1; }
+.upd-tip { font-size: var(--fs-sm); }
+.upd-rel { border: 1px solid var(--line); border-radius: var(--r-md, 8px); padding: 10px 12px; background: var(--bg-1); }
+.upd-rel-h { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; margin-bottom: 6px; }
+.upd-notes { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-sm); max-height: 320px; overflow: auto; color: var(--text-2, var(--text)); }
+
+/* ---- 设置 · 版本历史 ---- */
+.set-row.set-off .set-label { opacity: .55; }
+
+/* ---- 工作区空白页 (WorkspaceHome) ---- */
+.ws-home { height: 100%; min-height: 360px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; user-select: none; }
+.ws-home-mark svg { width: 88px; height: 88px; stroke-width: 1; color: var(--text-3); opacity: .35; }
+.ws-home-tip { margin: 6px 0 0; max-width: 520px; color: var(--text-2); font-size: var(--fs-md); line-height: 1.7; cursor: pointer; }
+.ws-home-by { color: var(--text-3); font-size: var(--fs-sm); }
+.ws-tip-enter-active, .ws-tip-leave-active { transition: opacity .35s var(--ease), transform .35s var(--ease); }
+.ws-tip-enter-from { opacity: 0; transform: translateY(4px); }
+.ws-tip-leave-to { opacity: 0; transform: translateY(-4px); }

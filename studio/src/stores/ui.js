@@ -7,7 +7,8 @@ const ls = {
 };
 
 /**
- * Routes (hash): #/library[/<kind>]  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history[/<encoded item path>]  #/workshop  #/preview  #/settings[/<section>]  #/wizard
+ * Routes (hash): #/library[/<kind>]  #/workspace (no document open)  #/item/<encoded path>  #/conflict/<encoded path>  #/sync  #/history[/<encoded item path>|/all]  #/workshop  #/preview  #/settings[/<section>]  #/wizard
+ * (#/history alone opens what the history showed last.)
  * Tab keys: 'item:<path>' | 'conflict:<path>' — only documents open as tabs; the activity-bar pages (资料库, 同步, 预览,
  * 预设工坊, 历史, 设置) are switched from the activity bar and never become tabs.
  */
@@ -16,7 +17,7 @@ export function parseHash(/** @type {string} */ hash) {
   const [name, ...rest] = h.split('/');
   const arg = rest.length ? decodeURIComponent(rest.join('/')) : '';
   if ((name === 'item' || name === 'conflict') && arg) return { name, arg, key: name + ':' + arg };
-  if (['sync', 'preview', 'workshop', 'wizard'].includes(name)) return { name, arg: '', key: name };
+  if (['workspace', 'sync', 'preview', 'workshop', 'wizard'].includes(name)) return { name, arg: '', key: name };
   if (name === 'settings' || name === 'library' || name === 'history') return { name, arg, key: name };
   return { name: 'library', arg: '', key: 'library' };
 }
@@ -32,6 +33,8 @@ export const hrefOf = (/** @type {string} */ key) => {
 
 /** Version history, optionally showing only one item. */
 export const historyHref = (/** @type {string} */ path = '') => (path ? '#/history/' + encodeURIComponent(path) : '#/history');
+/** History route argument for "all items" (item paths always contain a slash, so it cannot be one). */
+export const HISTORY_ALL = 'all';
 
 let toastSeq = 0;
 
@@ -41,6 +44,8 @@ export const useUi = defineStore('ui', {
     /** @type {string[]} */
     tabs: ls.get('cs.tabs', []).filter(isDocKey),
     lastItem: ls.get('cs.lastItem', ''),
+    /** what the version history showed last: an item path or HISTORY_ALL ('' = never opened) */
+    lastHistory: ls.get('cs.lastHistory', ''),
     inspector: ls.get('cs.inspector', true),
     /** inspector shown as an overlay drawer on narrow windows */
     inspectorDrawer: false,
@@ -55,7 +60,9 @@ export const useUi = defineStore('ui', {
     /** @type {Record<string, {view: 'form'|'files', file?: string}>} */
     itemView: {},
     /** Lorebook entry to select once its editor shows (set by the preview page). @type {{path: string, uid: number}|null} */
-    focusEntry: null
+    focusEntry: null,
+    /** item whose 「从工作区移除」 confirmation dialog is open (RemoveDialog in App.vue) */
+    removeAsk: ''
   }),
 
   actions: {
@@ -65,10 +72,13 @@ export const useUi = defineStore('ui', {
       if (r.name === 'wizard') return;
       if (isDocKey(r.key) && !this.tabs.includes(r.key)) { this.tabs.push(r.key); ls.set('cs.tabs', this.tabs); }
       if (r.name === 'item') { this.lastItem = r.arg; ls.set('cs.lastItem', r.arg); }
+      if (r.name === 'history' && r.arg) { this.lastHistory = r.arg; ls.set('cs.lastHistory', r.arg); }
       this.inspectorDrawer = false;
     },
     /** @param {string} hash */
     go(hash) { if (location.hash === hash) this.syncRoute(); else location.hash = hash; },
+    /** Like go(), without a new browser history entry (redirects). @param {string} hash */
+    replace(hash) { if (location.hash === hash) this.syncRoute(); else location.replace(hash); },
     /** @param {string} path */
     openItem(path) { this.go(hrefOf('item:' + path)); },
     /** @param {string} path */
@@ -79,13 +89,14 @@ export const useUi = defineStore('ui', {
       if (i < 0) return;
       this.tabs.splice(i, 1);
       ls.set('cs.tabs', this.tabs);
-      if (this.route.key === key) this.go(hrefOf(this.tabs[Math.min(i, this.tabs.length - 1)] || 'library'));
+      // the next tab, or the empty 工作区 page once the last one is closed (the other pages stay where they are)
+      if (this.route.key === key) this.go(hrefOf(this.tabs[Math.min(i, this.tabs.length - 1)] || 'workspace'));
     },
     /** Drop tabs of items that no longer exist in the workspace. @param {string[]} paths */
     pruneTabs(paths) {
       const keep = this.tabs.filter((k) => !pathOfKey(k) || paths.includes(pathOfKey(k)));
       if (keep.length !== this.tabs.length) { this.tabs = keep; ls.set('cs.tabs', keep); }
-      if (this.lastItem && !paths.includes(this.lastItem)) this.lastItem = '';
+      if (this.lastItem && !paths.includes(this.lastItem)) { this.lastItem = ''; ls.set('cs.lastItem', ''); }
     },
     toggleInspector() {
       if (window.innerWidth < 1100) { this.inspectorDrawer = !this.inspectorDrawer; return; }

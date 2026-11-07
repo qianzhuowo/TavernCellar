@@ -37,7 +37,7 @@
     "capabilities": { "worldInfoEntryTemplate": { /* 酒馆的 newWorldInfoEntryTemplate */ } }
 } }
 // 成功响应
-{ "ok": true, "payload": { "server": { "name": "TavernCellar", "version": "0.1.0", "protocol": 1 } } }
+{ "ok": true, "payload": { "server": { "name": "TavernCellar", "version": "0.2.0", "protocol": 1 } } }
 ```
 
 `host` 取值：`st` 或 `tt`（页面为 Tauri 环境——存在 `window.__TAURI_INTERNALS__`、协议为 `tauri:` 或主机为 `tauri.localhost`——时为 `tt`）。伴侣程序关闭了该类酒馆时，握手返回 `tavern_disabled` 并以 `4403` 关闭。旧版插件在 payload 中发送的 `token` 字段被忽略。

@@ -75,7 +75,6 @@
 .sync-ops .tlabel { font-size: var(--fs-sm); }
 .sync-row.mode-none .sync-ops .btn, .sync-row.mode-closed .sync-ops .btn { opacity: .5; }
 .insp-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.insp-remove p { margin: 0 0 8px; font-size: var(--fs-sm); line-height: 1.5; }
 .insp-check { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); cursor: pointer; }
 
 /* ---- library ---- */
@@ -171,6 +170,8 @@ a.book-row:hover { background: var(--bg-3); }
 .ws-mi:hover:not(:disabled) { background: var(--bg-3); }
 .ws-mi:disabled { opacity: .5; cursor: default; }
 .ws-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.ws-mi.danger { color: var(--st-conflict); }
+.ws-ctx { min-width: 220px; }
 .ws-name { display: flex; flex-direction: column; gap: 6px; padding: 6px; width: 220px; }
 .ws-name label { font-size: var(--fs-sm); }
 .ws-name-btns { display: flex; justify-content: flex-end; gap: 6px; }

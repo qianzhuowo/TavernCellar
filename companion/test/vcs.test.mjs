@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { Vcs, UNDESCRIBED, deployedRef, encodeRefSegment } from '../src/vcs/vcs.js';
+import { Vcs, UNDESCRIBED, deployedRef, itemKey } from '../src/vcs/vcs.js';
 import { Workspace } from '../src/workspace/workspace.js';
 
 async function fixture(fn) {
@@ -127,11 +127,28 @@ test('tags, deployed pointers and log filtering by item', async () => {
     });
 });
 
-test('ref names stay valid for paths with spaces, dots and CJK', () => {
-    const ref = deployedRef('a1b2c3d4', 'characters/A b.c~..lock');
-    assert.match(ref, /^refs\/cellar\/deployed\/a1b2c3d4\/[A-Za-z0-9_%-]+$/);
-    assert.equal(encodeRefSegment('世界'), '%E4%B8%96%E7%95%8C');
-    assert.equal(decodeURIComponent(encodeRefSegment('characters/A b.c')), 'characters/A b.c');
+test('ref names are short and valid for any item path (spaces, dots, long CJK names)', () => {
+    const long = 'lorebooks/_' + '很长很长的世界书名字 (测试 !)'.repeat(10);
+    for (const p of ['characters/A b.c~..lock', long]) {
+        assert.match(deployedRef('0123456789abcdef01234567', p), /^refs\/cellar\/deployed\/0123456789abcdef01234567\/[0-9a-f]{20}$/);
+    }
+    assert.notEqual(itemKey('characters/A'), itemKey('characters/B'));
+});
+
+test('pointers named the old way (percent-encoded paths) are renamed on start and still found', async () => {
+    await fixture(async ({ vcs }) => {
+        await vcs.init();
+        const head = await vcs.resolve('HEAD');
+        const p = 'lorebooks/世界 书';
+        const old = [...new TextEncoder().encode(p)].map(b => (/[A-Za-z0-9_-]/.test(String.fromCharCode(b)) && b < 128 ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, '0')}`)).join('');
+        const dir = join(vcs.dir, '.git', 'refs', 'cellar', 'deployed', 't1');
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, old), head + '\n');
+        const fresh = new Vcs(vcs.dir);
+        await fresh.ready();
+        assert.equal(await fresh.getDeployed('t1', p), head);
+        assert.deepEqual((await readdir(dir)), [itemKey(p)]);
+    });
 });
 
 test('an existing repository keeps its branch and the user\'s commits are never amended', async (t) => {
@@ -156,5 +173,82 @@ test('an existing repository keeps its branch and the user\'s commits are never 
         await vcs.snapshot();
         assert.equal(g('rev-parse', 'HEAD~1'), mine2);
         assert.equal(g('status', '--porcelain'), '', 'git sees the same tree as the files');
+    });
+});
+
+test('.gitignore rules match git.isIgnored: nested files, negation, ignored folders, info/exclude', async () => {
+    const git = (await import('isomorphic-git')).default;
+    const fs = (await import('node:fs')).default;
+    await fixture(async ({ ws, vcs, file }) => {
+        await vcs.init();
+        await mkdir(join(ws.root, 'characters', 'A', 'notes', 'deep'), { recursive: true });
+        await mkdir(join(ws.root, 'scratch'), { recursive: true });
+        await mkdir(join(ws.root, '.git', 'info'), { recursive: true });
+        await writeFile(join(ws.root, '.git', 'info', 'exclude'), '*.bak\n');
+        await file('.gitignore', '.cellar/\nscratch/\n*.log\n!keep.log\n');
+        await file('characters/A/.gitignore', 'notes/*\n!notes/deep\n');
+        const files = ['characters/A/a.log', 'characters/A/keep.log', 'characters/A/x.bak', 'characters/A/notes/n.md',
+            'characters/A/notes/deep/d.md', 'scratch/s.md', 'characters/A/ok.md'];
+        for (const f of files) await file(f, f);
+        const oid = await vcs.snapshot();
+        const inTree = new Set();
+        await git.walk({ fs, dir: ws.root, trees: [git.TREE({ ref: oid })], map: async (p, [e]) => { if (e && (await e.type()) === 'blob') inTree.add(p); return true; } });
+        for (const f of files) {
+            const ignored = await git.isIgnored({ fs, dir: ws.root, filepath: f });
+            assert.equal(inTree.has(f), !ignored, f);
+        }
+    });
+});
+
+test('压缩历史 deletes replaced draft states, packs the rest, and every version, tag and pointer still reads', async () => {
+    await fixture(async ({ vcs, file }) => {
+        await vcs.init();
+        for (const text of ['d1', 'd2', 'd3']) { await file('characters/A/description.md', text); await vcs.snapshot(); }
+        const v1 = await vcs.commit('v1');
+        await vcs.tag('keep', v1);
+        await file('characters/A/description.md', 'draft');
+        const draft = await vcs.snapshot();
+        await vcs.setDeployed('t1', 'characters/A', v1);
+        await vcs.setOrigin('characters/A', draft);
+
+        assert.equal((await vcs.storage({ unused: true })).unusedFiles, 0, 'nothing is old enough yet');
+        const before = await vcs.storage({ unused: true, keepMs: 0 });
+        assert.ok(before.unusedFiles >= 2, 'the replaced drafts d1, d2 left commits and blobs behind');
+        const r = await vcs.compact({ keepMs: 0 });
+        assert.equal(r.removed, before.unusedFiles);
+        const after = await vcs.storage({ unused: true, keepMs: 0 });
+        assert.deepEqual([after.loose, after.packs, after.unusedFiles], [0, 1, 0], 'one pack, nothing loose');
+
+        // a fresh reader (as after a restart) sees the same history
+        const fresh = new Vcs(vcs.dir);
+        assert.deepEqual((await fresh.log()).map(c => c.id), (await vcs.log()).map(c => c.id));
+        assert.equal((await fresh.readItemAt('keep', 'characters/A'))['description.md'], 'd3');
+        assert.equal((await fresh.readItemAt(draft, 'characters/A'))['description.md'], 'draft');
+        assert.equal(await fresh.getDeployed('t1', 'characters/A'), v1);
+        assert.equal((await fresh.revertPoint('characters/A')).oid, draft);
+        // unchanged files are not written again as loose objects after a restart
+        assert.equal(await fresh.snapshot(), draft);
+        assert.equal((await fresh.storage()).loose, 0);
+        await file('characters/A/description.md', 'after');
+        assert.notEqual(await fresh.snapshot(), draft);
+        assert.equal((await fresh.readItemAt('HEAD', 'characters/A'))['description.md'], 'after');
+        // compacting again replaces the pack; git itself agrees the repository is whole
+        await fresh.compact({ keepMs: 0 });
+        assert.equal((await fresh.storage()).packs, 1);
+        let hasGit = true;
+        try { execFileSync('git', ['--version']); } catch { hasGit = false; }
+        if (hasGit) execFileSync('git', ['fsck', '--strict'], { cwd: vcs.dir, stdio: 'pipe' });
+    });
+});
+
+test('cleanup by age keeps recent unused objects and does not pack', async () => {
+    await fixture(async ({ vcs, file }) => {
+        await vcs.init();
+        await file('characters/A/description.md', 'x1'); await vcs.snapshot();
+        await file('characters/A/description.md', 'x2'); await vcs.snapshot();
+        const r = await vcs.compact({ keepMs: 60 * 60 * 1000, pack: false });
+        assert.equal(r.removed, 0, 'younger than the age limit');
+        assert.ok((await vcs.storage({ unused: true, keepMs: 0 })).unusedFiles > 0);
+        assert.equal((await vcs.storage()).packs, 0);
     });
 });

@@ -140,3 +140,9 @@ __uninstaller*
 /*-ws/
 /debug/
 /*shots/
+
+# Updater / release scratch: electron-updater's local test feed (may carry a GitHub token), the release notes the
+# workflow assembles at the repo root, ad-hoc benchmark copies of a workspace
+dev-app-update.yml
+/release-notes.md
+/bench-*/

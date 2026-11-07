@@ -7,7 +7,7 @@ import CardParts from './card/CardParts.vue';
 import { kindOf } from '../lib/kinds.js';
 import { useApp } from '../stores/app.js';
 import { useUi, historyHref } from '../stores/ui.js';
-import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, removeItem } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, editStep } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
 import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT, displayName } from '../lib/status.js';
 import { api, errorText } from '../api.js';
@@ -54,15 +54,18 @@ async function copyPath() {
   await copyPathToast(abs.value, ui.toast);
 }
 
-// ---- remove from workspace (two steps: 移除… then 确认移除) ----
-const removing = ref(false);
-const keepFiles = ref(false);
-const removeBusy = ref(false);
-watch(() => props.path, () => { removing.value = false; keepFiles.value = false; });
+watch(() => props.path, () => { armedRevert.value = false; });
 
-async function confirmRemove() {
-  removeBusy.value = true;
-  try { if (await removeItem(app, ui, props.path, keepFiles.value)) removing.value = false; } finally { removeBusy.value = false; }
+// ---- 撤回 / 取消撤回 / 撤销当前的修改 (docs/versioning.md §6) ----
+const stepBusy = ref('');
+const armedRevert = ref(false);
+const edits = computed(() => (item.value && item.value.edits) || { undo: false, redo: false });
+const inDraft = computed(() => app.inDraft(props.path));
+async function step(/** @type {'undo'|'redo'|'revert'} */ op) {
+  if (op === 'revert' && !armedRevert.value) { armedRevert.value = true; return; }
+  armedRevert.value = false;
+  stepBusy.value = op;
+  try { await editStep(app, ui, props.path, op); } finally { stepBusy.value = ''; }
 }
 
 // ---- publish an item made in Cellar to a tavern (POST /api/publish) ----
@@ -153,6 +156,26 @@ async function publish(/** @type {any} */ t) {
         <div class="sync-note err"><Icon name="alert" size="sm" />{{ item.error }}</div>
       </section>
 
+      <section class="insp-sec">
+        <h4>修改</h4>
+        <div class="insp-btns">
+          <button class="btn sm" :disabled="!edits.undo || !!stepBusy" title="撤回在 Cellar 中对这一项的上一次修改（如新建、删除、改动条目）" @click="step('undo')"><Icon :name="stepBusy === 'undo' ? 'spin' : 'undo'" size="sm" />撤回</button>
+          <button class="btn sm" :disabled="!edits.redo || !!stepBusy" title="重新应用刚才撤回的修改" @click="step('redo')"><Icon :name="stepBusy === 'redo' ? 'spin' : 'redo'" size="sm" />取消撤回</button>
+        </div>
+        <div class="insp-btns" style="margin-top: 6px">
+          <button
+            class="btn sm"
+            :class="{ danger: armedRevert }"
+            :disabled="!inDraft || !!stepBusy"
+            :title="inDraft ? '把这一项恢复成最近一次记录的版本（还没记录过版本时，恢复成刚取出 / 新建时的样子），放弃草稿里对它的修改（之后仍可撤回）' : '这一项没有未记录的修改'"
+            @click="step('revert')"
+          >
+            <Icon :name="stepBusy === 'revert' ? 'spin' : 'revert'" size="sm" />{{ armedRevert ? '确定撤销当前的修改？' : '撤销当前的修改' }}
+          </button>
+          <button v-if="armedRevert" class="btn sm ghost" @click="armedRevert = false">取消</button>
+        </div>
+      </section>
+
       <CardParts v-if="item.kind === 'character'" :item="item" />
 
       <section class="insp-sec">
@@ -174,15 +197,7 @@ async function publish(/** @type {any} */ t) {
 
       <section class="insp-sec">
         <h4>移除</h4>
-        <button v-if="!removing" class="btn sm" title="不再在工作区里管理这一项" @click="removing = true"><Icon name="trash" size="sm" />从工作区移除…</button>
-        <div v-else class="insp-remove">
-          <p class="faint">只从工作区移除：酒馆里的内容不受影响，之前的版本仍在版本历史中。文件夹里你自己的笔记会保留。</p>
-          <label class="insp-check"><input v-model="keepFiles" type="checkbox" />保留文件夹里的全部文件</label>
-          <div class="insp-btns">
-            <button class="btn sm danger" :disabled="removeBusy" @click="confirmRemove"><Icon :name="removeBusy ? 'spin' : 'trash'" size="sm" />确认移除</button>
-            <button class="btn sm ghost" :disabled="removeBusy" @click="removing = false">取消</button>
-          </div>
-        </div>
+        <button class="btn sm" title="不再在工作区里管理这一项" @click="ui.removeAsk = path"><Icon name="trash" size="sm" />从工作区移除…</button>
       </section>
     </div>
   </aside>

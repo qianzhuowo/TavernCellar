@@ -126,6 +126,13 @@ export const api = {
   tagVersion: (name, rev) => call('POST', '/api/history/tag', { name, rev }),
   diffVersions: (from, to, path) => call('POST', '/api/history/diff', { from, to, path }),
     restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path }),
+  /** 撤回 / 取消撤回 one write of an item; 撤销当前的修改 = back to the last recorded version. @param {string} path */
+  undoItem: (path) => call('POST', '/api/item/undo', { path }),
+  /** 压缩历史: what the history takes on disk / delete unused draft states and pack the rest. */
+  historyStorage: () => call('GET', '/api/history/storage'),
+  compactHistory: () => call('POST', '/api/history/compact', {}),
+  redoItem: (path) => call('POST', '/api/item/redo', { path }),
+  revertItem: (path) => call('POST', '/api/item/revert', { path }),
   /** One item's data in a version (预设工坊). */
   itemAt: (rev, path) => call('POST', '/api/history/item', { rev, path }),
   collection: () => call('POST', '/api/workshop/collection', {}),

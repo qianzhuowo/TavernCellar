@@ -9,6 +9,7 @@ import TabBar from './components/TabBar.vue';
 import Inspector from './components/Inspector.vue';
 import StatusBar from './components/StatusBar.vue';
 import Toasts from './components/Toasts.vue';
+import RemoveDialog from './components/RemoveDialog.vue';
 import Shortcuts from './components/Shortcuts.vue';
 import Wizard from './screens/Wizard.vue';
 import Library from './screens/Library.vue';
@@ -19,12 +20,13 @@ import HistoryPage from './screens/HistoryPage.vue';
 import ConflictPage from './screens/ConflictPage.vue';
 import PreviewPage from './screens/PreviewPage.vue';
 import WorkshopPage from './screens/WorkshopPage.vue';
+import WorkspaceHome from './screens/WorkspaceHome.vue';
 
 const app = useApp();
 const ui = useUi();
 
 const showWizard = computed(() => app.ready && (ui.route.name === 'wizard' || !(app.settings && app.settings.ui && app.settings.ui.wizardDone)));
-const screen = computed(() => ({ library: Library, settings: Settings, item: ItemPage, conflict: ConflictPage, sync: SyncPage, history: HistoryPage, preview: PreviewPage, workshop: WorkshopPage }[ui.route.name] || Library));
+const screen = computed(() => ({ library: Library, workspace: WorkspaceHome, settings: Settings, item: ItemPage, conflict: ConflictPage, sync: SyncPage, history: HistoryPage, preview: PreviewPage, workshop: WorkshopPage }[ui.route.name] || Library));
 const hasInspector = computed(() => (ui.route.name === 'item' || ui.route.name === 'conflict') && !!app.item(ui.route.arg));
 
 let statusTimer = 0;
@@ -125,6 +127,7 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
     </div>
   </div>
 
+  <RemoveDialog v-if="app.ready && ui.removeAsk && app.item(ui.removeAsk)" :key="ui.removeAsk" :path="ui.removeAsk" />
   <Toasts />
 </template>
 
