@@ -13,9 +13,10 @@ import Toggle from '../components/Toggle.vue';
 import CardText from '../components/card/CardText.vue';
 import RegexList from './RegexList.vue';
 import PromptDetail from './PromptDetail.vue';
+import PromptRowActions from '../components/PromptRowActions.vue';
 import { presetRef } from '../lib/status.js';
 import { api, errorText } from '../api.js';
-import { FILTER_TIPS, PROMPT_FILTERS, filterPrompts, globalOrderOf, orderedPrompts, promptsOf } from '../lib/presetPrompts.js';
+import { FILTER_TIPS, PROMPT_FILTERS, deleteBlock, duplicatePrompt, ensureGlobalOrder, filterPrompts, globalOrderOf, orderedPrompts, promptsOf, removePrompts } from '../lib/presetPrompts.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const it = useItem(toRef(props, 'path'));
@@ -55,13 +56,7 @@ watch(shownPrompts, (l) => { if (l.length && !l.some(({ p }) => p.identifier ===
 function insertPrompt() {
   const p = current.value;
   if (!p || currentOrder.value) return;
-  let list = globalOrder.value;
-  if (!list) {
-    if (!Array.isArray(data.value.prompt_order)) data.value.prompt_order = [];
-    list = [];
-    data.value.prompt_order.push({ character_id: 100001, order: list });
-  }
-  list.push({ identifier: p.identifier, enabled: false });
+  ensureGlobalOrder(data.value).push({ identifier: p.identifier, enabled: false });
   edited();
 }
 
@@ -77,14 +72,15 @@ function addPrompt() {
   selectedId.value = p.identifier;
   edited();
 }
-function removePrompt() {
-  const p = current.value;
-  if (!p || p.system_prompt || p.marker) return;
-  data.value.prompts.splice(data.value.prompts.indexOf(p), 1);
-  for (const po of Array.isArray(data.value.prompt_order) ? data.value.prompt_order : []) {
-    if (Array.isArray(po?.order)) po.order = po.order.filter((/** @type {any} */ o) => o.identifier !== p.identifier);
-  }
-  selectedId.value = '';
+function removePrompt(/** @type {string} */ id) {
+  if (!removePrompts(data.value, [id])) return;
+  if (selectedId.value === id) selectedId.value = '';
+  edited();
+}
+function copyPrompt(/** @type {string} */ id) {
+  const copy = duplicatePrompt(data.value, id);
+  if (!copy) return;
+  selectedId.value = copy;
   edited();
 }
 function movePrompt(/** @type {number} */ d) {
@@ -193,6 +189,7 @@ async function keepMine() {
                 <div class="rx-name">{{ p.name || p.identifier }}<span v-if="!o" class="pe-out">未插入</span></div>
                 <div class="rx-sub faint">{{ p.marker ? '占位（内容由酒馆生成）' : (p.content || '').slice(0, 80) || '（空）' }}</div>
               </div>
+              <PromptRowActions :prompt="p" @copy="copyPrompt(p.identifier)" @remove="removePrompt(p.identifier)" />
               <Toggle v-if="o" :model-value="!!o.enabled" :title="o.enabled ? '已启用' : '已停用'" @click.stop @update:model-value="toggleOrder(o)" />
             </div>
             <div v-if="!shownPrompts.length" class="faint rx-empty">{{ pq || (ordered.length && pfilter !== 'all') ? '没有匹配的提示词' : '这个预设没有提示词' }}</div>
@@ -211,7 +208,7 @@ async function keepMine() {
             <template #actions>
               <button class="icon-btn" type="button" title="上移" :disabled="!currentOrder" @click="movePrompt(-1)"><Icon name="arrowUp" size="sm" /></button>
               <button class="icon-btn" type="button" title="下移" :disabled="!currentOrder" @click="movePrompt(1)"><Icon name="arrowDown" size="sm" /></button>
-              <button class="icon-btn" type="button" :title="current.system_prompt || current.marker ? '内置提示词不能删除' : '删除这条提示词'" :disabled="current.system_prompt || current.marker" @click="removePrompt"><Icon name="trash" size="sm" /></button>
+              <button class="icon-btn" type="button" :title="deleteBlock(current) || '删除这条提示词'" :disabled="!!deleteBlock(current)" @click="removePrompt(current.identifier)"><Icon name="trash" size="sm" /></button>
             </template>
           </PromptDetail>
         </section>

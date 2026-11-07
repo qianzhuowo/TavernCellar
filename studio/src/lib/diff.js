@@ -44,6 +44,41 @@ function foldCoincidences(parts) {
   return out;
 }
 
+const LINE_LIMIT = 4000000; // cells of the line LCS table
+
+/**
+ * Long texts with changes far apart: match whole lines first (like VS Code's diff), then refine each changed stretch
+ * by characters when it is small enough, otherwise mark the stretch as replaced.
+ * @param {string} a @param {string} b @returns {Part[]}
+ */
+function byLines(a, b) {
+  const la = a.match(/[^\n]*\n|[^\n]+$/g) || [], lb = b.match(/[^\n]*\n|[^\n]+$/g) || [];
+  const n = la.length, m = lb.length;
+  if (n * m > LINE_LIMIT) return [...(a ? [['-', a]] : []), ...(b ? [['+', b]] : [])];
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = la[i] === lb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  /** @type {Part[]} */
+  const out = [];
+  let del = '', ins = '';
+  const flush = () => {
+    if (del && ins && del.length * ins.length <= LCS_LIMIT) out.push(...foldCoincidences(lcs(del, ins)));
+    else { if (del) out.push(['-', del]); if (ins) out.push(['+', ins]); }
+    del = ins = '';
+  };
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && la[i] === lb[j]) {
+      flush();
+      const l = out[out.length - 1];
+      if (l && l[0] === '=') l[1] += la[i]; else out.push(['=', la[i]]);
+      i++; j++;
+    } else if (j >= m || (i < n && dp[i + 1][j] >= dp[i][j + 1])) del += la[i++];
+    else ins += lb[j++];
+  }
+  flush();
+  return out;
+}
+
 /** Parts turning `from` into `to`. @param {string} from @param {string} to @returns {Part[]} */
 export function diffText(from, to) {
   if (from === to) return from ? [['=', from]] : [];
@@ -54,7 +89,7 @@ export function diffText(from, to) {
   while (s < max - p && from[from.length - 1 - s] === to[to.length - 1 - s]) s++;
   const a = from.slice(p, from.length - s), b = to.slice(p, to.length - s);
   /** @type {Part[]} */
-  const mid = a.length * b.length <= LCS_LIMIT ? foldCoincidences(lcs(a, b)) : [...(a ? [['-', a]] : []), ...(b ? [['+', b]] : [])];
+  const mid = a.length * b.length <= LCS_LIMIT ? foldCoincidences(lcs(a, b)) : byLines(a, b);
   /** @type {Part[]} */
   const out = [];
   if (p) out.push(['=', from.slice(0, p)]);

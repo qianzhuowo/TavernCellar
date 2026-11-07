@@ -18,6 +18,12 @@ export const STATUS = Object.freeze({
 
 const MIN_BACKOFF_MS = 5000;
 const MAX_BACKOFF_MS = 60000;
+// After this many failed attempts in a row the companion is taken as not running: retries go quiet (every QUIET_MS,
+// or when the user returns to the tab, at most every QUIET_FOCUS_MS). Each failed WebSocket attempt makes the
+// browser itself log an error that scripts cannot suppress, so fewer attempts is the only way to keep the console clean.
+const QUIET_AFTER = 6;
+const QUIET_MS = 5 * 60000;
+const QUIET_FOCUS_MS = 30000;
 const KEEPALIVE_LOCK = 'tavern-cellar-link';
 
 /**
@@ -57,6 +63,8 @@ export class LinkClient {
         this.wanted = false;
         this.backoff = MIN_BACKOFF_MS;
         this.retryTimer = null;
+        this.failures = 0;
+        this.lastAttempt = 0;
         this.server = null;
         this.keepAlive = new KeepAlive();
     }
@@ -64,6 +72,7 @@ export class LinkClient {
     start() {
         this.wanted = true;
         this.backoff = MIN_BACKOFF_MS;
+        this.failures = 0;
         this.#connect();
     }
 
@@ -78,6 +87,11 @@ export class LinkClient {
         this.onStatus(STATUS.IDLE);
     }
 
+    /** Failed often enough in a row to treat the companion as not running. */
+    get quiet() {
+        return this.failures >= QUIET_AFTER;
+    }
+
     restart() {
         this.stop();
         this.start();
@@ -86,7 +100,8 @@ export class LinkClient {
     /** Skips the remaining backoff when waiting for the companion (e.g. the tab regained focus). */
     retryNow() {
         if (!this.wanted || this.socket || !this.retryTimer) return;
-        this.backoff = MIN_BACKOFF_MS;
+        if (this.quiet && Date.now() - this.lastAttempt < QUIET_FOCUS_MS) return;
+        if (!this.quiet) this.backoff = MIN_BACKOFF_MS;
         this.#connect();
     }
 
@@ -98,6 +113,7 @@ export class LinkClient {
     #connect() {
         clearTimeout(this.retryTimer);
         this.retryTimer = null;
+        this.lastAttempt = Date.now();
         const hello = this.getHello();
         this.onStatus(STATUS.CONNECTING, hello.url);
         let socket;
@@ -122,6 +138,7 @@ export class LinkClient {
 
         socket.addEventListener('close', ev => {
             if (this.socket !== socket) return; // superseded
+            const wasReady = this.ready;
             this.socket = null;
             this.ready = false;
             this.keepAlive.release();
@@ -135,14 +152,20 @@ export class LinkClient {
                 this.onStatus(STATUS.STOPPED, reason ?? ev.reason);
                 return;
             }
+            this.failures = wasReady ? 0 : this.failures + 1;
+            let delay;
             if (ev.code === CLOSE.TAVERN_DISABLED) {
                 this.backoff = MAX_BACKOFF_MS;
                 this.onStatus(STATUS.REFUSED, '在伴侣程序中运行 cellar use all 可重新接受');
+                delay = this.backoff;
+            } else if (this.quiet) {
+                this.onStatus(STATUS.WAITING, '伴侣程序未运行 · 后台每 5 分钟重试，切回此页面或点「重新连接」立即重试');
+                delay = QUIET_MS;
             } else {
                 this.onStatus(STATUS.WAITING, `${Math.round(this.backoff / 1000)} 秒后重试`);
+                delay = this.backoff;
+                this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
             }
-            const delay = this.backoff;
-            this.backoff = Math.min(this.backoff * 2, MAX_BACKOFF_MS);
             this.retryTimer = setTimeout(() => this.#connect(), delay);
         });
     }
@@ -161,6 +184,7 @@ export class LinkClient {
             if (msg.ok) {
                 this.ready = true;
                 this.backoff = MIN_BACKOFF_MS;
+                this.failures = 0;
                 this.server = msg.payload?.server ?? null;
                 this.keepAlive.hold();
                 this.onStatus(STATUS.CONNECTED, this.server ? `${this.server.name} ${this.server.version}` : '');

@@ -2,21 +2,26 @@
 // 预设工坊: compare the prompts of two chat-completion presets and move prompts between them.
 //   来源  a workspace preset (now or in a version, read-only), a tavern preset (ST/TT, read without checkout), or 收藏
 //   目标  a workspace or tavern preset
-// Edits are buffered (lib/workshopState.js) until 保存修改: workspace presets are written to the workspace; a tavern
-// preset is checked out first (or edited where it is already checked out) and synced back to that tavern.
-// 对比模式 marks prompts whose content or name differs and shows both sides with a diff.
+// Four columns: 来源 | 目标 | 来源条目 | 目标条目; each side has its own selection and detail. Edits are buffered
+// (lib/workshopState.js) until 保存修改: workspace presets are written to the workspace; a tavern preset is checked out
+// first (or edited where it is already checked out) and synced back to that tavern. The collection saves itself.
+// 对比模式 marks prompts whose content or name differs, selects the counterpart on the other side and highlights the
+// differences in both details. When both sides are the same preset, the two selected prompts are compared instead.
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import Icon from '../components/Icon.vue';
 import MiniSelect from '../components/MiniSelect.vue';
+import SearchSelect from '../components/SearchSelect.vue';
 import Toggle from '../components/Toggle.vue';
+import PromptRowActions from '../components/PromptRowActions.vue';
 import PromptDetail from '../editors/PromptDetail.vue';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { api, errorText } from '../api.js';
 import { displayName, relTime } from '../lib/status.js';
-import { diffText } from '../lib/diff.js';
-import { workshop as W, workshopDirty } from '../lib/workshopState.js';
-import { FILTER_TIPS, PROMPT_FILTERS, filterPrompts, globalOrderOf, orderedPrompts, promptsOf, roleOf } from '../lib/presetPrompts.js';
+import { workshop as W, workshopDirty, saveCollectionSoon } from '../lib/workshopState.js';
+import {
+  FILTER_TIPS, PROMPT_FILTERS, deleteBlock, duplicatePrompt, ensureGlobalOrder, filterPrompts, orderedPrompts, promptsOf, removePrompts, roleOf
+} from '../lib/presetPrompts.js';
 
 const app = useApp();
 const ui = useUi();
@@ -41,7 +46,7 @@ function locOptions(/** @type {boolean} */ withCol) {
 const catalogs = reactive({});
 async function loadCatalog(/** @type {string} */ id, force = false) {
   if (!force && catalogs[id]?.items) return;
-  catalogs[id] = { items: null, err: '' };
+  if (!catalogs[id]) catalogs[id] = { items: null, err: '' };
   try {
     const r = await api.catalog({ target: id, kind: 'preset', limit: 500 });
     catalogs[id] = { items: (r.items || []).filter((/** @type {any} */ i) => i.apiId === 'openai'), err: '' };
@@ -52,8 +57,9 @@ async function loadCatalog(/** @type {string} */ id, force = false) {
 function idOptions(/** @type {any} */ s) {
   if (s.loc === 'ws') return presets.value.map((/** @type {any} */ p) => ({ value: p.path, label: nameOf(p.path) }));
   if (s.loc === 'col') return [];
-  return (catalogs[s.loc]?.items || []).map((i) => ({ value: i.id, label: i.name + (i.checkedOut ? '（已取出）' : '') }));
+  return (catalogs[s.loc]?.items || []).map((i) => ({ value: i.id, label: i.name }));
 }
+const pickPlaceholder = (/** @type {any} */ s) => (isTavern(s.loc) && !catalogs[s.loc]?.items ? '正在读取…' : '选择预设…');
 
 // ---- loading / saving one side ---------------------------------------------------------
 async function load(/** @type {any} */ s) {
@@ -93,6 +99,7 @@ async function saveSide(/** @type {any} */ s) {
     const co = await api.checkout(s.loc, 'preset', s.id);
     path = co.path;
     s.path = path;
+    loadCatalog(s.loc, true);
     if (co.hash !== s.hash) throw new Error('酒馆里的这个预设在此期间被修改了（已取出到工作区）；点「取消」重新读取后再改');
     hash = (await api.item(path)).hash;
   }
@@ -111,20 +118,18 @@ async function loadCollection() {
     col.prompts = Array.isArray(r.collection?.prompts) ? r.collection.prompts : [];
     col.hash = r.hash;
     col.err = '';
-    col.dirty = false;
     col.loaded = true;
   } catch (e) {
     col.err = errorText(e);
   }
 }
-async function saveCollection() {
-  const r = await api.saveCollection({ version: 1, prompts: plain(col.prompts) }, col.hash);
-  col.hash = r.hash;
-  col.dirty = false;
-}
 
-/** Source and target are the same preset as it is now: both show (and edit) the target's copy. */
-const sameBuf = computed(() => src.loc !== 'col' && !!src.id && src.loc === tgt.loc && src.id === tgt.id && !src.rev);
+/**
+ * Source and target are the same preset as it is now (picked the same way, or a tavern preset that is checked out to
+ * the workspace item on the other side): both show and edit one copy, the target's.
+ */
+const sameBuf = computed(() => src.loc !== 'col' && !!src.id && !src.rev
+  && ((src.loc === tgt.loc && src.id === tgt.id) || (!!src.path && src.path === tgt.path)));
 const S = computed(() => (sameBuf.value ? tgt : src));
 
 const dirty = computed(() => workshopDirty());
@@ -135,33 +140,28 @@ async function saveAll() {
   for (const s of sameBuf.value ? [tgt] : [tgt, src]) {
     try { const n = await saveSide(s); if (n) notes.push(n); } catch (e) { notes.push(errorText(e)); }
   }
-  if (col.dirty) {
-    try { await saveCollection(); } catch (e) { notes.push('收藏没有保存：' + errorText(e)); }
-  }
   saving.value = false;
-  app.refreshStatus();
+  await app.refreshStatus();
   if (notes.length) ui.toast(notes.join('；'), 'alert'); else ui.toast('已保存修改', 'check');
 }
 async function cancelAll() {
-  await Promise.all([src.dirty ? load(src) : null, tgt.dirty ? load(tgt) : null, col.dirty ? loadCollection() : null]);
+  await Promise.all([src.dirty ? load(src) : null, tgt.dirty ? load(tgt) : null]);
   ui.toast('已放弃未保存的修改');
 }
 
 /** Changes what a side shows; unsaved edits on it are dropped only after asking. */
 function change(/** @type {any} */ s, /** @type {any} */ patch) {
-  if (s.dirty && !window.confirm('这一侧有未保存的修改，切换会放弃它们。继续吗？')) return false;
+  if (s.dirty && !window.confirm('这一侧有未保存的修改，切换会放弃它们。继续吗？')) return;
   Object.assign(s, patch);
   s.dirty = false;
   if (isTavern(s.loc)) loadCatalog(s.loc);
   load(s);
   persist();
-  return true;
 }
 const val = (/** @type {Event} */ e) => /** @type {any} */ (e.target).value;
 function persist() {
   localStorage.setItem(KEY, JSON.stringify({ src: { loc: src.loc, id: src.id }, tgt: { loc: tgt.loc, id: tgt.id }, compare: W.compare }));
 }
-watch(() => W.compare, persist);
 
 // versions of the source (workspace only)
 /** @type {import('vue').Ref<any[]>} */
@@ -184,7 +184,7 @@ for (const s of [src, tgt]) {
 onMounted(() => {
   if (!col.loaded) loadCollection();
   if (W.inited) {
-    for (const s of [src, tgt]) if (isTavern(s.loc)) loadCatalog(s.loc);
+    for (const s of [src, tgt]) if (isTavern(s.loc)) loadCatalog(s.loc, true);
     loadVersions();
     return;
   }
@@ -235,36 +235,56 @@ function stateOf(/** @type {Row} */ row, /** @type {Row[]} */ other) {
   if (!samePrompt(row.p, x.m.p)) return samePrompt({ ...row.p, name: x.m.p.name }, x.m.p) ? 'renamed' : 'diff';
   return !!row.o?.enabled === !!x.m.o?.enabled && !!row.o === !!x.m.o ? 'same' : 'diff';
 }
-const comparing = computed(() => W.compare && !!tgt.data && (src.loc === 'col' || !!S.value.data));
-const srcRows = computed(() => filterPrompts(srcAll.value, fS.value, qS.value).map((r) => ({ ...r, st: comparing.value ? stateOf(r, tgtAll.value) : '' })));
-const tgtRows = computed(() => filterPrompts(tgtAll.value, fT.value, qT.value).map((r) => ({ ...r, st: comparing.value ? stateOf(r, srcAll.value) : '' })));
+/** Rows are marked only when comparing two different presets (the same preset matches itself everywhere). */
+const marking = computed(() => W.compare && !sameBuf.value && !!tgt.data && (src.loc === 'col' || !!S.value.data));
+const srcRows = computed(() => filterPrompts(srcAll.value, fS.value, qS.value).map((r) => ({ ...r, st: marking.value ? stateOf(r, tgtAll.value) : '' })));
+const tgtRows = computed(() => filterPrompts(tgtAll.value, fT.value, qT.value).map((r) => ({ ...r, st: marking.value ? stateOf(r, srcAll.value) : '' })));
 const counts = computed(() => {
   const c = { same: 0, diff: 0, renamed: 0, onlySrc: 0, onlyTgt: 0 };
-  if (!comparing.value) return c;
+  if (!marking.value) return c;
   for (const r of srcAll.value) { const s = stateOf(r, tgtAll.value); if (s === 'only') c.onlySrc++; else c[/** @type {'same'} */ (s)]++; }
   for (const r of tgtAll.value) if (!pairOf(r.p, srcAll.value)) c.onlyTgt++;
   return c;
 });
 const ST_LABEL = { src: { only: '目标没有', same: '相同', diff: '内容不同', renamed: '名称不同' }, tgt: { only: '来源没有', same: '相同', diff: '内容不同', renamed: '名称不同' } };
 
-// ---- selection, details --------------------------------------------------------------
-/** @type {import('vue').Ref<{side: 'src'|'tgt', key: string}|null>} */
-const sel = ref(null);
-const checked = ref(/** @type {Set<string>} */ (new Set()));
-watch(() => [src.loc, src.id, src.rev], () => { checked.value = new Set(); if (sel.value?.side === 'src') sel.value = null; });
-watch(() => [tgt.loc, tgt.id], () => { if (sel.value?.side === 'tgt') sel.value = null; });
-function toggleCheck(/** @type {string} */ key) {
-  const s = new Set(checked.value);
+// ---- selection (one per side), details -------------------------------------------------
+const selS = ref(''), selT = ref('');
+/** @type {import('vue').Ref<'src'|'tgt'>} side clicked last: 对比模式 pairs from it when turned on */
+const lastSide = ref(/** @type {'src'|'tgt'} */ ('src'));
+const checkedS = ref(/** @type {Set<string>} */ (new Set()));
+const checkedT = ref(/** @type {Set<string>} */ (new Set()));
+watch(() => [src.loc, src.id, src.rev], () => { checkedS.value = new Set(); selS.value = ''; });
+watch(() => [tgt.loc, tgt.id], () => { checkedT.value = new Set(); selT.value = ''; });
+const rowsOf = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? srcAll.value : tgtAll.value);
+const rowS = computed(() => srcAll.value.find((r) => r.key === selS.value) || null);
+const rowT = computed(() => tgtAll.value.find((r) => r.key === selT.value) || null);
+const readonlyOf = (/** @type {'src'|'tgt'} */ side) => side === 'src' && src.loc !== 'col' && S.value.readonly;
+
+function toggleCheck(/** @type {'src'|'tgt'} */ side, /** @type {string} */ key) {
+  const box = side === 'src' ? checkedS : checkedT;
+  const s = new Set(box.value);
   if (s.has(key)) s.delete(key); else s.add(key);
-  checked.value = s;
+  box.value = s;
+}
+/** 对比模式 between two presets: the other side follows to the counterpart (none = nothing selected there). */
+function pairFrom(/** @type {'src'|'tgt'} */ side) {
+  if (!W.compare || sameBuf.value) return;
+  const mine = side === 'src' ? rowS.value : rowT.value;
+  if (!mine) return;
+  const x = pairOf(mine.p, side === 'src' ? tgtAll.value : srcAll.value);
+  if (side === 'src') selT.value = x?.m.key ?? ''; else selS.value = x?.m.key ?? '';
+}
+function select(/** @type {'src'|'tgt'} */ side, /** @type {string} */ key) {
+  if (side === 'src') selS.value = key; else selT.value = key;
+  lastSide.value = side;
+  pairFrom(side);
 }
 function clickRow(/** @type {'src'|'tgt'} */ side, /** @type {string} */ key, /** @type {MouseEvent} */ ev) {
-  if (side === 'src' && (ev.ctrlKey || ev.metaKey)) { toggleCheck(key); return; }
-  sel.value = { side, key };
+  if (ev.ctrlKey || ev.metaKey) { toggleCheck(side, key); return; }
+  select(side, key);
 }
-const rowsOf = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? srcAll.value : tgtAll.value);
-const selRow = computed(() => (sel.value ? rowsOf(sel.value.side).find((r) => r.key === sel.value?.key) || null : null));
-const readonlyOf = (/** @type {'src'|'tgt'} */ side) => side === 'src' && src.loc !== 'col' && S.value.readonly;
+watch(() => W.compare, () => { persist(); pairFrom(lastSide.value); });
 
 /** Applies a field edit from PromptDetail and marks the side it belongs to. */
 function setField(/** @type {'src'|'tgt'} */ side, /** @type {Row} */ row, /** @type {string} */ key, /** @type {any} */ value) {
@@ -272,48 +292,27 @@ function setField(/** @type {'src'|'tgt'} */ side, /** @type {Row} */ row, /** @
   row.p[key] = value;
   if (side === 'src' && src.loc === 'col') {
     if (key === 'name' && row.c) row.c.title = value;
-    col.dirty = true;
+    saveCollectionSoon();
   } else (side === 'src' ? S.value : tgt).dirty = true;
-}
-/** The global order of a side's preset, created when missing. */
-function ensureOrder(/** @type {any} */ d) {
-  let list = globalOrderOf(d);
-  if (!list) {
-    if (!Array.isArray(d.prompt_order)) d.prompt_order = [];
-    list = [];
-    d.prompt_order.push({ character_id: 100001, order: list });
-    list = globalOrderOf(d);
-  }
-  return list;
 }
 function insertRow(/** @type {'src'|'tgt'} */ side, /** @type {Row} */ row) {
   const s = side === 'src' ? S.value : tgt;
   if (!s.data || readonlyOf(side)) return;
-  ensureOrder(s.data).push({ identifier: row.p.identifier, enabled: false });
+  ensureGlobalOrder(s.data).push({ identifier: row.p.identifier, enabled: false });
   s.dirty = true;
 }
 
-/** 对比模式: the selected prompt and its counterpart, with the content diff and the differing fields. */
+/** 对比模式: both selected prompts, compared (content diff in the details, differing fields marked). */
 const cmp = computed(() => {
-  const s = sel.value;
-  const mine = selRow.value;
-  if (!s || !mine) return null;
-  const x = pairOf(mine.p, s.side === 'src' ? tgtAll.value : srcAll.value);
-  const a = s.side === 'src' ? mine : x?.m ?? null;
-  const b = s.side === 'src' ? x?.m ?? null : mine;
-  /** @type {Array<[string, string]>|null} */
-  let diff = null;
-  /** @type {string[]} */
-  let changed = [];
-  if (a && b && !a.p.marker && !b.p.marker) {
-    diff = diffText(String(a.p.content ?? ''), String(b.p.content ?? ''));
-    const na = norm(a.p), nb = norm(b.p);
-    changed = ['name', 'role', 'position', 'forbid'].filter((k) => (k === 'position'
-      ? na.position !== nb.position || (na.position === 1 && na.depth !== nb.depth)
-      : na[/** @type {'name'} */ (k)] !== nb[/** @type {'name'} */ (k)]));
-  }
-  return { a, b, diff, changed };
+  const a = rowS.value, b = rowT.value;
+  if (!W.compare || !a || !b || a.p.marker || b.p.marker) return null;
+  const na = norm(a.p), nb = norm(b.p);
+  const changed = ['name', 'role', 'position', 'forbid'].filter((k) => (k === 'position'
+    ? na.position !== nb.position || (na.position === 1 && na.depth !== nb.depth)
+    : na[/** @type {'name'} */ (k)] !== nb[/** @type {'name'} */ (k)]));
+  return { a, b, changed };
 });
+const otherText = (/** @type {'src'|'tgt'} */ side) => (cmp.value ? String((side === 'src' ? cmp.value.b : cmp.value.a).p.content ?? '') : null);
 
 // ---- writing into the target ---------------------------------------------------------
 /** Index in the order where a drop/insert lands. @param {{id: string, after: boolean}|null} anchor */
@@ -338,7 +337,7 @@ function applyCopy(/** @type {Incoming[]} */ items, /** @type {any} */ anchor, m
   pending.value = null;
   const d = tgt.data;
   if (!Array.isArray(d.prompts)) d.prompts = [];
-  const order = ensureOrder(d);
+  const order = ensureGlobalOrder(d);
   let at = anchorIndex(order, anchor);
   let last = '';
   for (const { p, enabled } of items) {
@@ -357,11 +356,11 @@ function applyCopy(/** @type {Incoming[]} */ items, /** @type {any} */ anchor, m
     last = id;
   }
   tgt.dirty = true;
-  if (last) sel.value = { side: 'tgt', key: last };
+  if (last) { selT.value = last; lastSide.value = 'tgt'; }
   ui.toast(`已复制到目标：${items.length} 条（保存修改后写入）`, 'check');
 }
 function moveIn(/** @type {string[]} */ ids, /** @type {any} */ anchor) {
-  const order = ensureOrder(tgt.data);
+  const order = ensureGlobalOrder(tgt.data);
   if (anchor && ids.includes(anchor.id)) return;
   const moving = ids.map((id) => order.find((/** @type {any} */ o) => o.identifier === id) || { identifier: id, enabled: false });
   for (const m of moving) { const i = order.indexOf(m); if (i >= 0) order.splice(i, 1); }
@@ -369,16 +368,39 @@ function moveIn(/** @type {string[]} */ ids, /** @type {any} */ anchor) {
   tgt.dirty = true;
 }
 function toggleOrder(/** @type {any} */ o) { o.enabled = !o.enabled; tgt.dirty = true; }
+/** Copies one target prompt right below itself. */
+function duplicateTgt(/** @type {string} */ id) {
+  const copy = duplicatePrompt(tgt.data, id);
+  if (!copy) return;
+  tgt.dirty = true;
+  selT.value = copy;
+}
+/** Deletes target prompts (built-in ones and placeholders are kept). */
+function removeTgt(/** @type {string[]} */ ids) {
+  const n = removePrompts(tgt.data, ids);
+  if (!n) { ui.toast('选中的都是内置或占位条目，不能删除', 'alert'); return; }
+  tgt.dirty = true;
+  if (ids.includes(selT.value)) selT.value = '';
+  checkedT.value = new Set([...checkedT.value].filter((k) => !ids.includes(k)));
+  if (n < ids.length) ui.toast(`已删除 ${n} 条；内置或占位条目不能删除，已跳过 ${ids.length - n} 条`, 'alert');
+}
+const checkedTgt = computed(() => tgtAll.value.filter((r) => checkedT.value.has(r.key)));
+const deletableChecked = computed(() => checkedTgt.value.filter((r) => !deleteBlock(r.p)).length);
+const armedBulk = ref(false);
+function removeChecked() {
+  if (!armedBulk.value) { armedBulk.value = true; return; }
+  armedBulk.value = false;
+  removeTgt(checkedTgt.value.map((r) => r.key));
+}
 
 const picked = computed(() => {
-  const keys = checked.value.size ? [...checked.value] : sel.value?.side === 'src' ? [sel.value.key] : [];
+  const keys = checkedS.value.size ? [...checkedS.value] : selS.value ? [selS.value] : [];
   return srcAll.value.filter((r) => keys.includes(r.key));
 });
 const incoming = (/** @type {Row[]} */ rows) => rows.map((r) => ({ p: r.p, enabled: !!r.o?.enabled }));
 function copyPicked() {
-  const anchor = sel.value?.side === 'tgt' ? { id: sel.value.key, after: true } : null;
-  copyIn(incoming(picked.value), anchor);
-  checked.value = new Set();
+  copyIn(incoming(picked.value), rowT.value?.o ? { id: selT.value, after: true } : null);
+  checkedS.value = new Set();
 }
 
 // ---- drag & drop ------------------------------------------------------------------
@@ -386,7 +408,8 @@ function copyPicked() {
 const drag = ref(null);
 const dropAt = ref(/** @type {{id: string, after: boolean}|null} */ (null));
 function dragStart(/** @type {'src'|'tgt'} */ from, /** @type {string} */ key, /** @type {DragEvent} */ ev) {
-  const keys = from === 'src' && checked.value.has(key) ? [...checked.value] : [key];
+  const box = from === 'src' ? checkedS.value : checkedT.value;
+  const keys = box.has(key) ? rowsOf(from).filter((r) => box.has(r.key)).map((r) => r.key) : [key];
   drag.value = { from, keys };
   ev.dataTransfer?.setData('text/plain', keys.join('\n'));
   if (ev.dataTransfer) ev.dataTransfer.effectAllowed = from === 'tgt' ? 'copyMove' : 'copy';
@@ -413,11 +436,10 @@ function dropTarget(/** @type {DragEvent} */ ev) {
   dragEnd();
   if (!d || !tgt.data) return;
   if (d.from === 'tgt') moveIn(d.keys, anchor);
-  else copyIn(incoming(srcAll.value.filter((r) => d.keys.includes(r.key))), anchor);
-  checked.value = new Set();
+  else { copyIn(incoming(srcAll.value.filter((r) => d.keys.includes(r.key))), anchor); checkedS.value = new Set(); }
 }
 
-// ---- 收藏 -----------------------------------------------------------------------
+// ---- 收藏 (saved at once) ------------------------------------------------------------
 const srcLabel = computed(() => {
   if (src.loc === 'ws') return nameOf(src.id) + (src.rev ? ' @' + src.rev.slice(0, 8) : '');
   return (idOptions(src).find((o) => o.value === src.id)?.label || src.id) + ' · ' + app.targetName(src.loc);
@@ -428,40 +450,46 @@ function collect(/** @type {Row[]} */ rows, /** @type {string} */ from) {
   if (rows.length && !add.length) { ui.toast('占位提示词由酒馆生成内容，不能收藏', 'alert'); return; }
   if (!add.length) return;
   col.prompts.push(...add);
-  col.dirty = true;
-  ui.toast(`已加入收藏 ${add.length} 条（保存修改后写入）`, 'check');
+  saveCollectionSoon(0);
+  ui.toast(`已加入收藏 ${add.length} 条`, 'check');
 }
-function collectPicked() { collect(picked.value, srcLabel.value); checked.value = new Set(); }
-function collectTarget() { if (sel.value?.side === 'tgt' && selRow.value) collect([selRow.value], tgtLabel.value); }
+function collectPicked() { collect(picked.value, srcLabel.value); checkedS.value = new Set(); }
+function collectTarget() {
+  collect(checkedTgt.value.length ? checkedTgt.value : rowT.value ? [rowT.value] : [], tgtLabel.value);
+  checkedT.value = new Set();
+}
 const armedDelete = ref('');
 function removeSaved(/** @type {string} */ id) {
   if (armedDelete.value !== id) { armedDelete.value = id; return; }
   armedDelete.value = '';
-  if (sel.value?.side === 'src' && sel.value.key === id) sel.value = null;
+  if (selS.value === id) selS.value = '';
   col.prompts = col.prompts.filter((x) => x.id !== id);
-  col.dirty = true;
+  saveCollectionSoon(0);
 }
 
 const preview = (/** @type {any} */ p) => (p.marker ? '占位（内容由酒馆生成）' : String(p.content || '').slice(0, 80) || '（空）');
 const infoOpen = ref(false);
-const sideLabel = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? (src.loc === 'col' ? '收藏' : '来源') : '目标');
 const noSource = computed(() => !presets.value.length && !taverns.value.length);
+/** The two detail columns. */
+const DETAILS = /** @type {const} */ (['src', 'tgt']);
+const detailRow = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? rowS.value : rowT.value);
 </script>
 
 <template>
-  <div class="wk" :class="{ compare: W.compare }">
+  <div class="wk">
     <div class="wk-head">
       <h2><Icon name="workshop" />预设工坊</h2>
       <span class="wk-info" :class="{ open: infoOpen }" tabindex="0" role="button" aria-label="说明" @click="infoOpen = !infoOpen" @blur="infoOpen = false">
         <Icon name="info" size="sm" />
         <span class="wk-tip" role="tooltip">
-          把来源的条目拖到目标列表中的位置即可复制，在目标列表内拖动可调整顺序。来源可以是工作区或酒馆（ST/TT）中的预设、某个历史版本，或「收藏」；目标可以是工作区或酒馆中的预设。<br />
-          修改先留在这里，点「保存修改」才写入：工作区预设写入工作区；酒馆预设会先取出到工作区，再同步回那个酒馆。<br />
-          开启「对比模式」后，内容不同、或内容相同但名称不同的条目会高亮，并在右侧并排显示两边的差异。
+          把来源的条目拖到目标列表中的位置即可复制，在目标列表内拖动可调整顺序；Ctrl+点击或勾选可多选。来源可以是工作区或酒馆（ST/TT）中的预设、某个历史版本，或「收藏」；目标可以是工作区或酒馆中的预设。<br />
+          修改先留在这里，点「保存修改」才写入：工作区预设写入工作区；酒馆预设会先取出到工作区，再同步回那个酒馆。收藏的改动立即保存。<br />
+          开启「对比模式」后，内容不同、或内容相同但名称不同的条目会高亮；选中一边的条目时另一边会选中对应条目，两边的内容框标出差异并可直接修改。来源与目标是同一个预设时，对比两边各自选中的条目。
         </span>
       </span>
       <label class="wk-cmp"><Toggle v-model="W.compare" />对比模式</label>
       <span class="spacer" />
+      <span v-if="col.saving" class="faint wk-colsave"><Icon name="spin" size="sm" />正在保存收藏…</span>
       <span v-if="dirty" class="wk-dirty"><Icon name="dot" size="sm" />有未保存的修改</span>
       <button class="btn sm" type="button" :disabled="!dirty || saving" @click="cancelAll">取消</button>
       <button class="btn sm primary" type="button" :disabled="!dirty || saving" @click="saveAll"><Icon :name="saving ? 'spin' : 'save'" size="sm" />保存修改</button>
@@ -478,15 +506,12 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
       <section class="wk-col">
         <div class="wk-col-head">
           <span class="wk-tag src">来源</span>
-          <select class="input wk-loc" :value="src.loc" aria-label="来源位置" @change="change(src, { loc: val($event), id: '', rev: '' }) || (/** @type {any} */ ($event.target).value = src.loc)">
+          <select class="input wk-loc" :value="src.loc" aria-label="来源位置" @change="change(src, { loc: val($event), id: '', rev: '' }); /** @type {any} */ ($event.target).value = src.loc">
             <option v-for="o in locOptions(true)" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
-          <select v-if="src.loc !== 'col'" class="input wk-pick" :value="src.id" aria-label="来源预设" @change="change(src, { id: val($event), rev: '' }) || (/** @type {any} */ ($event.target).value = src.id)">
-            <option value="">{{ isTavern(src.loc) && !catalogs[src.loc]?.items ? '正在读取…' : '选择预设…' }}</option>
-            <option v-for="o in idOptions(src)" :key="o.value" :value="o.value">{{ o.label }}</option>
-          </select>
-          <span v-else class="faint wk-colcount">{{ col.prompts.length }} 条 · workshop/prompts.json</span>
-          <select v-if="src.loc === 'ws'" class="input wk-rev" :value="src.rev" :disabled="!src.id" aria-label="来源版本" title="选择历史版本做新旧对比" @change="change(src, { rev: val($event) }) || (/** @type {any} */ ($event.target).value = src.rev)">
+          <SearchSelect v-if="src.loc !== 'col'" class="wk-pick" :model-value="src.id" :options="idOptions(src)" :placeholder="pickPlaceholder(src)" aria-label="来源预设" @update:model-value="change(src, { id: $event, rev: '' })" />
+          <span v-else class="faint wk-colcount">{{ col.prompts.length }} 条 · workshop/prompts.json · 改动立即保存</span>
+          <select v-if="src.loc === 'ws'" class="input wk-rev" :value="src.rev" :disabled="!src.id" aria-label="来源版本" title="选择历史版本做新旧对比" @change="change(src, { rev: val($event) }); /** @type {any} */ ($event.target).value = src.rev">
             <option value="">当前</option>
             <option v-for="v in versions" :key="v.id" :value="v.id">{{ v.id.slice(0, 8) }} · {{ relTime(v.time) }} · {{ v.message }}</option>
           </select>
@@ -495,6 +520,8 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
           <label class="search grow"><Icon name="search" size="sm" /><input v-model="qS" class="input" placeholder="搜索名称或内容" /></label>
           <MiniSelect v-if="src.loc !== 'col'" v-model="fS" label="显示" :active="fS !== 'default'" :title="FILTER_TIPS[fS]" :options="PROMPT_FILTERS" />
         </div>
+        <div v-if="isTavern(src.loc) && src.path" class="faint wk-hint">已取出到工作区，这里编辑的是工作区中的这一项。</div>
+        <div v-if="sameBuf" class="faint wk-hint">与目标是同一个预设：两边编辑同一份；对比模式比较两边各自选中的条目。</div>
         <div class="wk-rows">
           <div v-if="isTavern(src.loc) && catalogs[src.loc]?.err" class="sync-note err wk-note">{{ catalogs[src.loc].err }}</div>
           <div v-if="S.err && src.loc !== 'col'" class="sync-note err wk-note">{{ S.err }}</div>
@@ -505,16 +532,16 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
             v-for="r in srcRows"
             :key="r.key"
             class="wk-row"
-            :class="['st-' + r.st, { on: sel?.side === 'src' && sel.key === r.key, twin: W.compare && sel?.side === 'tgt' && cmp?.a?.key === r.key, off: r.o && !r.o.enabled, out: !r.o, checked: checked.has(r.key) }]"
+            :class="['st-' + r.st, { on: selS === r.key, off: r.o && !r.o.enabled, out: !r.o, checked: checkedS.has(r.key) }]"
             draggable="true"
             tabindex="0"
             @dragstart="dragStart('src', r.key, $event)"
             @dragend="dragEnd"
             @click="clickRow('src', r.key, $event)"
-            @keydown.enter="sel = { side: 'src', key: r.key }"
-            @keydown.space.prevent="toggleCheck(r.key)"
+            @keydown.enter="select('src', r.key)"
+            @keydown.space.prevent="toggleCheck('src', r.key)"
           >
-            <input type="checkbox" class="wk-check" :checked="checked.has(r.key)" title="多选" @click.stop="toggleCheck(r.key)" />
+            <input type="checkbox" class="wk-check" :checked="checkedS.has(r.key)" title="多选" @click.stop="toggleCheck('src', r.key)" />
             <span class="wk-no mono faint">{{ r.n || '–' }}</span>
             <div class="grow wk-row-main">
               <div class="wk-name">{{ r.c ? r.c.title : r.p.name || r.p.identifier }}<span v-if="!r.o" class="wk-out">未插入</span></div>
@@ -527,10 +554,10 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
           <div v-else-if="(src.loc === 'col' || S.data) && srcAll.length && !srcRows.length" class="faint wk-note">没有匹配的提示词</div>
         </div>
         <div class="wk-foot">
-          <button class="btn sm" type="button" :disabled="!picked.length || !tgt.data" :title="sel?.side === 'tgt' ? '插到目标中所选条目之后' : '插到目标末尾'" @click="copyPicked"><Icon name="copyPlus" size="sm" />复制到目标{{ picked.length > 1 ? `（${picked.length}）` : '' }}</button>
+          <button class="btn sm" type="button" :disabled="!picked.length || !tgt.data" :title="rowT?.o ? '插到目标中所选条目之后' : '插到目标末尾'" @click="copyPicked"><Icon name="copyPlus" size="sm" />复制到目标{{ picked.length > 1 ? `（${picked.length}）` : '' }}</button>
           <button v-if="src.loc !== 'col'" class="btn sm ghost" type="button" :disabled="!picked.length" @click="collectPicked"><Icon name="bookmarkPlus" size="sm" />收藏</button>
           <span class="spacer" />
-          <span v-if="src.dirty || (src.loc === 'col' && col.dirty)" class="wk-dirty"><Icon name="dot" size="sm" />未保存</span>
+          <span v-if="src.dirty && !sameBuf" class="wk-dirty"><Icon name="dot" size="sm" />未保存</span>
           <span v-else-if="S.readonly && src.loc !== 'col'" class="faint">历史版本 · 只读</span>
           <span v-else class="faint">Ctrl+点击 多选</span>
         </div>
@@ -540,13 +567,10 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
       <section class="wk-col">
         <div class="wk-col-head">
           <span class="wk-tag tgt">目标</span>
-          <select class="input wk-loc" :value="tgt.loc" aria-label="目标位置" @change="change(tgt, { loc: val($event), id: '' }) || (/** @type {any} */ ($event.target).value = tgt.loc)">
+          <select class="input wk-loc" :value="tgt.loc" aria-label="目标位置" @change="change(tgt, { loc: val($event), id: '' }); /** @type {any} */ ($event.target).value = tgt.loc">
             <option v-for="o in locOptions(false)" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
-          <select class="input wk-pick" :value="tgt.id" aria-label="目标预设" @change="change(tgt, { id: val($event) }) || (/** @type {any} */ ($event.target).value = tgt.id)">
-            <option value="">{{ isTavern(tgt.loc) && !catalogs[tgt.loc]?.items ? '正在读取…' : '选择预设…' }}</option>
-            <option v-for="o in idOptions(tgt)" :key="o.value" :value="o.value">{{ o.label }}</option>
-          </select>
+          <SearchSelect class="wk-pick" :model-value="tgt.id" :options="idOptions(tgt)" :placeholder="pickPlaceholder(tgt)" aria-label="目标预设" @update:model-value="change(tgt, { id: $event })" />
           <a v-if="tgt.path" class="icon-btn" :href="'#/item/' + encodeURIComponent(tgt.path)" title="在预设编辑器中打开"><Icon name="external" size="sm" /></a>
         </div>
         <div class="wk-tools">
@@ -554,6 +578,7 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
           <MiniSelect v-model="fT" label="显示" :active="fT !== 'default'" :title="FILTER_TIPS[fT]" :options="PROMPT_FILTERS" />
         </div>
         <div v-if="isTavern(tgt.loc) && tgt.data && !tgt.path" class="faint wk-hint">保存时会先把它取出到工作区，再同步回{{ app.targetName(tgt.loc) }}。</div>
+        <div v-else-if="isTavern(tgt.loc) && tgt.path" class="faint wk-hint">已取出到工作区，这里编辑的是工作区中的这一项；保存后同步回{{ app.targetName(tgt.loc) }}。</div>
         <div class="wk-rows" :class="{ dropping: !!drag && !!tgt.data }" @dragover="overEnd" @drop="dropTarget" @dragleave.self="dropAt = null">
           <div v-if="isTavern(tgt.loc) && catalogs[tgt.loc]?.err" class="sync-note err wk-note">{{ catalogs[tgt.loc].err }}</div>
           <div v-if="!tgt.id" class="faint wk-note">选择目标预设（会被修改）</div>
@@ -563,83 +588,63 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
             v-for="r in tgtRows"
             :key="r.key"
             class="wk-row"
-            :class="['st-' + r.st, { on: sel?.side === 'tgt' && sel.key === r.key, twin: W.compare && sel?.side === 'src' && cmp?.b?.key === r.key, off: r.o && !r.o.enabled, out: !r.o, 'drop-before': dropAt?.id === r.key && !dropAt.after, 'drop-after': dropAt?.id === r.key && dropAt.after }]"
+            :class="['st-' + r.st, { on: selT === r.key, off: r.o && !r.o.enabled, out: !r.o, checked: checkedT.has(r.key), 'drop-before': dropAt?.id === r.key && !dropAt.after, 'drop-after': dropAt?.id === r.key && dropAt.after }]"
             draggable="true"
             tabindex="0"
             @dragstart="dragStart('tgt', r.key, $event)"
             @dragend="dragEnd"
             @dragover.stop="overRow(r.key, $event)"
             @click="clickRow('tgt', r.key, $event)"
-            @keydown.enter="sel = { side: 'tgt', key: r.key }"
+            @keydown.enter="select('tgt', r.key)"
+            @keydown.space.prevent="toggleCheck('tgt', r.key)"
           >
-            <Icon name="grip" size="sm" class="wk-grip" />
+            <input type="checkbox" class="wk-check" :checked="checkedT.has(r.key)" title="多选" @click.stop="toggleCheck('tgt', r.key)" />
             <span class="wk-no mono faint">{{ r.n || '–' }}</span>
             <div class="grow wk-row-main">
               <div class="wk-name">{{ r.p.name || r.p.identifier }}<span v-if="!r.o" class="wk-out">未插入</span></div>
               <div class="wk-sub faint">{{ preview(r.p) }}</div>
             </div>
             <span v-if="r.st && r.st !== 'same'" class="wk-st" :class="r.st">{{ ST_LABEL.tgt[/** @type {'same'} */ (r.st)] }}</span>
+            <PromptRowActions :prompt="r.p" @copy="duplicateTgt(r.key)" @remove="removeTgt([r.key])" />
             <Toggle v-if="r.o" :model-value="!!r.o.enabled" :title="r.o.enabled ? '已启用' : '已停用'" @click.stop @update:model-value="toggleOrder(r.o)" />
           </div>
           <div v-if="tgt.data" class="wk-end" :class="{ 'drop-after': dropAt?.id === '$end' }">{{ drag ? '放到这里：插到末尾' : tgtRows.length ? '' : '没有匹配的提示词' }}</div>
         </div>
         <div class="wk-foot faint">
-          <button class="btn sm ghost" type="button" :disabled="sel?.side !== 'tgt' || !selRow" @click="collectTarget"><Icon name="bookmarkPlus" size="sm" />收藏</button>
+          <button class="btn sm ghost" type="button" :disabled="!checkedTgt.length && !rowT" @click="collectTarget"><Icon name="bookmarkPlus" size="sm" />收藏{{ checkedTgt.length > 1 ? `（${checkedTgt.length}）` : '' }}</button>
+          <button v-if="checkedTgt.length" class="btn sm ghost" type="button" :class="{ danger: armedBulk }" :disabled="!deletableChecked" @click="removeChecked" @blur="armedBulk = false"><Icon :name="armedBulk ? 'alert' : 'trash'" size="sm" />{{ armedBulk ? `再点一次删除 ${deletableChecked} 条` : `删除（${deletableChecked}）` }}</button>
           <span v-if="tgt.dirty" class="wk-dirty"><Icon name="dot" size="sm" />未保存</span>
           <span class="spacer" />
-          <span v-if="comparing">相同 {{ counts.same }} · 内容不同 {{ counts.diff }} · 名称不同 {{ counts.renamed }} · 仅来源 {{ counts.onlySrc }} · 仅目标 {{ counts.onlyTgt }}</span>
+          <span v-if="marking">相同 {{ counts.same }} · 内容不同 {{ counts.diff }} · 名称不同 {{ counts.renamed }} · 仅来源 {{ counts.onlySrc }} · 仅目标 {{ counts.onlyTgt }}</span>
           <span v-else-if="tgt.data">{{ tgtAll.length }} 条</span>
         </div>
       </section>
 
-      <!-- 详情：非对比模式一栏，对比模式来源 / 目标两栏 -->
-      <template v-if="!W.compare">
-        <section class="wk-col wk-detail">
-          <div class="wk-col-head">
-            <span v-if="sel" class="wk-tag" :class="sel.side">{{ sideLabel(sel.side) }}</span><b>条目详情</b>
-            <span v-if="sel && readonlyOf(sel.side)" class="faint">历史版本 · 只读</span>
-          </div>
-          <div class="wk-detail-body">
-            <PromptDetail
-              v-if="sel && selRow"
-              :prompt="selRow.p"
-              :order="selRow.o"
-              :has-order="!selRow.c"
-              :readonly="readonlyOf(sel.side)"
-              @set="(k, v) => sel && selRow && setField(sel.side, selRow, k, v)"
-              @insert="sel && selRow && insertRow(sel.side, selRow)"
-            />
-            <div v-else class="faint wk-note">在来源或目标中选择一条提示词，在这里查看和编辑</div>
-          </div>
-        </section>
-      </template>
-      <template v-else>
-        <section v-for="side in /** @type {const} */ (['src', 'tgt'])" :key="side" class="wk-col wk-detail">
-          <div class="wk-col-head">
-            <span class="wk-tag" :class="side">{{ sideLabel(side) }}</span><b>条目</b>
-            <span v-if="cmp && cmp.diff && side === 'src'" class="faint"><del>删除线</del>：只在来源中</span>
-            <span v-if="cmp && cmp.diff && side === 'tgt'" class="faint"><ins>下划线</ins>：只在目标中</span>
-            <span v-if="readonlyOf(side)" class="faint">只读</span>
-          </div>
-          <div class="wk-detail-body">
-            <template v-if="cmp && (side === 'src' ? cmp.a : cmp.b)">
-              <PromptDetail
-                :prompt="/** @type {any} */ (side === 'src' ? cmp.a : cmp.b).p"
-                :order="/** @type {any} */ (side === 'src' ? cmp.a : cmp.b).o"
-                :has-order="!(/** @type {any} */ (side === 'src' ? cmp.a : cmp.b).c)"
-                :readonly="readonlyOf(side)"
-                :diff="cmp.diff"
-                :side="side === 'src' ? 'a' : 'b'"
-                :changed="cmp.changed"
-                @set="(k, v) => cmp && setField(side, /** @type {any} */ (side === 'src' ? cmp.a : cmp.b), k, v)"
-                @insert="cmp && insertRow(side, /** @type {any} */ (side === 'src' ? cmp.a : cmp.b))"
-              />
-            </template>
-            <div v-else-if="cmp" class="faint wk-note">{{ side === 'src' ? '来源' : '目标' }}中没有对应的条目</div>
-            <div v-else class="faint wk-note">选择一条提示词，两边对应的条目会并排显示</div>
-          </div>
-        </section>
-      </template>
+      <!-- 来源条目 / 目标条目 -->
+      <section v-for="side in DETAILS" :key="side" class="wk-col wk-detail">
+        <div class="wk-col-head">
+          <span class="wk-tag" :class="side">{{ side === 'src' ? (src.loc === 'col' ? '收藏' : '来源') : '目标' }}</span><b>条目</b>
+          <span v-if="cmp && side === 'src'" class="faint"><del>红色</del>：只在来源中</span>
+          <span v-if="cmp && side === 'tgt'" class="faint"><ins>绿色</ins>：只在目标中</span>
+          <span v-if="readonlyOf(side)" class="faint">只读</span>
+        </div>
+        <div class="wk-detail-body">
+          <PromptDetail
+            v-if="detailRow(side)"
+            :prompt="/** @type {any} */ (detailRow(side)).p"
+            :order="/** @type {any} */ (detailRow(side)).o"
+            :has-order="!(/** @type {any} */ (detailRow(side)).c)"
+            :readonly="readonlyOf(side)"
+            :other="otherText(side)"
+            :side="side === 'src' ? 'a' : 'b'"
+            :changed="cmp ? cmp.changed : []"
+            @set="(k, v) => detailRow(side) && setField(side, /** @type {any} */ (detailRow(side)), k, v)"
+            @insert="detailRow(side) && insertRow(side, /** @type {any} */ (detailRow(side)))"
+          />
+          <div v-else-if="W.compare && !sameBuf && (side === 'src' ? rowT : rowS)" class="faint wk-note">{{ side === 'src' ? '来源' : '目标' }}中没有对应的条目</div>
+          <div v-else class="faint wk-note">在{{ side === 'src' ? '来源' : '目标' }}列表中选择一条提示词，在这里查看和编辑</div>
+        </div>
+      </section>
     </div>
 
     <!-- same identifier, other content -->
@@ -667,9 +672,9 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
 .wk-tip { display: none; position: absolute; left: -8px; top: calc(100% + 8px); z-index: 40; width: 440px; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-md, 8px); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); font-size: var(--fs-sm); line-height: 1.7; color: var(--text-2); cursor: default; }
 .wk-info:hover .wk-tip, .wk-info:focus .wk-tip, .wk-info.open .wk-tip { display: block; }
 .wk-cmp { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-2); cursor: pointer; }
+.wk-colsave { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); }
 .wk-dirty { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; color: var(--st-warn); font-size: var(--fs-xs); }
-.wk-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.25fr); grid-template-rows: minmax(0, 1fr); gap: var(--sp-3); }
-.wk.compare .wk-main { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.wk-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, .9fr) minmax(0, 1.1fr) minmax(0, 1.1fr); grid-template-rows: minmax(0, 1fr); gap: var(--sp-3); }
 .wk-col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: var(--r-md, 8px); background: var(--bg-2); overflow: hidden; }
 .wk-col-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
 .wk-tag { font-size: var(--fs-xs); padding: 1px 8px; border-radius: var(--r-pill); flex: none; }
@@ -689,7 +694,6 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
 .wk-row:hover { background: var(--bg-3); }
 .wk-row.st-diff, .wk-row.st-renamed { background: color-mix(in srgb, var(--st-warn) 8%, transparent); }
 .wk-row.st-only { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.wk-row.twin { border-left-color: var(--accent-line); background: var(--bg-3); }
 .wk-row.on { background: var(--accent-soft); border-left-color: var(--accent); }
 .wk-row.checked { background: var(--bg-3); }
 .wk-row.off .wk-name { color: var(--text-3); text-decoration: line-through; }
@@ -700,7 +704,6 @@ const noSource = computed(() => !presets.value.length && !taverns.value.length);
 .wk-end { position: relative; min-height: 36px; padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); color: var(--text-3); }
 .wk-end.drop-after::before { top: 0; }
 .wk-check { margin: 0; flex: none; }
-.wk-grip { color: var(--text-3); flex: none; cursor: grab; }
 .wk-no { width: 22px; text-align: right; font-size: var(--fs-xs); flex: none; }
 .wk-row-main { min-width: 0; flex: 1; }
 .wk-name, .wk-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
