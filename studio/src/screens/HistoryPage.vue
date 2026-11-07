@@ -146,28 +146,39 @@ const tag = () => act('tag', async () => {
 const pushTarget = ref('');
 /** {target, results, name} of the last push, shown under the header (failures need a decision) */
 const pushed = ref(/** @type {any} */ (null));
-/** taverns with at least one item that exists in the selected version */
-const pushTargets = computed(() => {
-  const ids = new Set();
-  for (const it of app.items) for (const b of it.bindings || []) ids.add(b.target);
-  return app.targets.filter((/** @type {any} */ t) => ids.has(t.id) && (t.live || t.offline));
+/**
+ * What a push writes: the item shown alone, or (all items) the items the selected version changed. A version is a
+ * snapshot of the whole workspace, so pushing everything bound would also pin items the user never touched.
+ */
+const pushScope = computed(() => {
+  const v = sel.value;
+  if (!v) return [];
+  return filter.value ? [filter.value] : v.items.filter(isItemPath);
 });
+const boundTo = (/** @type {string} */ path, /** @type {string} */ target) =>
+  ((app.item(path) || {}).bindings || []).some((/** @type {any} */ b) => b.target === target);
+/** taverns bound to at least one item of the push scope */
+const pushTargets = computed(() => app.targets.filter((/** @type {any} */ t) =>
+  (t.live || t.offline) && pushScope.value.some((p) => boundTo(p, t.id))));
+/** items of the scope bound to the chosen tavern: exactly what "推送到酒馆" writes */
+const pushPaths = computed(() => pushScope.value.filter((p) => boundTo(p, pushTarget.value)));
 watch(pushTargets, (list) => {
   if (!list.some((/** @type {any} */ t) => t.id === pushTarget.value)) pushTarget.value = list.length ? list[0].id : '';
 }, { immediate: true });
 const pushedText = { pushed: '已推送', 'tavern-changed': '酒馆里有新的修改，未推送', failed: '失败' };
-function push(/** @type {boolean} */ force = false, /** @type {string[]|undefined} */ paths = undefined) {
+function push(/** @type {boolean} */ force = false, /** @type {string[]} */ paths = pushPaths.value) {
   const target = pushTarget.value;
+  if (!paths.length) return;
   return act('push', async () => {
     const r = await api.pushVersion(selected.value, target, { force, paths });
     // A retry of some items (paths) updates their rows; the other rows of the same push stay.
-    const keep = paths && pushed.value && pushed.value.rev === r.rev && pushed.value.target === r.target
+    const keep = pushed.value && pushed.value.rev === r.rev && pushed.value.target === r.target
       ? pushed.value.results.filter((/** @type {any} */ x) => !paths.includes(x.path)) : [];
     const results = [...keep, ...r.results];
     pushed.value = { ...r, results, label: app.targetName(target) };
     const bad = r.results.filter((/** @type {any} */ x) => x.result !== 'pushed').length;
     if (bad) throw new Error(`${bad} 项没有推送，见下方说明`);
-  }, `已把 ${versionName(selected.value)} 推送到 ${app.targetName(target)}，并固定在这个版本`);
+  }, `已把 ${versionName(selected.value)} 中的 ${paths.map(itemName).join('、')} 推送到 ${app.targetName(target)}，并固定在这个版本`);
 }
 watch(selected, () => { pushed.value = null; });
 
@@ -263,11 +274,11 @@ onMounted(() => { resolveBare(); load(); });
             <input v-model="tagName" class="input" placeholder="标签名，如 v1.0" @keydown.enter="tagName.trim() && tag()" />
             <button class="btn" :disabled="!!busy || !tagName.trim()" :title="sel.draft ? '把草稿记录为版本，并给它打上这个标签' : ''" @click="tag"><Icon name="tag" size="sm" />{{ sel.draft ? '记录并打标签' : '打标签' }}</button>
           </div>
-          <div v-if="pushTargets.length" class="vh-pushbox" title="把这个版本写到所选酒馆（只包括绑定了该酒馆的项），工作区不变；之后这些项在该酒馆固定在此版本，直到改为跟随最新">
+          <div v-if="pushTargets.length" class="vh-pushbox" :title="`把这个版本中的 ${pushPaths.map(itemName).join('、')} 写到所选酒馆，工作区不变；之后${pushPaths.length > 1 ? '这些项' : '它'}在该酒馆固定在此版本，直到改为跟随最新。${filter ? '' : '只包括这个版本修改过、且绑定了该酒馆的项；要推送别的项，请先在左上角切换到那一项。'}`">
             <select v-model="pushTarget" class="input" aria-label="推送到哪个酒馆">
               <option v-for="t in pushTargets" :key="t.id" :value="t.id">{{ app.targetName(t.id) }}</option>
             </select>
-            <button class="btn primary" :disabled="!!busy || !pushTarget" @click="push()"><Icon name="upload" size="sm" />推送到酒馆</button>
+            <button class="btn primary" :disabled="!!busy || !pushPaths.length" @click="push()"><Icon name="upload" size="sm" />{{ pushPaths.length > 1 ? `推送 ${pushPaths.length} 项到酒馆` : '推送到酒馆' }}</button>
           </div>
         </div>
 
@@ -278,6 +289,7 @@ onMounted(() => { resolveBare(); load(); });
             <span>{{ pushedText[x.result] || x.result }}{{ x.result === 'pushed' ? `，${pushed.label} 固定在 ${pushed.name}` : '' }}</span>
             <span v-if="x.result === 'failed'" class="faint">{{ x.error }}</span>
             <span class="grow" />
+            <button v-if="x.result === 'failed'" class="btn sm" :disabled="!!busy" @click="push(false, [x.path])">重试</button>
             <template v-if="x.result === 'tavern-changed'">
               <a class="btn sm" :href="hrefOf('sync')">去同步页取回</a>
               <button class="btn sm danger" :disabled="!!busy" @click="push(true, [x.path])">覆盖酒馆的修改</button>

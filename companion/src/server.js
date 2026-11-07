@@ -25,7 +25,7 @@ import { AssetCache } from './assets.js';
 import { previewPrompt } from './preview.js';
 
 export const SERVER_NAME = 'TavernCellar';
-export const SERVER_VERSION = '0.2.0';
+export const SERVER_VERSION = '0.2.1';
 export const STUDIO_PATH = '/studio/';
 
 /** Folder served at /studio/: the built Studio UI when present, otherwise the prototype. */

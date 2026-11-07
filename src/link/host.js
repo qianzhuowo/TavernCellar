@@ -41,6 +41,19 @@ function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Runs one step of a request; a network-level failure (the browser's bare "Failed to fetch") is reported with the
+ * step it interrupted, so the user knows whether anything was written.
+ */
+async function step(what, fn) {
+    try {
+        return await fn();
+    } catch (error) {
+        if (error instanceof ProtocolError || !(error instanceof TypeError) || !/fetch|network|load failed/i.test(error.message)) throw error;
+        throw new ProtocolError(ERR.HOST_ERROR, `${what} failed: ${error.message} (the tavern backend did not answer; retry when it is reachable)`);
+    }
+}
+
 // ---- characters -----------------------------------------------------------
 
 /** Canonical card JSON exactly as stored in the PNG. */
@@ -102,7 +115,14 @@ async function readLorebook(name) {
 }
 
 async function writeLorebook(name, data) {
-    await ctx().saveWorldInfo(name, structuredClone(data), true);
+    try {
+        await ctx().saveWorldInfo(name, structuredClone(data), true);
+    } catch (error) {
+        // saveWorldInfo puts the data in the frontend cache before sending it: drop it, so a failed save is not read
+        // back as the tavern's content (it would look like a change made in the tavern).
+        worldInfoCache.delete(name);
+        throw error;
+    }
 }
 
 function listLorebooks() {
@@ -497,20 +517,23 @@ export class Host {
         if (this.writing.has(key)) throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} is already being written`);
         this.writing.add(key);
         try {
-            const current = kind === 'preset' ? await readPresetFromDisk(id, { fresh: true }) : await this.read(kind, id);
+            const current = await step(`Reading ${kind} ${id} before writing (nothing written)`,
+                () => (kind === 'preset' ? readPresetFromDisk(id, { fresh: true }) : this.read(kind, id)));
             const currentHash = await hashData(current);
             if (baseHash !== currentHash) {
                 throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
             }
-            if (kind === 'character') await writeCharacter(id, data);
-            else if (kind === 'regex') assertGlobalRegexData(data);
-            else if (kind !== 'preset') await writeLorebook(id, data);
+            const stored = await step(`Saving ${kind} ${id} (it may or may not have been saved)`, async () => {
+                if (kind === 'character') await writeCharacter(id, data);
+                else if (kind === 'regex') assertGlobalRegexData(data);
+                else if (kind !== 'preset') await writeLorebook(id, data);
 
-            // Re-read what the backend actually stored (lorebooks: bypass the frontend cache).
-            const stored = kind === 'character' ? await readCharacter(id)
-                : kind === 'regex' ? await writeGlobalRegex(data.scripts)
-                    : kind === 'preset' ? await writePreset(id, data)
-                        : await readLorebookFromDisk(id);
+                // Re-read what the backend actually stored (lorebooks: bypass the frontend cache).
+                return kind === 'character' ? await readCharacter(id)
+                    : kind === 'regex' ? await writeGlobalRegex(data.scripts)
+                        : kind === 'preset' ? await writePreset(id, data)
+                            : await readLorebookFromDisk(id);
+            });
             const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
             const hash = await hashData(stored);
             const sentHash = await hashData(sent);
