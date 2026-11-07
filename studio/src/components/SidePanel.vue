@@ -1,14 +1,15 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, nextTick, onBeforeUnmount } from 'vue';
 import Icon from './Icon.vue';
 import Seg from './Seg.vue';
 import StatusBadge from './StatusBadge.vue';
 import { useApp } from '../stores/app.js';
-import { useUi, hrefOf, pathOfKey } from '../stores/ui.js';
+import { useUi, hrefOf } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
 import { LIB_KINDS, libraryHref } from '../lib/kinds.js';
 import { extractedOf } from '../lib/cardParts.js';
+import { api, errorText } from '../api.js';
 
 const app = useApp();
 const ui = useUi();
@@ -48,6 +49,67 @@ function subRows(it) {
 }
 const hostMark = (/** @type {string} */ id) => { const t = app.target(id); return t.host ? HOST[t.host].mark : '?'; };
 const sourceLabel = (/** @type {any} */ t) => app.targetName(t.id) + (t.live ? '' : ' (离线)');
+// ---- 工作区「+」menu: take from the library, or make a new item in Cellar (POST /api/create) ----
+const NEW_LABEL = /** @type {Record<string, string>} */ ({ character: '新建角色卡', lorebook: '新建世界书', regex: '新建正则脚本', preset: '新建预设' });
+const KIND_TITLE = /** @type {Record<string, string>} */ ({ character: '角色', lorebook: '世界书', regex: '正则', preset: '预设' });
+/** @type {import('vue').Ref<{kinds: string[], x: number, y: number} | null>} */
+const menu = ref(null);
+const naming = ref('');
+const newName = ref('');
+const menuBusy = ref(false);
+const nameInput = ref(/** @type {HTMLInputElement|null} */ (null));
+function openMenu(/** @type {MouseEvent} */ ev, /** @type {string[]} */ kinds) {
+  const r = /** @type {HTMLElement} */ (ev.currentTarget).getBoundingClientRect();
+  menu.value = menu.value && menu.value.kinds.join() === kinds.join() ? null : { kinds, x: r.right + 6, y: r.top };
+  naming.value = '';
+  newName.value = '';
+}
+function closeMenu() { menu.value = null; naming.value = ''; }
+function onDocDown(/** @type {MouseEvent} */ ev) {
+  const el = /** @type {HTMLElement} */ (ev.target);
+  if (menu.value && !el.closest('.ws-menu') && !el.closest('.ws-add')) closeMenu();
+}
+document.addEventListener('mousedown', onDocDown);
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown));
+async function pickNew(/** @type {string} */ kind) {
+  if (kind === 'regex') { await newRegexScript(); return; }
+  naming.value = kind;
+  newName.value = '';
+  await nextTick();
+  nameInput.value?.focus();
+}
+async function createNamed() {
+  const name = newName.value.trim();
+  if (!name || menuBusy.value) return;
+  menuBusy.value = true;
+  try {
+    const r = await api.createItem(naming.value, name);
+    await app.refreshStatus();
+    closeMenu();
+    ui.openItem(r.path);
+    ui.toast('已新建「' + name + '」，可在检查栏发布到酒馆');
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+  } finally { menuBusy.value = false; }
+}
+/** The workspace keeps one global regex list: open it (taking it from a connected tavern, or making it) and add a script. */
+async function newRegexScript() {
+  if (menuBusy.value) return;
+  menuBusy.value = true;
+  try {
+    let path = app.items.find((/** @type {any} */ i) => i.kind === 'regex')?.path;
+    if (!path) {
+      const live = app.targets.find((/** @type {any} */ t) => t.live);
+      path = live ? (await api.checkout(live.id, 'regex', 'global')).path : (await api.createItem('regex')).path;
+      await app.refreshStatus();
+    }
+    closeMenu();
+    ui.newScriptFor = path;
+    ui.openItem(path);
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+  } finally { menuBusy.value = false; }
+}
 function jump(/** @type {string} */ id) {
   if (ui.route.name !== 'settings' || ui.route.arg !== id) ui.go('#/settings/' + id);
   const el = document.getElementById('set-' + id);
@@ -103,11 +165,11 @@ function jump(/** @type {string} */ id) {
 
     <!-- 工作区 tree -->
     <template v-else>
-      <div class="panel-head">工作区<span class="spacer" /><a class="icon-btn" :href="libraryHref(app.itemKind(pathOfKey(ui.route.key)))" title="从资料库取出"><Icon name="plus" size="sm" /></a></div>
+      <div class="panel-head">工作区<span class="spacer" /><button class="icon-btn ws-add" type="button" title="取出或新建" @click="openMenu($event, ['character', 'lorebook', 'regex', 'preset'])"><Icon name="plus" size="sm" /></button></div>
       <div class="panel-body">
         <div v-for="g in groups" :key="g.key" class="tree-group" :class="{ collapsed: ui.collapsed[g.key] }">
           <div class="tg-head" @click="ui.toggleGroup(g.key)">
-            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span><a class="tg-add icon-btn" :href="libraryHref(g.key)" :title="'从资料库取出' + g.title" @click.stop><Icon name="plus" size="sm" /></a>
+            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span><button class="tg-add icon-btn ws-add" type="button" :title="'取出或新建' + g.title" @click.stop="openMenu($event, [g.key])"><Icon name="plus" size="sm" /></button>
           </div>
           <template v-if="!ui.collapsed[g.key]">
             <template v-for="it in g.items" :key="it.path">
@@ -147,6 +209,23 @@ function jump(/** @type {string} */ id) {
         </div>
         <div class="tree-legend faint">徽标按绑定的酒馆依次排列，悬停查看酒馆名</div>
       </div>
+      <Teleport to="body">
+        <div v-if="menu" class="ws-menu" role="menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+          <template v-if="!naming">
+            <a v-for="k in menu.kinds" :key="'lib-' + k" class="ws-mi" role="menuitem" :href="libraryHref(k)" @click="closeMenu"><Icon name="download" size="sm" />从资料库导入{{ menu.kinds.length > 1 ? KIND_TITLE[k] : '' }}</a>
+            <div class="ws-sep" />
+            <button v-for="k in menu.kinds" :key="'new-' + k" class="ws-mi" role="menuitem" type="button" :disabled="menuBusy" @click="pickNew(k)"><Icon name="plus" size="sm" />{{ NEW_LABEL[k] }}</button>
+          </template>
+          <form v-else class="ws-name" @submit.prevent="createNamed">
+            <label class="faint">{{ NEW_LABEL[naming] }} · 名称</label>
+            <input ref="nameInput" v-model="newName" class="input" :placeholder="KIND_TITLE[naming] + '名称'" @keydown.esc="closeMenu" />
+            <div class="ws-name-btns">
+              <button class="btn sm" type="button" @click="naming = ''">返回</button>
+              <button class="btn sm primary" type="submit" :disabled="menuBusy || !newName.trim()">{{ menuBusy ? '创建中…' : '创建' }}</button>
+            </div>
+          </form>
+        </div>
+      </Teleport>
     </template>
   </aside>
 </template>

@@ -95,7 +95,7 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
     :class="{
       'inspector-off': !hasInspector || !ui.inspector,
       'inspector-drawer': hasInspector && ui.inspectorDrawer,
-      'side-off': !ui.side
+      'side-off': !ui.side || ui.route.name === 'workshop'
     }"
   >
     <div class="workbench">

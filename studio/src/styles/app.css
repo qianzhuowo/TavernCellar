@@ -158,3 +158,19 @@ a.book-row:hover { background: var(--bg-3); }
   .hide-narrow { display: none !important; }
   .item-bind { flex-wrap: wrap; }
 }
+
+/* inspector: publish an item made in Cellar (Inspector.vue) */
+.publish { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.publish .pub-tip { font-size: var(--fs-sm); line-height: 1.5; }
+.publish .btn { justify-content: center; }
+
+
+/* 工作区「+」menu (SidePanel.vue) */
+.ws-menu { position: fixed; z-index: 60; min-width: 180px; padding: 4px; background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-md, 8px); box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; flex-direction: column; }
+.ws-mi { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; border: 0; background: none; color: var(--text); font: inherit; font-size: var(--fs-sm); border-radius: var(--r-sm, 5px); cursor: pointer; text-decoration: none; text-align: left; }
+.ws-mi:hover:not(:disabled) { background: var(--bg-3); }
+.ws-mi:disabled { opacity: .5; cursor: default; }
+.ws-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.ws-name { display: flex; flex-direction: column; gap: 6px; padding: 6px; width: 220px; }
+.ws-name label { font-size: var(--fs-sm); }
+.ws-name-btns { display: flex; justify-content: flex-end; gap: 6px; }

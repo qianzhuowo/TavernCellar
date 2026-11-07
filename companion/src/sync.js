@@ -9,7 +9,8 @@
  *   W != B, T != B  conflict       -> never overwritten silently
  */
 import { hashData } from '../../shared/hash.js';
-import { ERR, MSG, ProtocolError, assertItemRef, parsePresetId } from '../../shared/protocol.js';
+import { ERR, MSG, ProtocolError, assertItemRef, assertNewItemName, parsePresetId } from '../../shared/protocol.js';
+import { newItem } from './defaults.js';
 import { CODECS, codecFor } from './codec/index.js';
 import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE, migrateExclude, omitParts, presentParts, restoreParts } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
@@ -22,6 +23,11 @@ const MAX_MERGE_ATTEMPTS = 2;
 function linkedWorldName(card) {
     const name = card?.data?.extensions?.world;
     return typeof name === 'string' && name.trim() ? name : undefined;
+}
+
+/** A card with its name set in both places the tavern keeps it (V1 field and data.name). */
+function renameCharacter(card, name) {
+    return { ...card, name, ...(card.data && typeof card.data === 'object' ? { data: { ...card.data, name } } : {}) };
 }
 import { diffPaths } from './codec/object-path.js';
 
@@ -206,7 +212,10 @@ export class SyncEngine {
         if (item.kind === 'character') return { exclude: item.layout?.exclude ?? [] };
         if (item.kind === 'preset') {
             const id = Object.values(item.bindings ?? {})[0]?.id;
-            return { apiId: id ? parsePresetId(id).apiId : undefined };
+            if (id) return { apiId: parsePresetId(id).apiId };
+            // Unbound (made in Cellar): the apiId recorded when it was created.
+            const files = await this.ws.readItemFiles(item.path).catch(() => ({}));
+            try { return { apiId: JSON.parse(files['cellar-item.json'] ?? 'null')?.apiId ?? undefined }; } catch { return { apiId: undefined }; }
         }
         if (item.kind !== 'lorebook') return undefined;
         const files = await this.ws.readItemFiles(item.path).catch(() => ({}));
@@ -649,6 +658,77 @@ export class SyncEngine {
             await this.#recordConflict(item, target.id, remote);
             this.log('bound ' + item.path + ' to ' + target.id + ' (' + id + '), differs: whole-item conflict');
             return { path: item.path, target: target.id, result: 'conflict' };
+        });
+    }
+
+    // ---- items made in Cellar (docs/studio-design.md §4.10) -------------------------------------------------
+
+    /** Reads one item from a tavern without touching the workspace (预设工坊 picks presets straight from a tavern). */
+    async readTavernItem(targetSpec, { kind, id } = {}) {
+        assertItemRef({ kind, id });
+        const { target, link } = this.targets.resolve(targetSpec);
+        const remote = await link.request(MSG.ITEM_GET, { kind, id });
+        const found = this.ws.findBinding(target.id, kind, id);
+        return { target: target.id, kind, id, data: remote.data, hash: remote.hash, checkedOut: found?.item.path ?? null };
+    }
+
+    /**
+     * Creates a workspace item that no tavern has yet (unbound); `publish` creates it in a tavern later. Regex: the
+     * workspace holds one global regex list, so this only creates it when there is none.
+     */
+    async createItem({ kind, name } = {}) {
+        if (!CODECS[kind]) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown kind: ${kind}`);
+        if (kind === 'regex') {
+            const existing = this.ws.manifest.items.find(item => item.kind === 'regex');
+            if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `工作区已有全局正则：${existing.path}`, { path: existing.path });
+        } else {
+            assertNewItemName(name);
+        }
+        const { id, data } = newItem(kind, name);
+        const path = this.ws.allocateItemPath(kind, id);
+        const item = { path, kind, bindings: {} };
+        return this.withLock(path, async () => {
+            this.ws.manifest.items.push(item);
+            const codec = codecFor(kind);
+            const options = kind === 'preset' ? { apiId: parsePresetId(id).apiId } : await this.decodeOptions(item);
+            await this.ws.writeItemFiles(path, codec.decode(data, options), codec.owns);
+            await this.ws.saveManifest();
+            await this.#draftChanged();
+            this.log(`created ${kind} ${path}`);
+            return { path, kind, id };
+        });
+    }
+
+    /**
+     * Creates a workspace item in a tavern where it does not exist yet and binds it there, in sync. `name` is the
+     * character / lorebook / preset name in the tavern; characters get their avatar file name from the tavern.
+     */
+    async publish(path, { target: targetSpec, name } = {}) {
+        const item = this.requireItem(path);
+        if (item.kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, '全局正则在每个酒馆都已存在，请用「绑定」');
+        assertNewItemName(name);
+        const { target, link } = this.targets.resolve(targetSpec);
+        if (item.bindings?.[target.id]) throw new ProtocolError(ERR.BAD_REQUEST, `${path} 已绑定到这个酒馆`);
+        if (!target.offline && !(target.create >= 1)) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `${target.label ?? target.id} 的 Cellar Link 太旧，不支持新建；请更新插件`);
+        }
+        this.#assertCanWrite(target.id);
+        return this.withLock(path, async () => {
+            const local = await this.encodeItem(item);
+            const data = item.kind === 'character' ? renameCharacter(local.data, name) : local.data;
+            const id = item.kind === 'preset' ? `${(await this.decodeOptions(item)).apiId ?? 'openai'}/${name}` : item.kind === 'character' ? undefined : name;
+            const result = await link.request(MSG.ITEM_CREATE, { kind: item.kind, name, ...(id ? { id } : {}), data });
+            const other = this.ws.findBinding(target.id, item.kind, result.id);
+            if (other) throw new ProtocolError(ERR.CONFLICT, `${item.kind} "${result.id}" 已绑定在 ${other.item.path}`);
+            item.bindings = { ...(item.bindings ?? {}), [target.id]: { id: result.id, autoSync: false } };
+            if (result.hash !== local.hash) await this.writeItem(item, result.data);
+            await this.#agree(item, target.id, result.data, result.hash);
+            await this.ws.saveManifest();
+            await this.ws.saveState();
+            await this.#deployed(item, target.id);
+            await this.pushWatchList(target.id).catch(error => this.log(`watch list for ${target.id} not updated: ${error.message}`));
+            this.log(`published ${path} -> ${target.id} (${result.id})`);
+            return { path, target: target.id, id: result.id, hash: result.hash, warnings: result.warnings ?? [] };
         });
     }
 

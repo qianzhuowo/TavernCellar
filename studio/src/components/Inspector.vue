@@ -9,7 +9,8 @@ import { useApp } from '../stores/app.js';
 import { useUi, historyHref } from '../stores/ui.js';
 import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, removeItem } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
-import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
+import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT, displayName } from '../lib/status.js';
+import { api, errorText } from '../api.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const app = useApp();
@@ -63,6 +64,23 @@ async function confirmRemove() {
   removeBusy.value = true;
   try { if (await removeItem(app, ui, props.path, keepFiles.value)) removing.value = false; } finally { removeBusy.value = false; }
 }
+
+// ---- publish an item made in Cellar to a tavern (POST /api/publish) ----
+/** Taverns that can create items: live ones with a new enough Cellar Link, and offline data folders. */
+const pubTargets = computed(() => app.targets.filter((t) => (t.live && t.create >= 1) || (!t.live && t.offline)));
+const pubName = ref('');
+const pubBusy = ref('');
+watch(() => props.path, () => { pubName.value = item.value ? displayName(item.value) : ''; }, { immediate: true });
+async function publish(/** @type {any} */ t) {
+  pubBusy.value = t.id;
+  try {
+    await api.publish(props.path, t.id, pubName.value.trim());
+    ui.toast('已发布到 ' + app.targetName(t.id));
+    app.refreshStatus();
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+  } finally { pubBusy.value = ''; }
+}
 </script>
 
 <template>
@@ -72,6 +90,16 @@ async function confirmRemove() {
       <section class="insp-sec">
         <h4>同步状态</h4>
         <div v-if="!item.bindings.length" class="faint" style="font-size: var(--fs-sm)">没有绑定任何酒馆。</div>
+        <div v-if="!item.bindings.length && item.kind !== 'regex'" class="publish">
+          <template v-if="pubTargets.length">
+            <div class="faint pub-tip">在酒馆里新建这一项并绑定，之后照常同步。</div>
+            <input v-model="pubName" class="input" :placeholder="'在酒馆中的名称'" aria-label="在酒馆中的名称" />
+            <button v-for="t in pubTargets" :key="t.id" class="btn sm primary" :disabled="!!pubBusy || !pubName.trim()" @click="publish(t)">
+              <Icon name="upload" size="sm" />{{ pubBusy === t.id ? '发布中…' : '发布到 ' + app.targetName(t.id) + (t.live ? '' : '（离线）') }}
+            </button>
+          </template>
+          <div v-else class="faint pub-tip">连接 ST/TT，或在设置中填写酒馆数据目录后，可以把它发布到酒馆。</div>
+        </div>
         <div v-for="b in item.bindings" :key="b.target" class="sync-row" :class="'mode-' + app.modeOf(b)">
           <div class="sync-head">
             <span class="dot" :class="dotClass(app.modeOf(b))" :title="MODE_TIP[app.modeOf(b)]" />

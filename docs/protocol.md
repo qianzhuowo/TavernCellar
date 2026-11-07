@@ -50,6 +50,7 @@
 | `item.get` | `{ kind, id }` | `{ kind, id, hash, data }` |
 | `item.put` | `{ kind, id, data, baseHash }` | `{ kind, id, hash, data, warnings: [] }` |
 | `watch.set` | `{ items: [{ kind, id }] }` | `{ count }` |
+| `item.create` | `{ kind, data }` | `{ kind, id, hash, data }` |
 | `ping` | `{}` | `{}` |
 | `asset.get` | `{ type: 'avatar', id }` | `{ type, id, mime, data }`（`data` 为 base64，原始大小上限 512KB） |
 | `prompt.preview` | `{ input? }` | 见下文「提示词预览」 |
@@ -60,6 +61,7 @@
 - `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文（预设除外：名称取自 `/api/settings/get`，这样不经酒馆界面放进文件夹的预设也能列出）。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
+- `item.create` 在酒馆中新建资料（Studio「发布到酒馆」）：`character`（`data` 为 V3 卡，用酒馆默认头像）、`lorebook`、`preset`（`data.name` 为名称），不支持 `regex`。同名已存在返回 `conflict`。插件在 `hello.capabilities.create` 中声明支持；旧插件不声明，伴侣程序提示更新插件。离线时伴侣程序直接写数据目录。
 - `watch.set` 整体替换监视列表。
 - `asset.get` 读取角色头像缩略图，`id` 为头像文件名（不允许路径成分）。Cellar Link 通过酒馆自身的 `getThumbnailUrl('avatar', id)` 读取（ST 与 tt 同一条路径）；离线时伴侣程序读取酒馆生成过的 `thumbnails/avatar/<id>`（不早于卡片时），否则在不超过上限时读取卡片 PNG 本身，从不生成或写入缩略图。旧插件对该消息返回 `bad_request`，Studio 显示首字头像。
 - `ping` 是心跳：伴侣程序每 15 秒发送一次，10 秒内没有响应就把该酒馆标记为无响应（`/api/status` 中 `targets[].responsive = false`），之后的请求立即失败（`timeout`），不再逐个等待 30 秒；下一次心跳得到响应时自动恢复。原因是浏览器会冻结后台标签页：WebSocket 仍然连着，但页面脚本不运行。插件在已连接期间持有 Web Lock（`tavern-cellar-link`）以避免被冻结。

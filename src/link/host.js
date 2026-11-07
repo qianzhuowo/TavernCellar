@@ -3,7 +3,7 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, PREVIEW_VERSION, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
+import { ASSET_MAX_BYTES, CREATE_VERSION, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, PREVIEW_VERSION, ProtocolError, assertAssetRef, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
 import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
 import { previewPrompt } from './preview.js';
 
@@ -347,6 +347,7 @@ export class Host {
         return {
             kinds: ['character', 'lorebook', 'regex', 'preset'],
             preview: PREVIEW_VERSION,
+            create: CREATE_VERSION,
             worldInfoEntryTemplate: structuredClone(newWorldInfoEntryTemplate),
         };
     }
@@ -375,6 +376,7 @@ export class Host {
             case MSG.CATALOG_LIST: return this.catalog(payload);
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
+            case MSG.ITEM_CREATE: return this.create(payload);
             case MSG.WATCH_SET: return this.setWatch(payload);
             case MSG.ASSET_GET: assertAssetRef(payload); return readAsset(payload);
             case MSG.PROMPT_PREVIEW: return previewPrompt(payload);
@@ -415,6 +417,70 @@ export class Host {
         if (kind === 'regex') return readGlobalRegex(assertGlobalRegexId(id));
         if (kind === 'preset') return readPresetFromDisk(id);
         return kind === 'character' ? readCharacter(id) : readLorebook(id);
+    }
+
+    /**
+     * `item.create`: makes an item that the tavern does not have yet, through the tavern's own endpoints (characters:
+     * the create endpoint with the default avatar, then the full card; lorebooks: worldinfo/edit; presets:
+     * presets/save). An existing name is refused, never overwritten.
+     */
+    async create({ kind, name, id: requested, data }) {
+        assertKind(kind);
+        if (kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, 'The global regex list always exists');
+        assertNewItemName(name);
+        if (!isPlainObject(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
+        const c = ctx();
+        let id;
+        let stored;
+        if (kind === 'lorebook') {
+            await c.updateWorldInfoList();
+            if (world_names?.includes(name)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的世界书：${name}`);
+            id = name;
+            const response = await postJson('/api/worldinfo/edit', { name, data });
+            if (!response.ok) throw await responseError(response, `Creating lorebook ${name}`);
+            await c.updateWorldInfoList();
+            stored = await readLorebookFromDisk(name);
+        } else if (kind === 'preset') {
+            id = requested ?? presetId('openai', name);
+            const { apiId } = parsePresetId(id);
+            if (await readPresetFromDisk(id, { fresh: true }).then(() => true, () => false)) {
+                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的预设：${name}`);
+            }
+            const manager = c.getPresetManager(apiId);
+            const response = await postJson('/api/presets/save', { preset: data, name, apiId });
+            if (!response.ok) throw await responseError(response, `Creating preset ${id}`);
+            stored = await readPresetFromDisk(id, { fresh: true });
+            if (manager && !presetInMemory(apiId, name)) {
+                // Adds it to the tavern's preset dropdown without selecting it (PresetManager.updateList would select
+                // it and replace what the user has in the panel).
+                const { presets, preset_names } = manager.getPresetList(apiId);
+                presets.push(structuredClone(stored));
+                const index = presets.length - 1;
+                const keyed = Array.isArray(preset_names);
+                if (keyed) preset_names[index] = name; else preset_names[name] = index;
+                $(manager.select).append($('<option></option>', { value: keyed ? name : index, text: name }));
+            }
+        } else {
+            await c.getCharacters();
+            if (c.characters.some(ch => ch?.avatar?.toLowerCase() === `${name}.png`.toLowerCase())) {
+                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的角色卡：${name}`);
+            }
+            const form = new FormData();
+            form.append('ch_name', name);
+            form.append('file_name', name);
+            const headers = c.getRequestHeaders();
+            delete headers['Content-Type'];
+            const response = await fetch('/api/characters/create', { method: 'POST', headers, body: form, cache: 'no-cache' });
+            if (!response.ok) throw await responseError(response, `Creating character ${name}`);
+            id = (await response.text()).trim();
+            await writeCharacter(id, data);
+            await c.getCharacters();
+            stored = await readCharacter(id);
+        }
+        const hash = await hashData(stored);
+        const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
+        const warnings = hash !== await hashData(sent) ? [{ code: 'normalized', paths: diffPaths(sent, stored) }] : [];
+        return { kind, id, data: stored, hash, warnings };
     }
 
     async get(payload) {

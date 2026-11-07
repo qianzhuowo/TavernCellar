@@ -546,6 +546,9 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/unbind': b => engine.unbind(b.path, b),
         'POST /api/remove': b => engine.remove(b.path, { keepFiles: Boolean(b.keepFiles) }),
         'POST /api/bind': b => engine.bind(b.path, b),
+        'POST /api/tavern/item': b => engine.readTavernItem(b.target, b),
+        'POST /api/create': b => engine.createItem(b),
+        'POST /api/publish': b => engine.publish(b.path, b),
         'POST /api/layout': b => engine.setLayout(b.path, b),
         'POST /api/history': b => engine.history(b),
         'POST /api/history/describe': b => engine.describeDraft(b),
@@ -613,6 +616,8 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
                 onReady: async (link, capabilities) => {
                     // Version of prompt.preview this Cellar Link supports (0: older plugin); listed in /api/status targets.
                     link.target.preview = Number.isInteger(capabilities.preview) && capabilities.preview > 0 ? capabilities.preview : 0;
+                    // Version of item.create (0: older plugin, cannot create items in this tavern).
+                    link.target.create = Number.isInteger(capabilities.create) && capabilities.create > 0 ? capabilities.create : 0;
                     const previous = targets.add(link.target, link);
                     if (previous) previous.link.close(CLOSE.REPLACED, 'replaced by a newer connection');
                     log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id} origin=${origin}`);

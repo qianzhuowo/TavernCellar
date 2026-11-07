@@ -228,6 +228,8 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 
 检查通过后再执行：`cd studio && npm run build` → `cd desktop && npm run dist` → 把 `desktop/release/win-unpacked` 覆盖到安装目录（不删除其中的 `workspace`），同时更新安装包 → 启动已安装程序确认加载的是新界面（从 VS Code 终端启动时先清除继承的 `ELECTRON_RUN_AS_NODE`，否则程序会以 Node 模式立即退出）→ 提交并推送。
 
+发布：推送与 `desktop/package.json` 版本号一致的标签（`v<版本>`）后，`.github/workflows/release.yml` 在 Windows 上运行伴侣程序测试、构建 Studio、打包，并把安装包与便携版附到 GitHub Release；标签与版本号不一致时失败。本机路径与一键打包更新脚本只放在被忽略的 `*.local.*` 文件中。
+
 ## 11. 风险与待定事项
 
 | 项 | 状态 | 说明 / 备选 |
@@ -264,3 +266,4 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 | 2026-11-06 | 版本历史改为 jj 式草稿（用户）：取出、取回、合并、恢复都只进入草稿，不再自动结束草稿或另记「来自 <酒馆>」版本；只有「记录版本」或给草稿打标签才产生检查点（取代 `docs/versioning.md` 中“酒馆端修改先结束草稿再单独记录”）。Studio 去掉「只写说明」按钮（命令行 `cellar describe` 保留） |
 | 2026-11-06 | 文件提取合并与新增（用户）：「酒馆助手脚本」「酒馆助手变量」合并为一个部分 `helper`，新增 `xiaobaix`（小白X 任务 / 模板 / 变量）；二者只在非空时生成文件，Studio 只为卡中实际存在的部分显示勾选项（状态 `parts`）；codec 5，旧 `layout.exclude` 启动时迁移（`scripts`→`helper`，`variables` 去掉，小白X 默认不提取） |
 | 2026-11-06 | 预设工坊（用户）：活动栏「历史」上方的独立页面，来源（工作区预设或其历史版本）→ 目标（工作区预设）对比、拖拽复制、目标内排序；收藏存工作区 `workshop/prompts.json`（随版本历史，哈希防覆盖）。条目列表与预设编辑器共用 `lib/presetPrompts.js` 的顺序与过滤（默认隐藏未插入条目）；本期不直接读取未取出的酒馆预设，只处理提示词条目 |
+| 2026-11-07 | 在 Cellar 中新建资料（用户）：工作区「+」新建未绑定的角色卡 / 世界书 / 预设，检查栏「发布到酒馆」经新消息 `item.create`（`capabilities.create`）或离线写数据目录新建并绑定；全局正则只有一份，「新建正则脚本」是在其中加一条。预设工坊改版：来源 / 目标可选工作区或酒馆（只读读取，保存时取出→写工作区→同步，取代前一条“不读取未取出的酒馆预设”），收藏并入来源；修改缓存到「保存修改」；对比模式四栏、非对比模式三栏。发布改为推送版本标签由 GitHub Actions 打包 |

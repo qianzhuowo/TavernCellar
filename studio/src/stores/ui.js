@@ -47,6 +47,8 @@ export const useUi = defineStore('ui', {
     side: ls.get('cs.side', true),
     /** @type {{id:number, text:string, icon:string}[]} */
     toasts: [],
+    /** global regex item that should get a new script when its editor opens (工作区「+」) */
+    newScriptFor: '',
     /** @type {Record<string, boolean>} */
     collapsed: ls.get('cs.collapsed', {}),
     /** Per item: card editor showing the form or the files it is made of (and which file to select). */

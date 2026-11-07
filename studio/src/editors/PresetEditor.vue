@@ -7,10 +7,12 @@ import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import Icon from '../components/Icon.vue';
+import MiniSelect from '../components/MiniSelect.vue';
 import Seg from '../components/Seg.vue';
 import Toggle from '../components/Toggle.vue';
 import CardText from '../components/card/CardText.vue';
 import RegexList from './RegexList.vue';
+import PromptDetail from './PromptDetail.vue';
 import { presetRef } from '../lib/status.js';
 import { api, errorText } from '../api.js';
 import { FILTER_TIPS, PROMPT_FILTERS, filterPrompts, globalOrderOf, orderedPrompts, promptsOf } from '../lib/presetPrompts.js';
@@ -35,8 +37,6 @@ const TABS = computed(() => (isChat.value
 watch(isChat, (c) => { if (!c) tab.value = 'params'; }, { immediate: true });
 
 // ---- prompts ----------------------------------------------------------------
-const ROLES = [{ value: 'system', label: '系统' }, { value: 'user', label: '用户' }, { value: 'assistant', label: 'AI' }];
-const POSITIONS = [{ value: 0, label: '相对' }, { value: 1, label: '聊天中' }];
 // `data` is mutated in place (same object): depend on rev so these follow edits
 const prompts = computed(() => { void rev.value; return promptsOf(data.value); });
 /** The global prompt order (character_id 100001) decides order and on/off in ST's prompt manager. */
@@ -175,9 +175,7 @@ async function keepMine() {
             <button class="btn sm primary" type="button" @click="addPrompt"><Icon name="plus" size="sm" />新建</button>
           </div>
           <div class="pe-filter">
-            <label class="mini-select" :class="{ active: pfilter !== 'default' }" :title="FILTER_TIPS[pfilter]"><span>显示</span>
-              <select v-model="pfilter"><option v-for="x in PROMPT_FILTERS" :key="x.value" :value="x.value">{{ x.label }}</option></select><Icon name="chevDown" size="sm" />
-            </label>
+            <MiniSelect v-model="pfilter" label="显示" :active="pfilter !== 'default'" :title="FILTER_TIPS[pfilter]" :options="PROMPT_FILTERS" />
             <span v-if="hiddenCount" class="faint pe-hidden">另有 {{ hiddenCount }} 条未显示</span>
           </div>
           <div class="rx-rows">
@@ -209,31 +207,13 @@ async function keepMine() {
           </div>
         </aside>
         <section v-if="current" class="rx-detail">
-          <div class="rx-detail-head">
-            <input class="input ce-name" :value="current.name" placeholder="提示词名称" @input="setPrompt('name', /** @type {any} */ ($event.target).value)" />
-            <button class="icon-btn" type="button" title="上移" :disabled="!currentOrder" @click="movePrompt(-1)"><Icon name="arrowUp" size="sm" /></button>
-            <button class="icon-btn" type="button" title="下移" :disabled="!currentOrder" @click="movePrompt(1)"><Icon name="arrowDown" size="sm" /></button>
-            <button class="icon-btn" type="button" :title="current.system_prompt || current.marker ? '内置提示词不能删除' : '删除这条提示词'" :disabled="current.system_prompt || current.marker" @click="removePrompt"><Icon name="trash" size="sm" /></button>
-          </div>
-          <div class="faint mono pe-id">{{ current.identifier }}</div>
-          <div v-if="!currentOrder" class="banner">
-            <Icon name="info" />
-            <div class="grow">这条提示词没有插入提示词顺序，酒馆不会使用它（在酒馆提示词管理器的「插入」列表里）。</div>
-            <button class="btn sm" type="button" @click="insertPrompt"><Icon name="plus" size="sm" />插入到提示词顺序</button>
-          </div>
-          <div v-if="current.marker" class="banner"><Icon name="info" /><div class="grow">这是占位提示词，内容由酒馆在生成时填入（如聊天记录、世界书），这里只能调整名称、顺序和开关。</div></div>
-          <template v-else>
-            <div class="rx-grid">
-              <div class="field"><label>角色</label><Seg :model-value="current.role || 'system'" :options="ROLES" @update:model-value="setPrompt('role', $event)" /></div>
-              <div class="field"><label>位置</label><Seg :model-value="Number(current.injection_position) || 0" :options="POSITIONS" @update:model-value="setPrompt('injection_position', $event)" /></div>
-              <div v-if="Number(current.injection_position) === 1" class="field">
-                <label>深度</label>
-                <input class="input num" type="number" min="0" :value="current.injection_depth ?? 4" @change="setPrompt('injection_depth', parseInt(/** @type {any} */ ($event.target).value, 10) || 0)" />
-              </div>
-              <div class="field"><label>其他</label><label class="check"><input type="checkbox" :checked="!!current.forbid_overrides" @change="setPrompt('forbid_overrides', /** @type {any} */ ($event.target).checked)" />禁止角色卡覆盖</label></div>
-            </div>
-            <CardText label="内容" big :rows="14" :model-value="current.content ?? ''" @update:model-value="setPrompt('content', $event)" />
-          </template>
+          <PromptDetail :prompt="current" :order="currentOrder" @set="setPrompt" @insert="insertPrompt">
+            <template #actions>
+              <button class="icon-btn" type="button" title="上移" :disabled="!currentOrder" @click="movePrompt(-1)"><Icon name="arrowUp" size="sm" /></button>
+              <button class="icon-btn" type="button" title="下移" :disabled="!currentOrder" @click="movePrompt(1)"><Icon name="arrowDown" size="sm" /></button>
+              <button class="icon-btn" type="button" :title="current.system_prompt || current.marker ? '内置提示词不能删除' : '删除这条提示词'" :disabled="current.system_prompt || current.marker" @click="removePrompt"><Icon name="trash" size="sm" /></button>
+            </template>
+          </PromptDetail>
         </section>
         <section v-else class="rx-detail empty"><Icon name="sliders" /><h3>选择一条提示词</h3></section>
       </div>

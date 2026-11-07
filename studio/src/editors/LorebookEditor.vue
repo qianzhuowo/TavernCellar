@@ -5,6 +5,7 @@
 // extensions.cellar.group (= entries/ subfolders on disk). Same group, same insert position.
 import { computed, reactive, ref, toRaw, toRef, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import Icon from '../components/Icon.vue';
+import MiniSelect from '../components/MiniSelect.vue';
 import Toggle from '../components/Toggle.vue';
 import EntryDetail from './lorebook/EntryDetail.vue';
 import GroupPanel from './lorebook/GroupPanel.vue';
@@ -488,10 +489,7 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
       <button class="btn sm" @click="applyBulk((e) => { e.disable = false; })"><Icon name="check" size="sm" />启用</button>
       <button class="btn sm" @click="applyBulk((e) => { e.disable = true; })"><Icon name="minus" size="sm" />停用</button>
       <span class="vsep" />
-      <label class="mini-select"><span>位置</span>
-        <select v-model="bulk.pos" @change="bulkPos"><option value="" disabled>改为…</option><option v-for="(p, i) in POS" :key="i" :value="String(i)">{{ p.short }} · {{ p.label }}</option></select>
-        <Icon name="chevDown" size="sm" />
-      </label>
+      <MiniSelect v-model="bulk.pos" label="位置" placeholder="改为…" :options="POS.map((p, i) => ({ value: String(i), label: p.short + ' · ' + p.label }))" @change="bulkPos" />
       <div class="bulk-num"><span>顺序</span>
         <select v-model="bulk.orderMode" class="tiny"><option value="set">设为</option><option value="add">加减</option></select>
         <input v-model="bulk.order" class="input num sm" type="number" @keydown.enter="bulkOrder" />
@@ -539,23 +537,13 @@ watch(groupPaths, (paths) => { if (selGroup.value && !paths.includes(selGroup.va
             <button class="btn" :disabled="!pv.target || !!pv.running" :title="pv.target ? `同步本地修改到 ${pv.target.name}，在它当前打开的聊天里预览提示词` : '预览需要已连接的酒馆'" @click="previewNow"><Icon name="eye" size="sm" />同步并预览</button>
           </div>
           <div class="lb-tools-row filters">
-            <label class="mini-select" :class="{ active: f.status !== 'all' }"><span>状态</span>
-              <select v-model="f.status"><option value="all">全部</option><option value="const">永久</option><option value="key">关键词</option><option value="vec">向量化</option></select><Icon name="chevDown" size="sm" />
-            </label>
-            <label class="mini-select" :class="{ active: f.pos !== 'all' }"><span>位置</span>
-              <select v-model="f.pos"><option value="all">全部</option><option v-for="(p, i) in POS" :key="i" :value="String(i)">{{ p.short }}</option></select><Icon name="chevDown" size="sm" />
-            </label>
-            <label class="mini-select" :class="{ active: f.en !== 'all' }"><span>启用</span>
-              <select v-model="f.en"><option value="all">全部</option><option value="on">已启用</option><option value="off">已停用</option></select><Icon name="chevDown" size="sm" />
-            </label>
-            <label v-if="inclOptions.length" class="mini-select" :class="{ active: f.incl !== 'all' }"><span>包含组</span>
-              <select v-model="f.incl"><option value="all">全部</option><option v-for="g in inclOptions" :key="g" :value="g">{{ g }}</option></select><Icon name="chevDown" size="sm" />
-            </label>
+            <MiniSelect v-model="f.status" label="状态" :active="f.status !== 'all'" :options="[{ value: 'all', label: '全部' }, { value: 'const', label: '永久' }, { value: 'key', label: '关键词' }, { value: 'vec', label: '向量化' }]" />
+            <MiniSelect v-model="f.pos" label="位置" :active="f.pos !== 'all'" :options="[{ value: 'all', label: '全部' }, ...POS.map((p, i) => ({ value: String(i), label: p.short }))]" />
+            <MiniSelect v-model="f.en" label="启用" :active="f.en !== 'all'" :options="[{ value: 'all', label: '全部' }, { value: 'on', label: '已启用' }, { value: 'off', label: '已停用' }]" />
+            <MiniSelect v-if="inclOptions.length" v-model="f.incl" label="包含组" :active="f.incl !== 'all'" :options="[{ value: 'all', label: '全部' }, ...inclOptions.map((g) => ({ value: g, label: g }))]" />
             <span class="grow" />
             <label v-if="groupPaths.length" class="check lb-bygroup" title="按 Cellar 分组分区显示"><input v-model="byGroup" type="checkbox" />按组显示</label>
-            <label class="mini-select"><span>排序</span>
-              <select v-model="sort"><option v-for="s in SORTS" :key="s.value" :value="s.value">{{ s.label }}</option></select><Icon name="chevDown" size="sm" />
-            </label>
+            <MiniSelect v-model="sort" label="排序" :options="SORTS" />
           </div>
         </div>
 

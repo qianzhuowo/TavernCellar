@@ -11,9 +11,9 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, canonicalCharacter, parsePresetId, presetId } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, presetId } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
-import { readCardText, writeCard } from './png.js';
+import { placeholderPng, readCardText, writeCard } from './png.js';
 
 const BACKUPS_PER_ITEM = 5;
 
@@ -117,6 +117,7 @@ export class OfflineLink {
             case MSG.CATALOG_LIST: return this.catalog(payload);
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
+            case MSG.ITEM_CREATE: return this.create(payload);
             case MSG.ASSET_GET: return this.asset(payload);
             default: throw new ProtocolError(ERR.BAD_REQUEST, `Unknown request type: ${type}`);
         }
@@ -303,6 +304,34 @@ export class OfflineLink {
         const stored = (await this.readItem(kind, id)).data;
         const hash = await hashData(stored);
         const warnings = [{ code: 'offline-written', file, backup }];
+        if (hash !== await hashData(sent)) warnings.push({ code: 'normalized', paths: diffPaths(sent, stored) });
+        return { kind, id, hash, data: stored, warnings };
+    }
+
+    /**
+     * Creates an item that is not in the data folder yet (`item.create`). Characters are named `<name>.png` (like the
+     * tavern does) with a plain placeholder avatar; an existing file is never replaced.
+     */
+    async create({ kind, name, id: requested, data }) {
+        assertKind(kind);
+        if (kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, 'The global regex list always exists');
+        assertNewItemName(name);
+        if (!isPlainObject(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
+        if (await this.isRunning(this.location)) {
+            throw new ProtocolError(ERR.TAVERN_RUNNING, `${this.location.label} is running; enable Cellar Link in it to create items, or close it to write offline`);
+        }
+        const id = kind === 'character' ? `${name}.png` : kind === 'preset' ? (requested ?? presetId('openai', name)) : name;
+        assertItemRef({ kind, id });
+        const file = this.fileFor(kind, id);
+        if (await stat(file).then(() => true, () => false)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'character' ? '角色卡' : kind === 'preset' ? '预设' : '世界书'}：${name}`);
+        await mkdir(join(file, '..'), { recursive: true });
+        const sent = kind === 'character' ? canonicalCharacter(data, id) : structuredClone(data);
+        delete sent.json_data;
+        const content = kind === 'character' ? writeCard(placeholderPng(), sent) : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
+        await writeAtomic(file, content);
+        const stored = (await this.readItem(kind, id)).data;
+        const hash = await hashData(stored);
+        const warnings = [{ code: 'offline-written', file }];
         if (hash !== await hashData(sent)) warnings.push({ code: 'normalized', paths: diffPaths(sent, stored) });
         return { kind, id, hash, data: stored, warnings };
     }

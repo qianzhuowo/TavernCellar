@@ -59,12 +59,24 @@ export const MSG = Object.freeze({
     CATALOG_LIST: 'catalog.list',
     ITEM_GET: 'item.get',
     ITEM_PUT: 'item.put',
+    /** Creates an item that does not exist in the tavern yet; Cellar Link declares it as `capabilities.create`. */
+    ITEM_CREATE: 'item.create',
     WATCH_SET: 'watch.set',
     PING: 'ping',
     ASSET_GET: 'asset.get',
     PROMPT_PREVIEW: 'prompt.preview',
     ITEM_CHANGED: 'item.changed',
 });
+
+/** Version of `item.create` a Cellar Link declares in `hello.capabilities.create` (absent: not supported). */
+export const CREATE_VERSION = 1;
+
+/** Validates an `item.create` name: a character / lorebook / preset name that can be a file name. */
+export function assertNewItemName(name) {
+    if (typeof name !== 'string' || !name.trim() || name !== name.trim() || name.length > 200 || /[\\/:*?"<>|\u0000-\u001f]/.test(name) || name === '.' || name === '..') {
+        throw new ProtocolError(ERR.BAD_REQUEST, `名称不能为空，也不能包含 \\ / : * ? " < > |：${name}`);
+    }
+}
 
 /** Version of `prompt.preview` a Cellar Link declares in `hello.capabilities.preview` (absent: not supported). */
 export const PREVIEW_VERSION = 1;

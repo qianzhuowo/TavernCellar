@@ -93,6 +93,12 @@ export const api = {
   unbind: (path, target) => call('POST', '/api/unbind', { path, target }),
   remove: (path, keepFiles) => call('POST', '/api/remove', { path, keepFiles }),
   bind: (path, target, id) => call('POST', '/api/bind', { path, target, id }),
+  /** One item read from a tavern without checking it out (预设工坊). */
+  tavernItem: (target, kind, id) => call('POST', '/api/tavern/item', { target, kind, id }),
+  /** New unbound workspace item made in Cellar. @param {string} kind @param {string} [name] */
+  createItem: (kind, name) => call('POST', '/api/create', { kind, name }),
+  /** Creates an unbound item in a tavern and binds it there. */
+  publish: (path, target, name) => call('POST', '/api/publish', { path, target, name }),
   /** Conflicting slots of one binding. @param {string} path @param {string} [target] */
   conflict: (path, target) => call('POST', '/api/conflict', { path, target }),
   /**

@@ -2,7 +2,7 @@
 // Regex script list + detail editor, shared by the global regex list (RegexEditor) and preset regex (PresetEditor).
 // Fields follow ST's regex editor (public/scripts/extensions/regex/editor.html, char-data.js RegexScriptData);
 // unknown fields are kept as they are. `scripts` is mutated in place; every change emits `edited`.
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import Icon from '../components/Icon.vue';
 import Seg from '../components/Seg.vue';
 import Toggle from '../components/Toggle.vue';
@@ -10,11 +10,13 @@ import CardText from '../components/card/CardText.vue';
 
 const props = defineProps({
   scripts: { type: Array, required: true },
+  /** add a new script right after mounting (工作区「+」→ 新建正则脚本) */
+  autoAdd: { type: Boolean, default: false },
   /** footer save state: 'saving' | 'dirty' | 'saved' */
   saveState: { type: String, default: 'saved' },
   emptyText: { type: String, default: '还没有正则 · 点「新建」添加' }
 });
-const emit = defineEmits(['edited']);
+const emit = defineEmits(['edited', 'auto-added']);
 
 /** regex_placement in ST's regex/engine.js (0 = deprecated Markdown display, 4 = legacy sendAs: kept, not offered). */
 const PLACEMENTS = [
@@ -79,6 +81,7 @@ function add() {
   query.value = '';
   edited();
 }
+onMounted(() => { if (props.autoAdd) { add(); emit('auto-added'); } });
 function remove(/** @type {number} */ i) {
   const l = /** @type {any[]} */ (props.scripts);
   const [gone] = l.splice(i, 1);

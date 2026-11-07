@@ -52,6 +52,13 @@ export class FakeTavern {
             const all = [...items.keys()].map(id => ({ id, name: id }));
             return { total: all.length, items: all };
         }
+        if (type === MSG.ITEM_CREATE) {
+            const id = payload.kind === 'character' ? `${payload.name}.png` : payload.id ?? payload.name;
+            if (items.has(id)) throw new ProtocolError(ERR.CONFLICT, `exists: ${id}`);
+            const data = payload.kind === 'character' ? { ...payload.data, avatar: id } : payload.data;
+            items.set(id, data);
+            return { kind: payload.kind, id, data, hash: await hashData(data), warnings: [] };
+        }
         const current = items.get(payload.id);
         if (!current) throw new ProtocolError(ERR.NOT_FOUND, payload.id);
         if (type === MSG.ITEM_GET) return { data: current, hash: await hashData(current) };

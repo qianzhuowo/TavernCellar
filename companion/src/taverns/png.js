@@ -5,6 +5,8 @@
  *   write: drop existing `chara`/`ccv3`, insert `chara` (data as given) and `ccv3` (spec patched to v3) before IEND.
  * All other chunks, including the image data, are kept byte for byte.
  */
+import { deflateSync } from 'node:zlib';
+
 const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CARD_KEYS = ['chara', 'ccv3'];
 
@@ -88,4 +90,20 @@ export function writeCard(png, card) {
         textChunk('ccv3', Buffer.from(v3, 'utf8').toString('base64')),
         iend.raw,
     ]);
+}
+
+/**
+ * Plain avatar for a card created offline (no tavern to pick its default image): a 400x600 grey PNG, the tavern's
+ * avatar aspect ratio. Replace it in the tavern later.
+ */
+export function placeholderPng() {
+    const width = 400, height = 600;
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8; ihdr[9] = 2; // 8-bit RGB
+    const row = Buffer.alloc(1 + width * 3, 0x55);
+    row[0] = 0; // filter: none
+    const pixels = deflateSync(Buffer.concat(Array.from({ length: height }, () => row)));
+    return Buffer.concat([SIGNATURE, encodeChunk('IHDR', ihdr), encodeChunk('IDAT', pixels), encodeChunk('IEND', Buffer.alloc(0))]);
 }

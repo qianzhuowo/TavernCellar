@@ -49,7 +49,7 @@ async function keepMine() {
     <div v-else-if="!scripts" class="banner warn">
       <Icon name="info" /><div class="grow">这个酒馆的全局正则不是列表（或还没有创建过），这里不提供编辑。文件按原样保存在 <span class="mono">{{ path }}/cellar-item.json</span>。</div>
     </div>
-    <RegexList v-else :key="it.version.value" :scripts="scripts" :save-state="saveState" empty-text="还没有全局正则 · 点「新建」添加" @edited="it.touch()" />
+    <RegexList v-else :key="it.version.value" :scripts="scripts" :save-state="saveState" empty-text="还没有全局正则 · 点「新建」添加" :auto-add="ui.newScriptFor === path" @edited="it.touch()" @auto-added="ui.newScriptFor = ''" />
   </div>
 </template>
 
