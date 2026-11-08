@@ -71,6 +71,20 @@ test('create unbound items, publish them to a tavern, read tavern items without 
         assert.equal(read.result.checkedOut, null);
         assert.equal(read.result.data.prompts[0].identifier, 'main');
         assert.equal((await t.api('/api/tavern/item', { kind: 'preset', id: 'openai/Mine' })).result.checkedOut, 'presets/openai-Mine');
+
+        // create character withWorld + publish character withWorld
+        const cardWithWorld = await t.api('/api/create', { kind: 'character', name: 'Mage', withWorld: true });
+        assert.equal(cardWithWorld.ok, true, JSON.stringify(cardWithWorld));
+        assert.equal(cardWithWorld.result.path, 'characters/Mage');
+        assert.deepEqual(cardWithWorld.result.world, { name: 'Mage', path: 'lorebooks/Mage', created: true });
+        const mageItem = await t.api('/api/item', { path: 'characters/Mage' });
+        assert.equal(mageItem.result.data.data.extensions.world, 'Mage');
+
+        const pubWithWorld = await t.api('/api/publish', { path: 'characters/Mage', name: 'Mage', withWorld: true });
+        assert.equal(pubWithWorld.ok, true, JSON.stringify(pubWithWorld));
+        assert.equal(pubWithWorld.result.id, 'Mage.png');
+        assert.deepEqual(pubWithWorld.result.world, { name: 'Mage', path: 'lorebooks/Mage', published: true });
+        assert.ok(t.tavern.store.lorebook.has('Mage'));
     } finally {
         await t.close();
     }
@@ -88,7 +102,7 @@ test('publishing needs a Cellar Link that can create items', async () => {
     }
 });
 
-test('offline item.create writes new files and never replaces one', async () => {
+test('offline item.create writes new files and only replaces when overwrite is true', async () => {
     const root = await mkdtemp(join(tmpdir(), 'cellar-offline-create-'));
     try {
         const userDir = join(root, 'default-user');
@@ -98,6 +112,9 @@ test('offline item.create writes new files and never replaces one', async () => 
         assert.equal(card.id, 'Neo.png');
         assert.equal(JSON.parse(readCardText(await readFile(join(userDir, 'characters', 'Neo.png')))).name, 'Neo');
         await assert.rejects(link.request('item.create', { kind: 'character', name: 'Neo', data: {} }), { code: 'conflict' });
+        const overwritten = await link.request('item.create', { kind: 'character', name: 'Neo', overwrite: true, data: { name: 'Neo', description: 'updated', data: { name: 'Neo', description: 'updated' } } });
+        assert.equal(overwritten.id, 'Neo.png');
+        assert.equal(JSON.parse(readCardText(await readFile(join(userDir, 'characters', 'Neo.png')))).description, 'updated');
         const preset = await link.request('item.create', { kind: 'preset', name: 'P', id: 'openai/P', data: { prompts: [] } });
         assert.deepEqual(preset.data, { prompts: [] });
         assert.deepEqual(JSON.parse(await readFile(join(userDir, 'OpenAI Settings', 'P.json'), 'utf8')), { prompts: [] });

@@ -310,9 +310,9 @@ export class OfflineLink {
 
     /**
      * Creates an item that is not in the data folder yet (`item.create`). Characters are named `<name>.png` (like the
-     * tavern does) with a plain placeholder avatar; an existing file is never replaced.
+     * tavern does) with a plain placeholder avatar; an existing file is refused unless `overwrite === true`.
      */
-    async create({ kind, name, id: requested, data }) {
+    async create({ kind, name, id: requested, data, overwrite = false }) {
         assertKind(kind);
         if (kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, 'The global regex list always exists');
         assertNewItemName(name);
@@ -323,15 +323,18 @@ export class OfflineLink {
         const id = kind === 'character' ? `${name}.png` : kind === 'preset' ? (requested ?? presetId('openai', name)) : name;
         assertItemRef({ kind, id });
         const file = this.fileFor(kind, id);
-        if (await stat(file).then(() => true, () => false)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'character' ? '角色卡' : kind === 'preset' ? '预设' : '世界书'}：${name}`);
+        const exists = await stat(file).then(() => true, () => false);
+        if (exists && !overwrite) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'character' ? '角色卡' : kind === 'preset' ? '预设' : '世界书'}：${name}`);
         await mkdir(join(file, '..'), { recursive: true });
         const sent = kind === 'character' ? canonicalCharacter(data, id) : structuredClone(data);
         delete sent.json_data;
-        const content = kind === 'character' ? writeCard(placeholderPng(), sent) : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
+        const basePng = exists && kind === 'character' ? (await this.readItem(kind, id)).content : placeholderPng();
+        const backup = exists && this.backupDir() ? await this.backup(kind, id, file) : undefined;
+        const content = kind === 'character' ? writeCard(basePng, sent) : Buffer.from(JSON.stringify(sent, null, 4), 'utf8');
         await writeAtomic(file, content);
         const stored = (await this.readItem(kind, id)).data;
         const hash = await hashData(stored);
-        const warnings = [{ code: 'offline-written', file }];
+        const warnings = [{ code: 'offline-written', file, ...(backup ? { backup } : {}) }];
         if (hash !== await hashData(sent)) warnings.push({ code: 'normalized', paths: diffPaths(sent, stored) });
         return { kind, id, hash, data: stored, warnings };
     }

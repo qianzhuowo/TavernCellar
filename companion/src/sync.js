@@ -13,6 +13,7 @@ import { ERR, MSG, ProtocolError, assertItemRef, assertNewItemName, parsePresetI
 import { newItem } from './defaults.js';
 import { CODECS, codecFor } from './codec/index.js';
 import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE, migrateExclude, omitParts, presentParts, restoreParts } from './codec/character.js';
+import { parseEntry, serializeEntry } from './codec/lorebook.js';
 import { detectFrameworks } from './codec/frameworks.js';
 import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
 
@@ -78,10 +79,30 @@ export class SyncEngine {
         return run;
     }
 
-    async encodeItem(item) {
+    async encodeItem(item, { persistAssignedUids = false } = {}) {
         const files = await this.ws.readItemFiles(item.path);
         const options = item.kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
         const data = codecFor(item.kind).encode(files, options);
+        if (persistAssignedUids && item.kind === 'lorebook' && data._assignedUids?.size > 0) {
+            for (const [rel, uid] of data._assignedUids) {
+                if (files[rel] === undefined) continue;
+                const { frontMatter, body } = parseEntry(files[rel], rel);
+                await this.ws.writeItemFile(item.path, rel, serializeEntry({ uid, ...frontMatter }, body));
+            }
+            const metaText = files[ITEM_META_FILE];
+            if (metaText !== undefined) {
+                try {
+                    const meta = JSON.parse(metaText.replace(/^\uFEFF/, ''));
+                    if (Array.isArray(meta.order)) {
+                        for (const uid of data._assignedUids.values()) {
+                            const key = String(uid);
+                            if (!meta.order.includes(key)) meta.order.push(key);
+                        }
+                        await this.ws.writeItemFile(item.path, ITEM_META_FILE, JSON.stringify(meta, null, 2) + '\n');
+                    }
+                } catch { /* ignore */ }
+            }
+        }
         return { data, hash: await hashData(data) };
     }
 
@@ -548,7 +569,7 @@ export class SyncEngine {
 
     async #syncLocked(item, targetId, binding, link, force, attempt = 0) {
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
-        const local = await this.encodeItem(item);
+        const local = await this.encodeItem(item, { persistAssignedUids: true });
         if (local.hash === state.base && !force) {
             // Nothing to send: workspace and tavern agree on the last written version, so earlier sync warnings go.
             if (state.warnings) { this.ws.setSyncState(item.path, targetId, { warnings: undefined, warnedAt: undefined }); await this.ws.saveState(); }
@@ -766,8 +787,10 @@ export class SyncEngine {
     /**
      * Creates a workspace item that no tavern has yet (unbound); `publish` creates it in a tavern later. Regex: the
      * workspace holds one global regex list, so this only creates it when there is none.
+     * For characters, `withWorld` also creates a companion lorebook with the same name (or reuses an existing one in
+     * the workspace) and sets `data.extensions.world` on the character card.
      */
-    async createItem({ kind, name } = {}) {
+    async createItem({ kind, name, withWorld = false, worldName } = {}) {
         if (!CODECS[kind]) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown kind: ${kind}`);
         if (kind === 'regex') {
             const existing = this.ws.manifest.items.find(item => item.kind === 'regex');
@@ -775,10 +798,14 @@ export class SyncEngine {
         } else {
             assertNewItemName(name);
         }
-        const { id, data } = newItem(kind, name);
+        const linkedWorld = kind === 'character' && (withWorld || (typeof worldName === 'string' && worldName.trim()))
+            ? (typeof worldName === 'string' && worldName.trim() ? worldName.trim() : name)
+            : '';
+        if (linkedWorld) assertNewItemName(linkedWorld);
+        const { id, data } = newItem(kind, name, linkedWorld ? { world: linkedWorld } : {});
         const path = this.ws.allocateItemPath(kind, id);
         const item = { path, kind, bindings: {} };
-        return this.withLock(path, async () => {
+        const created = await this.withLock(path, async () => {
             this.ws.manifest.items.push(item);
             const codec = codecFor(kind);
             const options = kind === 'preset' ? { apiId: parsePresetId(id).apiId } : await this.decodeOptions(item);
@@ -789,13 +816,23 @@ export class SyncEngine {
             this.log(`created ${kind} ${path}`);
             return { path, kind, id };
         });
+        if (!linkedWorld) return created;
+        const expectedBookPath = `${CODECS.lorebook.folder}/${CODECS.lorebook.nameOf(linkedWorld)}`;
+        const existingBook = this.ws.manifest.items.find(i => i.kind === 'lorebook' && i.path.toLowerCase() === expectedBookPath.toLowerCase());
+        if (existingBook) {
+            return { ...created, world: { name: linkedWorld, path: existingBook.path, created: false } };
+        }
+        const book = await this.createItem({ kind: 'lorebook', name: linkedWorld });
+        return { ...created, world: { name: linkedWorld, path: book.path, created: true } };
     }
 
     /**
-     * Creates a workspace item in a tavern where it does not exist yet and binds it there, in sync. `name` is the
-     * character / lorebook / preset name in the tavern; characters get their avatar file name from the tavern.
+     * Creates a workspace item in a tavern where it does not exist yet (or overwrites an existing same-name item when
+     * `overwrite === true`) and binds it there, in sync. `name` is the character / lorebook / preset name in the tavern;
+     * characters get their avatar file name from the tavern.
+     * For characters, `withWorld` also publishes (or binds) the linked lorebook in `data.extensions.world`.
      */
-    async publish(path, { target: targetSpec, name } = {}) {
+    async publish(path, { target: targetSpec, name, withWorld = false, overwrite = false } = {}) {
         const item = this.requireItem(path);
         if (item.kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, '全局正则在每个酒馆都已存在，请用「绑定」');
         assertNewItemName(name);
@@ -805,11 +842,11 @@ export class SyncEngine {
             throw new ProtocolError(ERR.BAD_REQUEST, `${target.label ?? target.id} 的 Cellar Link 太旧，不支持新建；请更新插件`);
         }
         this.#assertCanWrite(target.id);
-        return this.withLock(path, async () => {
-            const local = await this.encodeItem(item);
+        const published = await this.withLock(path, async () => {
+            const local = await this.encodeItem(item, { persistAssignedUids: true });
             const data = item.kind === 'character' ? renameCharacter(local.data, name) : local.data;
             const id = item.kind === 'preset' ? `${(await this.decodeOptions(item)).apiId ?? 'openai'}/${name}` : item.kind === 'character' ? undefined : name;
-            const result = await link.request(MSG.ITEM_CREATE, { kind: item.kind, name, ...(id ? { id } : {}), data });
+            const result = await link.request(MSG.ITEM_CREATE, { kind: item.kind, name, ...(id ? { id } : {}), data, ...(overwrite ? { overwrite: true } : {}) });
             const other = this.ws.findBinding(target.id, item.kind, result.id);
             if (other) throw new ProtocolError(ERR.CONFLICT, `${item.kind} "${result.id}" 已绑定在 ${other.item.path}`);
             item.bindings = { ...(item.bindings ?? {}), [target.id]: { id: result.id, autoSync: false } };
@@ -820,8 +857,26 @@ export class SyncEngine {
             await this.#deployed(item, target.id);
             await this.pushWatchList(target.id).catch(error => this.log(`watch list for ${target.id} not updated: ${error.message}`));
             this.log(`published ${path} -> ${target.id} (${result.id})`);
-            return { path, target: target.id, id: result.id, hash: result.hash, warnings: result.warnings ?? [] };
+            const worldName = item.kind === 'character' ? linkedWorldName(result.data) : undefined;
+            return { path, target: target.id, id: result.id, hash: result.hash, warnings: result.warnings ?? [], ...(worldName ? { worldName } : {}) };
         });
+        if (item.kind !== 'character' || !withWorld || !published.worldName) return published;
+        const wName = published.worldName;
+        const alreadyBound = this.ws.findBinding(published.target, 'lorebook', wName);
+        if (alreadyBound) {
+            return { ...published, world: { name: wName, path: alreadyBound.item.path, published: false } };
+        }
+        const expectedBookPath = `${CODECS.lorebook.folder}/${CODECS.lorebook.nameOf(wName)}`;
+        const localBook = this.ws.manifest.items.find(i => i.kind === 'lorebook' && !i.bindings?.[published.target] && i.path.toLowerCase() === expectedBookPath.toLowerCase());
+        if (!localBook) {
+            return { ...published, warnings: [...published.warnings, { code: 'world-publish-skipped', name: wName, detail: `No unbound workspace lorebook at ${expectedBookPath}` }] };
+        }
+        try {
+            const bookPub = await this.publish(localBook.path, { target: published.target, name: wName, overwrite });
+            return { ...published, world: { name: wName, path: localBook.path, published: true }, warnings: [...published.warnings, ...(bookPub.warnings ?? [])] };
+        } catch (error) {
+            return { ...published, warnings: [...published.warnings, { code: 'world-publish-failed', name: wName, detail: error.message }] };
+        }
     }
 
     // ---- events ----------------------------------------------------------
@@ -869,7 +924,7 @@ export class SyncEngine {
         await this.withLock(path, async () => {
             let local;
             try {
-                local = await this.encodeItem(item);
+                local = await this.encodeItem(item, { persistAssignedUids: true });
                 this.local.set(path, { status: 'ok' });
             } catch (error) {
                 this.local.set(path, { status: 'invalid', error: error.message });

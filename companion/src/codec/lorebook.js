@@ -176,6 +176,7 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
         if (/^\d+$/.test(key)) maxUid = Math.max(maxUid, Number(key));
     }
 
+    const assignedUids = new Map();
     const byKey = new Map();
     const newKeys = [];
     for (const { name, frontMatter, body } of parsed) {
@@ -188,6 +189,7 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
             entry = { ...deepClone(snapshot ?? entryTemplate ?? {}), ...frontMatter, uid };
             key = String(uid);
             newKeys.push(key);
+            assignedUids.set(name, uid);
         } else {
             entry = { ...defaultsFor(key), ...frontMatter };
         }
@@ -210,5 +212,8 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
     }
 
     if (meta.hasEntries || Object.keys(entries).length > 0) book.entries = entries;
+    if (assignedUids.size > 0) {
+        Object.defineProperty(book, '_assignedUids', { value: assignedUids, enumerable: false });
+    }
     return book;
 }

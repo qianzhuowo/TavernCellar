@@ -255,6 +255,7 @@ test('auto sync pushes on file save', async () => {
     await writeFile(join(dir, 'lorebooks/Book/entries/new.md'), '---\ncomment: added\n---\nnew entry');
     await until(() => tavern.store.lorebook.get('Book').entries[1]?.content === 'new entry');
     assert.equal(tavern.store.lorebook.get('Book').entries[1].disable, false, 'entry template from capabilities applied');
+    assert.match(await readFile(join(dir, 'lorebooks/Book/entries/new.md'), 'utf8'), /^---\r?\nuid: 1\r?\n/, 'assigned uid is persisted back into the new entry file');
 });
 
 test('reconnect pushes auto-sync edits made while the tavern was away; a changed tavern gets a conflict', async () => {

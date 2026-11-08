@@ -34,6 +34,10 @@ const USAGE = `TavernCellar 伴侣程序
   cellar checkout <character|lorebook> <id> [--target ID] [--with-world] [--keep 部分,部分]
                                         取出到工作区（角色 id 为头像文件名，如 Alice.png）
                                         --with-world 一起取出角色绑定的世界书；--keep 见 cellar layout
+  cellar create <character|lorebook|preset|regex> [名称] [--with-world] [--world 世界书名]
+                                        在工作区新建资料项（尚未绑定酒馆）；角色加 --with-world 一并新建同名世界书并填入 extensions.world
+  cellar publish <项路径> <名称> [--target ID] [--with-world]
+                                        把工作区中未绑定的项发布到酒馆并绑定；角色加 --with-world 一并发布绑定的世界书
   cellar layout <项路径> [--keep 部分,部分]   角色卡文件提取：--keep 列出不提取、留在 card.json 的部分（不写 = 全部提取）
                                         部分: ${CHARACTER_PARTS.join(', ')}（greetings = 第一条消息 + 其他开场；xiaobaix = 小白X，helper = 酒馆助手；
                                         描述、设定等基础字段始终提取）
@@ -388,6 +392,29 @@ async function main() {
             const [kind, id] = positional;
             if (!kind || !id) throw new Error('用法: cellar checkout <character|lorebook> <id>');
             print(await api(config, 'POST', '/api/checkout', { target, kind, id, withWorld: Boolean(flags['with-world']), ...(flags.keep !== undefined ? { exclude: parseParts(flags.keep) } : {}) }));
+            return;
+        }
+        case 'create': {
+            const [kind, name] = positional;
+            if (!kind || (kind !== 'regex' && !name)) throw new Error('用法: cellar create <character|lorebook|preset|regex> [名称] [--with-world] [--world 世界书名]');
+            print(await api(config, 'POST', '/api/create', {
+                kind,
+                name,
+                withWorld: Boolean(flags['with-world']),
+                ...(typeof flags.world === 'string' ? { worldName: flags.world } : {}),
+            }));
+            return;
+        }
+        case 'publish': {
+            const [path, name] = positional;
+            if (!path || !name) throw new Error('用法: cellar publish <项路径> <名称> [--target ID] [--with-world] [--overwrite]');
+            print(await api(config, 'POST', '/api/publish', {
+                path: path.replace(/\\/g, '/').replace(/\/$/, ''),
+                name,
+                target,
+                withWorld: Boolean(flags['with-world']),
+                overwrite: Boolean(flags.overwrite || flags.force),
+            }));
             return;
         }
         case 'layout': {

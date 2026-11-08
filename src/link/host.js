@@ -67,8 +67,30 @@ async function readCharacter(avatar) {
     return canonicalCharacter(JSON.parse(character.json_data), avatar);
 }
 
-async function writeCharacter(avatar, card) {
-    const response = await postJson('/api/characters/merge-attributes', canonicalCharacter(card, avatar));
+/**
+ * Sets `null` at keys and nested paths that existed in `before` and were deleted from `after`, so a deep-merge
+ * endpoint (`/api/characters/merge-attributes`) clears them instead of keeping the old values.
+ */
+export function withNullDeletions(before, after) {
+    if (!isPlainObject(before) || !isPlainObject(after)) return after;
+    const out = structuredClone(after);
+    const apply = (prev, curr, target) => {
+        for (const key of Object.keys(prev)) {
+            if (!Object.prototype.hasOwnProperty.call(curr, key)) {
+                target[key] = null;
+            } else if (isPlainObject(prev[key]) && isPlainObject(curr[key])) {
+                apply(prev[key], curr[key], target[key]);
+            }
+        }
+    };
+    apply(before, after, out);
+    return out;
+}
+
+async function writeCharacter(avatar, card, previous = null) {
+    const payload = canonicalCharacter(card, avatar);
+    const body = previous ? withNullDeletions(previous, payload) : payload;
+    const response = await postJson('/api/characters/merge-attributes', body);
     if (!response.ok) throw await responseError(response, `Saving character ${avatar}`);
     await refreshCharacterUi(avatar);
 }
@@ -442,9 +464,9 @@ export class Host {
     /**
      * `item.create`: makes an item that the tavern does not have yet, through the tavern's own endpoints (characters:
      * the create endpoint with the default avatar, then the full card; lorebooks: worldinfo/edit; presets:
-     * presets/save). An existing name is refused, never overwritten.
+     * presets/save). An existing name is refused unless `overwrite === true`.
      */
-    async create({ kind, name, id: requested, data }) {
+    async create({ kind, name, id: requested, data, overwrite = false }) {
         assertKind(kind);
         if (kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, 'The global regex list always exists');
         assertNewItemName(name);
@@ -454,7 +476,7 @@ export class Host {
         let stored;
         if (kind === 'lorebook') {
             await c.updateWorldInfoList();
-            if (world_names?.includes(name)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的世界书：${name}`);
+            if (world_names?.includes(name) && !overwrite) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的世界书：${name}`);
             id = name;
             const response = await postJson('/api/worldinfo/edit', { name, data });
             if (!response.ok) throw await responseError(response, `Creating lorebook ${name}`);
@@ -463,7 +485,7 @@ export class Host {
         } else if (kind === 'preset') {
             id = requested ?? presetId('openai', name);
             const { apiId } = parsePresetId(id);
-            if (await readPresetFromDisk(id, { fresh: true }).then(() => true, () => false)) {
+            if (!overwrite && await readPresetFromDisk(id, { fresh: true }).then(() => true, () => false)) {
                 throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的预设：${name}`);
             }
             const manager = c.getPresetManager(apiId);
@@ -482,20 +504,27 @@ export class Host {
             }
         } else {
             await c.getCharacters();
-            if (c.characters.some(ch => ch?.avatar?.toLowerCase() === `${name}.png`.toLowerCase())) {
-                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的角色卡：${name}`);
+            const existing = c.characters.find(ch => ch?.avatar?.toLowerCase() === `${name}.png`.toLowerCase());
+            if (existing) {
+                if (!overwrite) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的角色卡：${name}`);
+                id = existing.avatar;
+                const current = await readCharacter(id);
+                await writeCharacter(id, data, current);
+                await c.getCharacters();
+                stored = await readCharacter(id);
+            } else {
+                const form = new FormData();
+                form.append('ch_name', name);
+                form.append('file_name', name);
+                const headers = c.getRequestHeaders();
+                delete headers['Content-Type'];
+                const response = await fetch('/api/characters/create', { method: 'POST', headers, body: form, cache: 'no-cache' });
+                if (!response.ok) throw await responseError(response, `Creating character ${name}`);
+                id = (await response.text()).trim();
+                await writeCharacter(id, data);
+                await c.getCharacters();
+                stored = await readCharacter(id);
             }
-            const form = new FormData();
-            form.append('ch_name', name);
-            form.append('file_name', name);
-            const headers = c.getRequestHeaders();
-            delete headers['Content-Type'];
-            const response = await fetch('/api/characters/create', { method: 'POST', headers, body: form, cache: 'no-cache' });
-            if (!response.ok) throw await responseError(response, `Creating character ${name}`);
-            id = (await response.text()).trim();
-            await writeCharacter(id, data);
-            await c.getCharacters();
-            stored = await readCharacter(id);
         }
         const hash = await hashData(stored);
         const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
@@ -524,7 +553,7 @@ export class Host {
                 throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
             }
             const stored = await step(`Saving ${kind} ${id} (it may or may not have been saved)`, async () => {
-                if (kind === 'character') await writeCharacter(id, data);
+                if (kind === 'character') await writeCharacter(id, data, current);
                 else if (kind === 'regex') assertGlobalRegexData(data);
                 else if (kind !== 'preset') await writeLorebook(id, data);
 
