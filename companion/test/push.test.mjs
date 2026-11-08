@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { Workspace } from '../src/workspace/workspace.js';
 import { startServer } from '../src/server.js';
 import { FakeTavern } from './fake-tavern.mjs';
@@ -27,7 +26,6 @@ const until = async (fn, ms = 4000) => {
 const desc = () => join(dir, 'characters', 'Alice', 'description.md');
 const binding = async target => (await api('/api/status')).result.items.find(i => i.path === 'characters/Alice').bindings.find(b => b.target === target);
 const ok = r => { assert.equal(r.ok, true, JSON.stringify(r)); return r.result; };
-const hasGit = (() => { try { execFileSync('git', ['--version']); return true; } catch { return false; } })();
 
 before(async () => {
     dir = await mkdtemp(join(tmpdir(), 'cellar-push-'));
@@ -54,7 +52,7 @@ after(async () => {
 test('push a tagged version to one tavern: written there, the workspace stays, the binding is pinned', async () => {
     await writeFile(desc(), 'v1 release');
     ok(await api('/api/history/commit', { message: 'release' }));
-    ok(await api('/api/history/tag', { name: 'v1.0' }));
+    ok(await api('/api/history/tag', { name: 'v1.0', path: 'characters/Alice' }));
     await writeFile(desc(), 'v2 work in progress');
     ok(await api('/api/history/commit', { message: 'wip' }));
 
@@ -138,15 +136,6 @@ test('push reports what cannot be pushed', async () => {
     assert.equal(first.message, '开始版本记录');
     // The first version predates the checkout: no item bound to tt exists there.
     assert.equal((await api('/api/push', { rev: first.id, target: 'tt-target' })).error.code, 'bad_request');
-});
-
-test('a tag made with git (annotated) can be pushed', { skip: !hasGit && 'git not installed' }, async () => {
-    const g = (...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { encoding: 'utf8' });
-    g('tag', '-a', 'from-git', '-m', 'made outside', 'v1.0');
-    const r = ok(await api('/api/push', { rev: 'from-git', target: 'tt-target' }));
-    assert.equal(r.results[0].result, 'pushed');
-    assert.equal(tt.store.character.get('Alice.png').data.description, 'v1 release');
-    assert.deepEqual((await binding('tt-target')).pinned.name, 'from-git', 'named by the first of its tags');
 });
 
 test('unbinding a pinned binding forgets the pin', async () => {

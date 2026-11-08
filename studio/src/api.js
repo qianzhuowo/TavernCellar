@@ -121,9 +121,10 @@ export const api = {
   putItemFile: (path, file, text, hash) => call('PUT', '/api/item/file', { path, file, text, hash }),
   /** Version history (docs/versioning.md). @param {{path?: string, limit?: number}} [q] */
   history: (q = {}) => call('POST', '/api/history', q),
-  describeDraft: (message) => call('POST', '/api/history/describe', { message }),
-  recordVersion: (message) => call('POST', '/api/history/commit', { message }),
-  tagVersion: (name, rev) => call('POST', '/api/history/tag', { name, rev }),
+describeDraft: (message, rev) => call('POST', '/api/history/describe', { message, rev }),
+recordVersion: (message, paths) => call('POST', '/api/history/commit', { message, paths }),
+tagVersion: (name, path, rev, message) => call('POST', '/api/history/tag', { name, path, rev, message }),
+untagVersion: (name, path) => call('POST', '/api/history/untag', { name, path }),
   diffVersions: (from, to, path) => call('POST', '/api/history/diff', { from, to, path }),
     restoreVersion: (rev, path) => call('POST', '/api/history/restore', { rev, path }),
   /** 撤回 / 取消撤回 one write of an item; 撤销当前的修改 = back to the last recorded version. @param {string} path */

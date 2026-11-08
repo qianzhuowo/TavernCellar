@@ -147,6 +147,17 @@
 .vh-at.sm { width: 16px; height: 16px; font-size: 11px; margin-right: 4px; }
 .vh-item { text-decoration: none; color: inherit; max-width: 240px; min-width: 0; }
 .vh-item:hover { border-color: var(--accent); }
+.vh-item.on { border-color: var(--accent); color: var(--accent); }
+.vh-pick { display: inline-flex; align-items: center; gap: 4px; }
+.vh-pick input { margin: 0; accent-color: var(--accent); }
+.vh-pick a { color: inherit; text-decoration: none; }
+.vh-pick.off { opacity: .55; }
+.vh-draft-note { font-size: var(--fs-xs); margin-top: 6px; }
+.vh-edit { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vh-edit .input { flex: 1; min-width: 160px; }
+.vh-untag { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 2px; opacity: .6; font-size: 13px; line-height: 1; }
+.vh-untag:hover { opacity: 1; color: var(--danger, #e5484d); }
+.vh-taghint { font-size: var(--fs-xs); align-self: center; }
 .vh-draft-h .ell, .vh-row .ell, .vh-ditem-h .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vh-main { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: var(--sp-4); align-items: start; }
 .vh-list { list-style: none; margin: 0; padding: 0; position: relative; }

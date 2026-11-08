@@ -1075,32 +1075,54 @@ export class SyncEngine {
         return { draft: await vcs.draftInfo(), versions, deployed };
     }
 
-    async describeDraft({ message } = {}) {
-        const oid = await (await this.versions()).describe(String(message ?? ''));
-        this.onHistory();
-        return { id: oid };
-    }
-
-    /** "记录版本": the draft gets its description and is finished. */
-    async recordVersion({ message } = {}) {
-        const oid = await (await this.versions()).commit(String(message ?? ''));
-        if (!oid) throw new ProtocolError(ERR.BAD_REQUEST, '没有新的修改可以记录');
-        this.log(`recorded version ${oid.slice(0, 8)}`);
-        this.onHistory();
-        return { id: oid };
-    }
-
-    async tagVersion({ name, rev } = {}) {
-        if (typeof name !== 'string' || !/^[^\s~^:?*[\\]+$/.test(name) || name.includes('..')) throw new ProtocolError(ERR.BAD_REQUEST, '标签名不能含空格和 ~^:?*[\\ 符号');
+    /** Description of the draft (no `rev`) or of a recorded version (a note: the version keeps its id). */
+    async describeDraft({ message, rev } = {}) {
         const vcs = await this.versions();
         let oid;
         try {
-            oid = await vcs.tag(name, rev);
+            oid = rev ? await vcs.describeVersion(String(rev), String(message ?? '')) : await vcs.describe(String(message ?? ''));
         } catch (error) {
-            throw new ProtocolError(ERR.BAD_REQUEST, error.code === 'AlreadyExistsError' ? `标签 ${name} 已存在` : error.message);
+            throw new ProtocolError(ERR.BAD_REQUEST, error.message);
         }
         this.onHistory();
-        return { name, id: oid };
+        return { id: oid };
+    }
+
+    /** "记录版本" (存档): the chosen items (default: all in the draft) become a version; the rest stays in the draft. */
+    async recordVersion({ message, paths } = {}) {
+        if (paths !== undefined && (!Array.isArray(paths) || !paths.every(p => typeof p === 'string'))) throw new ProtocolError(ERR.BAD_REQUEST, 'paths 应为项路径列表');
+        let oid;
+        try {
+            oid = await (await this.versions()).commit(String(message ?? ''), paths?.length ? paths : undefined);
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, error.message);
+        }
+        if (!oid) throw new ProtocolError(ERR.BAD_REQUEST, '没有新的修改可以记录');
+        this.log(`recorded version ${oid.slice(0, 8)}${paths?.length ? ` (${paths.join(', ')})` : ''}`);
+        this.onHistory();
+        return { id: oid };
+    }
+
+    /** Tags one item at a version; on the draft that item is recorded first with `message`. */
+    async tagVersion({ name, path, rev, message } = {}) {
+        if (typeof name !== 'string' || !/^[^\s~^:?*[\\]+$/.test(name) || name.includes('..') || name.startsWith('/') || name.endsWith('/')) throw new ProtocolError(ERR.BAD_REQUEST, '标签名不能含空格和 ~^:?*[\\ 符号');
+        if (typeof path !== 'string' || !path.includes('/')) throw new ProtocolError(ERR.BAD_REQUEST, '标签属于一项：请选择要打标签的项');
+        const vcs = await this.versions();
+        let oid;
+        try {
+            oid = await vcs.tag(name, path, rev, message === undefined ? undefined : String(message));
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, error.message);
+        }
+        this.onHistory();
+        return { name, path, id: oid };
+    }
+
+    async untagVersion({ name, path } = {}) {
+        if (typeof name !== 'string' || typeof path !== 'string') throw new ProtocolError(ERR.BAD_REQUEST, '需要标签名与项路径');
+        if (!(await (await this.versions()).untag(name, path))) throw new ProtocolError(ERR.NOT_FOUND, `${path} 没有标签 ${name}`);
+        this.onHistory();
+        return { name, path };
     }
 
     /** Item data of a version (null when the item is absent there or cannot be read). */
@@ -1302,6 +1324,15 @@ export class SyncEngine {
         try { id = await vcs.resolve(rev ?? 'HEAD'); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
         const { target } = this.targets.resolve(targetSpec);
         const bound = this.ws.manifest.items.filter(item => item.bindings?.[target.id]);
+        // A tag names one item's version: `<item path>:<tag>`, or a tag name alone pushes the items carrying it
+        // (unless items are given), never the whole snapshot.
+        const tagged = typeof rev === 'string' && rev.lastIndexOf(':') > 0 ? rev.slice(0, rev.lastIndexOf(':')) : null;
+        if (!paths?.length && tagged && this.ws.manifest.items.some(i => i.path === tagged)) paths = [tagged];
+        if (!paths?.length && typeof rev === 'string') {
+            const carrying = (await vcs.tagsAt(id)).filter(t => t.name === rev).map(t => t.path);
+            if (carrying.length) paths = carrying.filter(p => bound.some(i => i.path === p));
+            if (carrying.length && !paths.length) throw new ProtocolError(ERR.BAD_REQUEST, `带标签 ${rev} 的项都没有绑定这个酒馆`);
+        }
         let items;
         if (paths?.length) {
             items = paths.map(p => {
@@ -1322,8 +1353,10 @@ export class SyncEngine {
             })));
         }
         this.onHistory();
-        const names = await vcs.tagsAt(id);
-        return { rev: id, name: names[0] ?? id.slice(0, 8), target: target.id, results };
+        const pushed = new Set(items.map(i => i.path));
+        const tags = (await vcs.tagsAt(id)).filter(t => pushed.has(t.path));
+        const names = [...new Set(tags.map(t => t.name))];
+        return { rev: id, name: names.length === 1 ? names[0] : id.slice(0, 8), target: target.id, results };
     }
 
     async #pushItem(vcs, id, item, targetId, force) {
@@ -1405,7 +1438,7 @@ export class SyncEngine {
                         tavernError = e.message;
                     }
                 }
-                const pinned = binding.pin ? { rev: binding.pin, name: (vcs && (await vcs.tagsAt(binding.pin).catch(() => []))[0]) || binding.pin.slice(0, 8), ahead: !error && localHash !== state.pinHash } : null;
+                const pinned = binding.pin ? { rev: binding.pin, name: (vcs && (await vcs.tagsAt(binding.pin).catch(() => [])).find(t => t.path === item.path)?.name) || binding.pin.slice(0, 8), ahead: !error && localHash !== state.pinHash } : null;
                 // Pinned: the workspace moving on is not "unsynced"; only a tavern edit counts.
                 const localChanged = !pinned && !error && localHash !== state.base;
                 const tavernChanged = Boolean(tavernHash) && tavernHash !== state.base;

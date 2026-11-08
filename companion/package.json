@@ -1,6 +1,6 @@
 {
     "name": "tavern-cellar",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "description": "TavernCellar companion: local workspace and sync bridge for SillyTavern / TauriTavern cards and lorebooks.",
     "type": "module",
     "private": true,

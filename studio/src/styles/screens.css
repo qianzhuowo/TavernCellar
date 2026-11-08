@@ -6,7 +6,7 @@
 .page-head { display: flex; align-items: flex-end; gap: var(--sp-6); margin-bottom: var(--sp-5); flex-wrap: wrap; }
 .page-head > div:first-child { flex: 1; min-width: 280px; }
 .page-head h2 { margin: 0 0 6px; font-size: var(--fs-2xl); font-weight: 600; display: flex; align-items: center; gap: var(--sp-2); }
-.page-head p { margin: 0; line-height: 1.6; max-width: 680px; }
+.page-head p { margin: 0; line-height: 1.6; }
 .page-actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .crumb { font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
 .crumb a { display: inline-flex; align-items: center; gap: 2px; color: var(--text-3); }

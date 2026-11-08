@@ -149,15 +149,22 @@ test('a sync that merges tavern edits puts them into the draft with the user\'s 
     assert.equal(tavern.store.character.get('Alice.png').data.description, 'local edit before merge');
 });
 
-test('tags; unknown versions and items are reported', async () => {
-    const tag = await api('/api/history/tag', { name: 'v1.0' });
+test('tags belong to items; unknown versions and items are reported', async () => {
+    const before = await history();
+    assert.ok(before.draft.id, 'the merge left a draft');
+    const tag = await api('/api/history/tag', { name: 'v1.0', path: 'characters/Alice', rev: before.draft.id, message: '贴标签的存档' });
     assert.equal(tag.ok, true, JSON.stringify(tag));
     const h = await history();
-    assert.deepEqual(h.versions[0].tags, ['v1.0']);
+    assert.deepEqual(h.versions[0].tags, [{ path: 'characters/Alice', name: 'v1.0' }]);
     assert.equal(h.versions[0].draft, false, 'tagging the draft records it');
+    assert.equal(h.versions[0].message, '贴标签的存档', 'with the description typed');
     assert.equal(h.draft.id, null);
-    assert.equal((await api('/api/history/tag', { name: 'v1.0' })).error.code, 'bad_request');
-    assert.equal((await api('/api/history/tag', { name: 'has space' })).error.code, 'bad_request');
+    assert.equal((await api('/api/history/tag', { name: 'v1.0', path: 'characters/Alice' })).error.code, 'bad_request');
+    assert.equal((await api('/api/history/tag', { name: 'v2' })).error.code, 'bad_request', 'a tag needs an item');
+    assert.equal((await api('/api/history/tag', { name: 'has space', path: 'characters/Alice' })).error.code, 'bad_request');
+    const described = await api('/api/history/describe', { rev: h.versions[0].id, message: '后来改的说明' });
+    assert.equal(described.result.id, h.versions[0].id, 'the version keeps its id');
+    assert.equal((await history()).versions[0].message, '后来改的说明');
     assert.equal((await api('/api/history/diff', { from: 'nope' })).error.code, 'not_found');
     assert.equal((await api('/api/history/restore', { rev: 'v1.0', path: 'characters/Nobody' })).ok, false);
 });

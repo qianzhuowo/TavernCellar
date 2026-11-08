@@ -15,9 +15,14 @@ const props = defineProps({
   /** shown in place of the list when it is empty (e.g. 正在读取…) */
   emptyText: { type: String, default: '没有可选项' },
   disabled: { type: Boolean, default: false },
-  ariaLabel: { type: String, default: '' }
+  ariaLabel: { type: String, default: '' },
+  /** icon-only trigger (e.g. a version picker next to another field); `title` describes it */
+  icon: { type: String, default: '' },
+  title: { type: String, default: '' }
 });
 const emit = defineEmits(['update:modelValue']);
+// Two roots (trigger + teleported panel): class / style from the parent go on the trigger.
+defineOptions({ inheritAttrs: false });
 
 const open = ref(false);
 const q = ref('');
@@ -40,7 +45,10 @@ function place() {
   const below = window.innerHeight - r.bottom - 12;
   const up = below < 220 && r.top > below;
   const maxHeight = Math.min(360, up ? r.top - 12 : below);
-  pos.value = { left: r.left, top: up ? r.top - 4 - maxHeight : r.bottom + 4, width: Math.max(r.width, 260), maxHeight };
+  const width = Math.max(r.width, props.icon ? 360 : 260);
+  // keep the panel inside the window (an icon trigger sits at the right edge of its row)
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+  pos.value = { left, top: up ? r.top - 4 - maxHeight : r.bottom + 4, width, maxHeight };
 }
 function onDocDown(/** @type {MouseEvent} */ ev) {
   const t = /** @type {Node} */ (ev.target);
@@ -101,19 +109,22 @@ onBeforeUnmount(close);
 <template>
   <button
     ref="trigger"
+    v-bind="$attrs"
     type="button"
-    class="input ss-trigger"
-    :class="{ open, placeholder: !current }"
+    :class="icon ? ['icon-btn', 'ss-icon', { on: open || !!modelValue }] : ['input', 'ss-trigger', { open, placeholder: !current }]"
     :disabled="disabled"
     :aria-label="ariaLabel || undefined"
-    :title="current ? current.label : ''"
+    :title="icon ? title : current ? current.label : ''"
     aria-haspopup="listbox"
     :aria-expanded="open"
     @click="open ? close() : show()"
     @keydown.down.prevent="show"
   >
-    <span class="ss-value">{{ current ? current.label : placeholder }}</span>
-    <Icon name="chevDown" size="sm" />
+    <Icon v-if="icon" :name="icon" size="sm" />
+    <template v-else>
+      <span class="ss-value">{{ current ? current.label : placeholder }}</span>
+      <Icon name="chevDown" size="sm" />
+    </template>
   </button>
   <Teleport to="body">
     <div v-if="open" ref="panel" class="ss-panel" :style="{ left: pos.left + 'px', top: pos.top + 'px', width: pos.width + 'px', maxHeight: pos.maxHeight + 'px' }">
@@ -145,6 +156,9 @@ onBeforeUnmount(close);
 .ss-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-panel { position: fixed; z-index: 60; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: var(--r-md, 8px); box-shadow: 0 10px 30px rgba(0, 0, 0, .35); overflow: hidden; }
 .ss-search { margin: var(--sp-2); }
+.ss-search .input { flex: 1; width: auto; min-width: 0; }
+.ss-icon { flex: none; }
+.ss-icon.on { color: var(--accent-text); background: var(--accent-soft, var(--bg-3)); }
 .ss-list { overflow: auto; padding-bottom: 4px; }
 .ss-opt { display: flex; align-items: center; gap: 6px; padding: 6px var(--sp-3); font-size: var(--fs-sm); cursor: pointer; }
 .ss-opt.active { background: var(--bg-3); }

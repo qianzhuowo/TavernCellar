@@ -27,6 +27,10 @@ import ignore from 'ignore';
 export const DRAFT_REF = 'refs/cellar/draft';
 const DEPLOYED_PREFIX = 'refs/cellar/deployed';
 const ORIGIN_PREFIX = 'refs/cellar/origin';
+/** Tags belong to one item: refs/cellar/tags/<item key>/<name>. */
+const TAGS_PREFIX = 'refs/cellar/tags';
+/** Descriptions changed after recording live here (git notes), so a version keeps its id. */
+const NOTES_REF = 'refs/notes/cellar';
 /** Shown for drafts and versions nobody described (git requires a message). */
 export const UNDESCRIBED = '(未写说明)';
 const AUTHOR = { name: 'TavernCellar', email: 'cellar@localhost' };
@@ -44,9 +48,12 @@ const decoder = new TextDecoder();
  */
 export const itemKey = itemPath => createHash('sha1').update(itemPath, 'utf8').digest('hex').slice(0, 20);
 const ITEM_KEY_RE = /^[0-9a-f]{20}$/;
+/** Entries of #entries / #changedItems that are items (`<kind folder>/<name>`); root files are workspace settings. */
+export const isItemEntry = entryPath => entryPath.includes('/');
 
 export const deployedRef = (targetId, itemPath) => `${DEPLOYED_PREFIX}/${targetId}/${itemKey(itemPath)}`;
 const originRef = itemPath => `${ORIGIN_PREFIX}/${itemKey(itemPath)}`;
+const tagRef = (itemPath, name) => `${TAGS_PREFIX}/${itemKey(itemPath)}/${name}`;
 
 export class Vcs {
     /** @param {string} root workspace root; `ignore(name)` skips files and folders (temp files, editor backups) */
@@ -93,7 +100,10 @@ export class Vcs {
             try { await readFile(attributes, 'utf8'); } catch { await writeFile(attributes, '* -text\n', 'utf8'); }
             if (!fs.existsSync(join(this.dir, '.git'))) await git.init(this.#opts({ defaultBranch: 'main' }));
             await this.#renameLongRefs();
-            if (await this.#head()) return false;
+            if (await this.#head()) {
+                await this.#migrateGitTags();
+                return false;
+            }
             const oid = await this.#snapshotLocked('开始版本记录');
             if (oid) await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
             return Boolean(oid);
@@ -115,6 +125,32 @@ export class Vcs {
                 await git.deleteRef(this.#opts({ ref })).catch(() => {});
             }
         }
+    }
+
+    /**
+     * Workspace-wide git tags (refs/tags/*, the model before tags belonged to items) become tags of the items their
+     * version recorded (none recorded: every item in it), then the git tag goes. Runs on every start, so a tag made
+     * with git later is taken over the same way.
+     */
+    async #migrateGitTags() {
+        for (const name of await git.listTags(this.#opts()).catch(() => [])) {
+            const oid = await this.#peel(await this.#ref(`refs/tags/${name}`));
+            if (!oid) continue;
+            let commit;
+            try { ({ commit } = await git.readCommit(this.#opts({ oid }))); } catch { continue; }
+            let items = (await this.#changedItems(commit.parent[0] ?? null, oid)).filter(isItemEntry);
+            if (!items.length) items = [...(await this.#entries(oid)).keys()].filter(isItemEntry);
+            for (const path of items) {
+                if (!(await this.#ref(tagRef(path, name)))) await git.writeRef(this.#opts({ ref: tagRef(path, name), value: oid }));
+            }
+            await git.deleteRef(this.#opts({ ref: `refs/tags/${name}` })).catch(() => {});
+        }
+    }
+
+    /** Annotated tags point to tag objects: the commit they name. */
+    async #peel(oid) {
+        if (!oid) return null;
+        try { return (await git.readTag(this.#opts({ oid }))).tag.object; } catch { return oid; }
     }
 
     async #head() {
@@ -313,55 +349,173 @@ export class Vcs {
         });
     }
 
-    /** "Record a version": describe the draft and end it. Returns the recorded commit, or null when nothing changed. */
-    commit(message) {
-        const text = message?.trim() || UNDESCRIBED;
-        return this.serial(async () => {
-            if (!(await this.#snapshotLocked())) return null;
-            const oid = await this.#snapshotLocked(text);
-            await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
-            return oid;
-        });
+    /** "Record a version" (存档) of the items in `paths` (default: every item in the draft). Returns the new
+     * version, or null when nothing changed. See #commitLocked. */
+    commit(message, paths) {
+        return this.serial(() => this.#commitLocked(message, paths));
     }
 
     /**
-     * Tags a version (default: the branch tip). Tagging the draft is a checkpoint like "record a version": the draft
-     * takes the current files and ends, keeping its description, and the tag names that finished version.
+     * The new version is the last one plus the chosen items and the workspace settings files (root files) as they
+     * are now; the other items' changes become a new draft on top of it, and their origin pointers move along so
+     * 撤销当前的修改 still finds them. Without a message the draft's description is used.
      */
-    tag(name, rev) {
+    async #commitLocked(message, paths) {
+        const draft = await this.#snapshotLocked();
+        if (!draft) return null;
+        const { commit } = await git.readCommit(this.#opts({ oid: draft }));
+        const parent = commit.parent[0] ?? null;
+        const draftMessage = commit.message.replace(/\n$/, '');
+        const text = message?.trim() || draftMessage;
+        const changed = await this.#changedItems(parent, draft);
+        if (paths?.length && !changed.some(p => paths.includes(p))) throw new Error('所选的项没有未存档的修改');
+        const defer = paths?.length ? changed.filter(p => isItemEntry(p) && !paths.includes(p)) : [];
+        if (!defer.length) {
+            const oid = await this.#snapshotLocked(text);
+            await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
+            return oid;
+        }
+        const branch = await git.currentBranch(this.#opts({ fullname: true }));
+        const tree = await this.#withEntries(commit.tree, await this.#treeOf(parent), defer);
+        const oid = await git.commit(this.#opts({ message: text, author: AUTHOR, tree, parent: parent ? [parent] : [], noUpdateBranch: true }));
+        for (const path of defer) {
+            const origin = await this.#ref(originRef(path));
+            if (!origin) continue;
+            const o = (await git.readCommit(this.#opts({ oid: origin }))).commit;
+            if ((o.parent[0] ?? null) !== parent) continue;
+            const moved = await git.commit(this.#opts({
+                message: o.message, author: AUTHOR, tree: await this.#withEntries(tree, o.tree, [path]), parent: [oid], noUpdateBranch: true,
+            }));
+            await git.writeRef(this.#opts({ ref: originRef(path), value: moved, force: true }));
+        }
+        const rest = await git.commit(this.#opts({
+            message: message?.trim() ? draftMessage : UNDESCRIBED, author: AUTHOR, tree: commit.tree, parent: [oid], noUpdateBranch: true,
+        }));
+        await git.writeRef(this.#opts({ ref: branch, value: rest, force: true }));
+        await git.writeRef(this.#opts({ ref: DRAFT_REF, value: rest, force: true }));
+        return oid;
+    }
+
+    /**
+     * `base` with each entry path (`name` or `folder/name`) taken from `source` (removed where `source` lacks it).
+     */
+    async #withEntries(base, source, entryPaths) {
+        const read = async oid => (oid ? [...(await git.readTree(this.#opts({ oid }))).tree] : []);
+        const root = await read(base);
+        const sourceRoot = await read(source);
+        const put = (entries, name, entry) => {
+            const i = entries.findIndex(e => e.path === name);
+            if (i !== -1) entries.splice(i, 1);
+            if (entry) entries.push({ mode: entry.mode, path: name, oid: entry.oid, type: entry.type });
+        };
+        for (const entryPath of entryPaths) {
+            const [top, name] = entryPath.split('/');
+            const sourceTop = sourceRoot.find(e => e.path === top);
+            if (!name) { put(root, top, sourceTop); continue; }
+            const baseTop = root.find(e => e.path === top);
+            const sub = baseTop?.type === 'tree' ? await read(baseTop.oid) : [];
+            const sourceSub = sourceTop?.type === 'tree' ? await read(sourceTop.oid) : [];
+            put(sub, name, sourceSub.find(e => e.path === name));
+            put(root, top, sub.length ? { mode: '040000', oid: await this.#tree(sub), type: 'tree' } : null);
+        }
+        return this.#tree(root);
+    }
+
+    /**
+     * Tags one item at a version (default: the last recorded version). Tagging the draft records that item first
+     * (with `message`), so the tag names the version it became.
+     */
+    tag(name, itemPath, rev, message) {
         return this.serial(async () => {
-            let oid = rev ? await this.#resolveLocked(rev) : await this.#head();
-            if (oid && oid === await this.#draft()) {
-                oid = (await this.#snapshotLocked()) ?? await this.#head();
-                await git.deleteRef(this.#opts({ ref: DRAFT_REF })).catch(() => {});
+            const draft = await this.#draft();
+            let oid = rev ? await this.#resolveLocked(rev) : null;
+            if (oid && oid === draft) {
+                const { commit } = await git.readCommit(this.#opts({ oid: draft }));
+                const inDraft = (await this.#changedItems(commit.parent[0] ?? null, draft)).includes(itemPath);
+                oid = inDraft ? await this.#commitLocked(message, [itemPath]) : commit.parent[0] ?? null;
+            } else if (!oid) {
+                oid = draft ? (await git.readCommit(this.#opts({ oid: draft }))).commit.parent[0] ?? null : await this.#head();
             }
-            if (!oid) throw new Error('没有可以打标签的版本');
-            await git.tag(this.#opts({ ref: name, object: oid }));
+            if (!oid || !(await this.#entries(oid)).has(itemPath)) throw new Error(`这个版本里没有 ${itemPath}`);
+            if (await this.#ref(tagRef(itemPath, name))) throw Object.assign(new Error(`${itemPath} 已有标签 ${name}`), { code: 'AlreadyExistsError' });
+            await git.writeRef(this.#opts({ ref: tagRef(itemPath, name), value: oid }));
             return oid;
         });
     }
 
-    /** Commit id for a full / abbreviated oid, a tag or a ref name. */
-    resolve(rev) { return this.serial(() => this.#resolveLocked(rev)); }
-
-    /** Tag names on a commit (made here or with git; lightweight or annotated). */
-    tagsAt(oid) {
+    /** Removes one item's tag; false when it did not exist. */
+    untag(name, itemPath) {
         return this.serial(async () => {
-            const names = [];
-            for (const name of await git.listTags(this.#opts())) {
-                if (await this.#resolveLocked(name).catch(() => null) === oid) names.push(name);
-            }
-            return names.sort();
+            if (!(await this.#ref(tagRef(itemPath, name)))) return false;
+            await git.deleteRef(this.#opts({ ref: tagRef(itemPath, name) }));
+            return true;
         });
     }
 
+    /** Every item tag: {key, name, oid}. */
+    async #tagList() {
+        const out = [];
+        for (const ref of await git.listRefs(this.#opts({ filepath: TAGS_PREFIX })).catch(() => [])) {
+            const slash = ref.indexOf('/');
+            if (slash === -1) continue;
+            const oid = await this.#ref(`${TAGS_PREFIX}/${ref}`);
+            if (oid) out.push({ key: ref.slice(0, slash), name: ref.slice(slash + 1), oid });
+        }
+        return out;
+    }
+
+    /** Tags on a version as {path, name}: the item is found among the version's entries by its key. */
+    async #tagsOn(oid, list) {
+        const here = list.filter(t => t.oid === oid);
+        if (!here.length) return [];
+        const byKey = new Map([...(await this.#entries(oid)).keys()].filter(isItemEntry).map(p => [itemKey(p), p]));
+        return here.filter(t => byKey.has(t.key)).map(t => ({ path: byKey.get(t.key), name: t.name }))
+            .sort((a, b) => a.path.localeCompare(b.path) || a.name.localeCompare(b.name));
+    }
+
+    /** Item tags on a version: [{path, name}]. */
+    tagsAt(oid) {
+        return this.serial(async () => this.#tagsOn(oid, await this.#tagList()));
+    }
+
+    /** Descriptions written after recording (git notes): version id -> text. */
+    async #notes() {
+        const out = new Map();
+        for (const { target, note } of await git.listNotes(this.#opts({ ref: NOTES_REF })).catch(() => [])) {
+            out.set(target, decoder.decode((await git.readBlob(this.#opts({ oid: note }))).blob).replace(/\n$/, ''));
+        }
+        return out;
+    }
+
+    /**
+     * Changes the description of a version: the draft's own message, or a note on a recorded version (its id, and
+     * every pointer to it, stay). Returns the version id.
+     */
+    describeVersion(rev, message) {
+        const text = message?.trim() || UNDESCRIBED;
+        return this.serial(async () => {
+            const oid = await this.#resolveLocked(rev);
+            if (oid === await this.#draft()) return this.#snapshotLocked(text);
+            await git.addNote(this.#opts({ ref: NOTES_REF, oid, note: text, force: true, author: AUTHOR, committer: AUTHOR }));
+            return oid;
+        });
+    }
+
+    /** Commit id for a full / abbreviated oid, `HEAD` / a ref name, `<item path>:<tag>` or a tag only one item has. */
+    resolve(rev) { return this.serial(() => this.#resolveLocked(rev)); }
+
     async #resolveLocked(rev) {
         if (!rev) return null;
-        const direct = await this.#ref(rev) ?? await this.#ref(`refs/tags/${rev}`);
-        if (direct) {
-            // Annotated tags point to tag objects; peel to the commit.
-            try { return (await git.readTag(this.#opts({ oid: direct }))).tag.object; } catch { return direct; }
+        const colon = rev.lastIndexOf(':');
+        if (colon > 0) {
+            const oid = await this.#ref(tagRef(rev.slice(0, colon), rev.slice(colon + 1)));
+            if (oid) return oid;
         }
+        const direct = await this.#ref(rev);
+        if (direct) return this.#peel(direct);
+        const tagged = (await this.#tagList()).filter(t => t.name === rev);
+        if (new Set(tagged.map(t => t.oid)).size === 1) return tagged[0].oid;
+        if (tagged.length) throw new Error(`有多个项都有标签 ${rev}，请写成 <项路径>:${rev}`);
         if (/^[0-9a-f]{4,40}$/i.test(rev)) {
             try { return await git.expandOid(this.#opts({ oid: rev.toLowerCase() })); } catch { /* not an object */ }
         }
@@ -531,45 +685,45 @@ export class Vcs {
         });
     }
 
+    /** Entries of a commit: root files and `<folder>/<name>` second-level entries -> object id (empty for null). */
+    async #entries(oid) {
+        const out = new Map();
+        if (!oid) return out;
+        const root = await git.readTree(this.#opts({ oid }));
+        for (const top of root.tree) {
+            if (top.type !== 'tree') { out.set(top.path, top.oid); continue; }
+            const sub = await git.readTree(this.#opts({ oid: top.oid }));
+            for (const e of sub.tree) out.set(`${top.path}/${e.path}`, e.oid);
+        }
+        return out;
+    }
+
     /** Item folders (`<kind folder>/<name>`) whose content differs between two commits (either may be null). */
     async #changedItems(fromOid, toOid) {
-        const listing = async oid => {
-            const out = new Map();
-            if (!oid) return out;
-            const root = await git.readTree(this.#opts({ oid }));
-            for (const top of root.tree) {
-                if (top.type !== 'tree') { out.set(top.path, top.oid); continue; }
-                const sub = await git.readTree(this.#opts({ oid: top.oid }));
-                for (const e of sub.tree) out.set(`${top.path}/${e.path}`, e.oid);
-            }
-            return out;
-        };
-        const [a, b] = await Promise.all([listing(fromOid), listing(toOid)]);
+        const [a, b] = await Promise.all([this.#entries(fromOid), this.#entries(toOid)]);
         return [...new Set([...a.keys(), ...b.keys()])].filter(p => a.get(p) !== b.get(p)).sort();
     }
 
     /**
      * Version list, newest first: {id, parents, message, time, draft, items, tags}. `path` keeps versions that touch
-     * that item. `items` are top-level paths that changed against the first parent.
+     * that item. `items` are top-level paths that changed against the first parent; `tags` are [{path, name}];
+     * `message` is the latest description (a note written later wins over the one recorded).
      */
     log({ path, limit = 100 } = {}) {
         return this.serial(async () => {
             const head = await this.#head();
             if (!head) return [];
             const draft = await this.#draft();
-            const tags = new Map();
-            for (const name of await git.listTags(this.#opts())) {
-                const oid = await this.#resolveLocked(name).catch(() => null);
-                if (oid) tags.set(oid, [...(tags.get(oid) ?? []), name]);
-            }
+            const tags = await this.#tagList();
+            const notes = await this.#notes();
             const commits = await git.log(this.#opts({ ref: 'HEAD', depth: path ? Math.max(limit * 5, 200) : limit }));
             const out = [];
             for (const { oid, commit } of commits) {
                 const items = await this.#changedItems(commit.parent[0] ?? null, oid);
                 if (path && !items.includes(path)) continue;
                 out.push({
-                    id: oid, parents: commit.parent, message: commit.message.replace(/\n$/, ''), time: commit.committer.timestamp * 1000,
-                    draft: oid === draft, items, tags: tags.get(oid) ?? [],
+                    id: oid, parents: commit.parent, message: notes.get(oid) ?? commit.message.replace(/\n$/, ''), time: commit.committer.timestamp * 1000,
+                    draft: oid === draft, items, tags: await this.#tagsOn(oid, tags),
                 });
                 if (out.length >= limit) break;
             }

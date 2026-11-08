@@ -25,7 +25,7 @@ import { AssetCache } from './assets.js';
 import { previewPrompt } from './preview.js';
 
 export const SERVER_NAME = 'TavernCellar';
-export const SERVER_VERSION = '0.2.1';
+export const SERVER_VERSION = '0.2.2';
 export const STUDIO_PATH = '/studio/';
 
 /** Folder served at /studio/: the built Studio UI when present, otherwise the prototype. */
@@ -574,6 +574,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/history/describe': b => engine.describeDraft(b),
         'POST /api/history/commit': b => engine.recordVersion(b),
         'POST /api/history/tag': b => engine.tagVersion(b),
+        'POST /api/history/untag': b => engine.untagVersion(b),
         'POST /api/history/diff': b => engine.diffVersions(b),
         'POST /api/history/restore': b => engine.restoreVersion(b),
         'GET /api/history/storage': () => engine.historyStorage(),

@@ -44,15 +44,15 @@ const USAGE = `TavernCellar 伴侣程序
 
 版本记录（工作区是 git 仓库，修改自动进入草稿 @）:
   cellar log [项路径] [--limit N]           版本列表，标出各酒馆已部署的版本
-  cellar describe "说明"                  给草稿写说明
-  cellar commit "说明"                    记录版本（写说明并结束草稿）
-  cellar tag <名称> [版本]                给版本打标签（默认最新版本）
+  cellar describe "说明" [版本]          写说明：不写版本是草稿，写了就改已存档版本的说明（编号不变）
+  cellar commit "说明" [项路径...]     记录版本（存档）：只存列出的项，不列 = 草稿里的全部项；其余修改留在草稿
+  cellar tag <名称> <项路径> [版本]     给一项的存档贴名字（默认最新存档）；--delete 删除标签
   cellar diff <版本A> [版本B] [项路径]     按字段对比两个版本（版本B 默认最新）
   cellar restore <版本> <项路径>          把工作区里的一项恢复成某个版本（之后同步到酒馆）
   cellar push <版本|标签> [项...] --target <酒馆> [--force]
                                          把某个版本推送到一个酒馆并固定在那里（工作区不动）
   cellar follow <项路径> [--target <酒馆>]  取消固定，改为跟随最新
-  版本可以写编号前几位、标签名或 HEAD
+  版本可以写编号前几位、HEAD、<项路径>:<标签>，或只有一项在用的标签名
 
 编辑测试（需要酒馆页面已连接，并打开了一个角色的聊天）:
   cellar preview [--target ID] [--input 测试文本] [--full] [--json]
@@ -105,7 +105,7 @@ function formatHistory({ versions, deployed }) {
     return versions.map(v => {
         const marks = [
             v.draft ? '@ 草稿' : '',
-            ...v.tags.map(t => `标签 ${t}`),
+            ...v.tags.map(t => `标签 ${t.path}:${t.name}`),
             ...deployed.filter(d => d.rev === v.id || d.shownAt === v.id).map(d => `${d.label} ${d.pinned ? '固定在此' : '已部署'} ${d.path}${d.earlier ? `（较早状态 ${d.rev.slice(0, 8)}）` : ''}`),
         ].filter(Boolean);
         const when = new Date(v.time).toLocaleString();
@@ -423,19 +423,32 @@ async function main() {
             console.log(formatHistory(h));
             return;
         }
-        case 'describe':
+        case 'describe': {
+            const [message, rev] = positional;
+            const r = await api(config, 'POST', '/api/history/describe', { message: message ?? '', rev });
+            console.log(r.id ? `${rev ? '版本' : '草稿'}说明已更新 ${r.id.slice(0, 8)}` : '没有修改');
+            return;
+        }
         case 'commit': {
-            const message = positional.join(' ');
-            if (command === 'commit' && !message) throw new Error('用法: cellar commit "说明"');
-            const r = await api(config, 'POST', `/api/history/${command}`, { message });
-            console.log(r.id ? `${command === 'commit' ? '已记录版本' : '草稿说明已更新'} ${r.id.slice(0, 8)}` : '没有修改');
+            const [message, ...paths] = positional;
+            if (!message) throw new Error('用法: cellar commit "说明" [项路径...]');
+            const r = await api(config, 'POST', '/api/history/commit', { message, paths: paths.length ? paths.map(p => p.replace(/\\/g, '/').replace(/\/$/, '')) : undefined });
+            console.log(`已记录版本 ${r.id.slice(0, 8)}`);
             return;
         }
         case 'tag': {
-            const [name, rev] = positional;
-            if (!name) throw new Error('用法: cellar tag <名称> [版本]');
-            const r = await api(config, 'POST', '/api/history/tag', { name, rev });
-            console.log(`标签 ${r.name} -> ${r.id.slice(0, 8)}`);
+            // `--delete <name>` takes the next word as its value: put it back in front.
+            if (typeof flags.delete === 'string') positional.unshift(flags.delete);
+            const [name, rawPath, rev] = positional;
+            if (!name || !rawPath) throw new Error('用法: cellar tag <名称> <项路径> [版本]；删除: cellar tag --delete <名称> <项路径>');
+            const path = rawPath.replace(/\\/g, '/').replace(/\/$/, '');
+            if (flags.delete) {
+                await api(config, 'POST', '/api/history/untag', { name, path });
+                console.log(`已删除 ${path} 的标签 ${name}`);
+                return;
+            }
+            const r = await api(config, 'POST', '/api/history/tag', { name, path, rev });
+            console.log(`标签 ${r.path}:${r.name} -> ${r.id.slice(0, 8)}`);
             return;
         }
         case 'diff': {

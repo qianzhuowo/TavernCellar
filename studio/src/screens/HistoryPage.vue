@@ -53,11 +53,29 @@ const diff = ref(null);
 const diffLoading = ref(false);
 const tagName = ref('');
 const armedRestore = ref('');
+/** draft items left out of the next 存档 (all view; every item is ticked by default) */
+const unchecked = ref(/** @type {string[]} */ ([]));
+/** editing the selected version's description: the text, or null when not editing */
+const editText = ref(/** @type {string | null} */ (null));
 
 const isItemPath = (/** @type {string} */ p) => p.includes('/');
 const versions = computed(() => (hist.value ? hist.value.versions : []));
 const draft = computed(() => (hist.value ? hist.value.draft : null));
 const draftItems = computed(() => (draft.value && draft.value.items ? draft.value.items.filter(isItemPath) : []));
+/**
+ * What "记录版本" saves: the item shown alone (when it has unsaved changes), or the ticked draft items. The other
+ * items' changes stay in the draft (docs/versioning.md §2).
+ */
+const recordPaths = computed(() => (filter.value
+  ? draftItems.value.filter((p) => p === filter.value)
+  : draftItems.value.filter((p) => !unchecked.value.includes(p))));
+const draftOthers = computed(() => draftItems.value.filter((p) => !recordPaths.value.includes(p)).length);
+function toggleRecord(/** @type {string} */ p) {
+  unchecked.value = unchecked.value.includes(p) ? unchecked.value.filter((x) => x !== p) : [...unchecked.value, p];
+}
+/** tags shown on a version: only the item's own when one item is shown */
+const tagsOf = (/** @type {any} */ v) => (filter.value ? v.tags.filter((/** @type {any} */ t) => t.path === filter.value) : v.tags);
+const tagText = (/** @type {any} */ t) => (filter.value ? t.name : `${itemName(t.path)} · ${t.name}`);
 const sel = computed(() => versions.value.find((/** @type {any} */ v) => v.id === selected.value) || null);
 const short = (/** @type {string} */ id) => (id ? id.slice(0, 8) : '');
 const deployedAt = (/** @type {string} */ id) => (hist.value ? hist.value.deployed.filter((/** @type {any} */ d) => d.rev === id || d.shownAt === id) : []);
@@ -74,7 +92,7 @@ async function load() {
   try {
     const next = await api.history({ path: filter.value || undefined, limit: 200 });
     // Status events arrive for every log line: only redo the diff when the history itself changed.
-    const sig = JSON.stringify([next.versions.map((/** @type {any} */ v) => v.id + v.message + v.tags.join()), next.draft && next.draft.id, next.deployed]);
+    const sig = JSON.stringify([next.versions.map((/** @type {any} */ v) => v.id + v.message + v.tags.map((/** @type {any} */ t) => t.path + ':' + t.name).join()), next.draft && next.draft.id, next.deployed]);
     const changed = sig !== lastSig;
     lastSig = sig;
     hist.value = next;
@@ -94,6 +112,7 @@ function select(/** @type {string} */ id) {
   selected.value = id;
   compareWith.value = '';
   armedRestore.value = '';
+  editText.value = null;
   diff.value = null;
   loadDiff();
 }
@@ -129,26 +148,39 @@ async function act(/** @type {string} */ kind, /** @type {() => Promise<any>} */
   }
 }
 
-const record = () => act('record', async () => {
-  const r = await api.recordVersion(message.value);
-  message.value = '';
-  selected.value = r.id;
-}, '已记录版本');
-// Tagging the draft records it first (companion vcs.tag); the finished version replaces the draft in the list.
+const record = () => {
+  const paths = recordPaths.value;
+  if (!paths.length) return;
+  return act('record', async () => {
+    const r = await api.recordVersion(message.value, paths);
+    message.value = '';
+    unchecked.value = [];
+    selected.value = r.id;
+  }, `已存档：${paths.map(itemName).join('、')}`);
+};
+// A tag belongs to one item. Tagging the draft saves that item first with the description typed above
+// (companion vcs.tag); the new version replaces the draft in the list.
 const tag = () => act('tag', async () => {
   const wasDraft = sel.value && sel.value.draft;
-  const r = await api.tagVersion(tagName.value.trim(), selected.value);
+  const r = await api.tagVersion(tagName.value.trim(), filter.value, selected.value, wasDraft ? message.value : undefined);
   tagName.value = '';
   if (wasDraft) { message.value = ''; selected.value = r.id; }
-}, '已打标签');
+}, '已贴上标签');
+const untag = (/** @type {any} */ t) => act('tag', () => api.untagVersion(t.name, t.path), `已删除标签 ${t.name}`);
+// Descriptions live outside the version (git notes): changing one keeps the id and every pointer to it.
+const saveDescription = () => act('describe', async () => {
+  const v = sel.value;
+  await api.describeDraft(editText.value || '', v.draft ? undefined : v.id);
+  editText.value = null;
+}, '说明已修改');
 
 // ---- push a version to one tavern (docs/versioning.md §3): the workspace stays, the bindings get pinned ----
 const pushTarget = ref('');
 /** {target, results, name} of the last push, shown under the header (failures need a decision) */
 const pushed = ref(/** @type {any} */ (null));
 /**
- * What a push writes: the item shown alone, or (all items) the items the selected version changed. A version is a
- * snapshot of the whole workspace, so pushing everything bound would also pin items the user never touched.
+ * What a push writes: the item shown alone, or (all items) the items the selected version saved. A version holds
+ * the whole workspace's files, so pushing everything bound would also pin items the user never touched.
  */
 const pushScope = computed(() => {
   const v = sel.value;
@@ -211,7 +243,7 @@ onMounted(() => { resolveBare(); load(); });
     <div class="page-head">
       <div>
         <h2><Icon name="history" />版本历史</h2>
-        <p class="muted">修改、取出、从酒馆取回的内容都先进入「草稿」，直到你「记录版本」或给草稿打标签，才成为一个版本；记录后就能随时对比、恢复，或把某个版本推送到一个酒馆。标记了酒馆名的版本，就是该酒馆里现在的样子；带 📌 的表示该酒馆固定在那个版本。</p>
+        <p class="muted">改动会先放在「草稿」里（还没存档）。<b>记录版本</b>就是存档，可以只存其中几项；<b>打标签</b>只是给某一项的存档贴上名字（如 v1.0），方便以后找到；说明和标签随时可改，存档本身不变。存档后可以对比、<b>恢复</b>（把工作区改回去），或<b>推送</b>（只把某个存档放进一个酒馆）。版本上写着酒馆名，表示该酒馆里现在就是这个存档；带 📌 表示酒馆固定在那里。</p>
       </div>
     </div>
 
@@ -221,14 +253,24 @@ onMounted(() => { resolveBare(); load(); });
       <div class="vh-draft-h">
         <span class="vh-at">@</span>
         <strong>草稿</strong>
-        <span v-if="draftItems.length" class="muted">{{ draftItems.length }} 项有修改：</span>
-        <span v-else class="faint">没有未记录的修改</span>
-        <a v-for="p in draftItems" :key="p" class="chip vh-item" :href="historyHref(p)" :title="`查看「${itemName(p)}」的版本历史`"><span class="ell">{{ itemName(p) }}</span></a>
+        <span v-if="draftItems.length" class="muted">{{ draftItems.length }} 项有未存档的修改{{ filter ? '：' : '，勾选要存档的项：' }}</span>
+        <span v-else class="faint">没有未存档的修改</span>
+        <template v-if="filter">
+          <a v-for="p in draftItems" :key="p" class="chip vh-item" :class="{ on: p === filter }" :href="historyHref(p)" :title="`查看「${itemName(p)}」的版本历史`"><span class="ell">{{ itemName(p) }}</span></a>
+        </template>
+        <template v-else>
+          <span v-for="p in draftItems" :key="p" class="chip vh-item vh-pick" :class="{ off: unchecked.includes(p) }">
+            <input type="checkbox" :checked="!unchecked.includes(p)" :aria-label="`存档「${itemName(p)}」`" @change="toggleRecord(p)" />
+            <a class="ell" :href="historyHref(p)" :title="`查看「${itemName(p)}」的版本历史`">{{ itemName(p) }}</a>
+          </span>
+        </template>
       </div>
       <div v-if="draftItems.length" class="vh-draft-f">
         <input v-model="message" class="input" :placeholder="draft && draft.message && draft.message !== UNDESCRIBED ? draft.message : '这次改了什么？（可不写）'" @keydown.enter="record" />
-        <button class="btn primary" :disabled="!!busy" @click="record"><Icon name="check" size="sm" />记录版本</button>
+        <button class="btn primary" :disabled="!!busy || !recordPaths.length" :title="recordPaths.length ? `存档：${recordPaths.map(itemName).join('、')}` : ''" @click="record"><Icon name="check" size="sm" />{{ filter ? '存档这一项' : recordPaths.length === draftItems.length ? '记录版本' : `存档 ${recordPaths.length} 项` }}</button>
       </div>
+      <div v-if="draftItems.length && (filter ? !recordPaths.length : false)" class="faint vh-draft-note">这一项没有未存档的修改。</div>
+      <div v-else-if="draftItems.length && draftOthers" class="faint vh-draft-note">其他 {{ draftOthers }} 项的修改会继续留在草稿里。</div>
     </section>
 
     <div class="vh-main">
@@ -249,7 +291,7 @@ onMounted(() => { resolveBare(); load(); });
             </span>
             <span class="vh-meta faint"><span class="mono">{{ short(v.id) }}</span> · {{ relTime(v.time) }}</span>
             <span class="vh-tags">
-              <span v-for="t in v.tags" :key="t" class="badge vh-tag" :title="t"><Icon name="tag" size="sm" /><span class="ell">{{ t }}</span></span>
+              <span v-for="t in tagsOf(v)" :key="t.path + ':' + t.name" class="badge vh-tag" :title="`${itemName(t.path)} 的标签 ${t.name}`"><Icon name="tag" size="sm" /><span class="ell">{{ tagText(t) }}</span></span>
               <span v-for="d in deployedAt(v.id)" :key="d.target + d.path" class="badge vh-dep" :class="{ earlier: d.earlier, pinned: d.pinned }" :title="(d.pinned ? `${d.label} 中的 ${itemName(d.path)} 固定在这个版本，工作区的新修改不会同步过去。` : '') + (d.earlier ? `${d.label} 中的 ${itemName(d.path)} 是这个版本较早的状态（${short(d.rev)}），之后又有修改` : `${d.label} 中的 ${itemName(d.path)} 是这个版本`)"><Icon v-if="d.pinned" name="pin" size="sm" /><span class="ell">{{ d.label }} · {{ itemName(d.path) }}{{ d.earlier ? '（较早状态）' : '' }}</span></span>
             </span>
             <span class="vh-items faint" :title="v.items.filter(isItemPath).map(itemName).join('、')">{{ v.items.filter(isItemPath).map(itemName).join('、') || '（工作区设置）' }}</span>
@@ -261,8 +303,19 @@ onMounted(() => { resolveBare(); load(); });
       <section v-if="sel" class="card vh-detail">
         <div class="vh-detail-h">
           <div class="vh-title">
-            <strong>{{ label(sel) || '未写说明' }}</strong>
+            <div v-if="editText !== null" class="vh-edit">
+              <input v-model="editText" class="input" placeholder="写点说明（可不写）" @keydown.enter="saveDescription" @keydown.esc="editText = null" />
+              <button class="btn sm primary" :disabled="!!busy" @click="saveDescription">保存</button>
+              <button class="btn sm" @click="editText = null">取消</button>
+            </div>
+            <div v-else class="vh-edit">
+              <strong>{{ label(sel) || '未写说明' }}</strong>
+              <button class="btn sm ghost" :disabled="!!busy" title="修改说明：存档本身和它的编号不变" @click="editText = label(sel)"><Icon name="edit" size="sm" />修改说明</button>
+            </div>
             <span class="faint"><span class="mono">{{ short(sel.id) }}</span> · {{ new Date(sel.time).toLocaleString() }}</span>
+            <span v-if="tagsOf(sel).length" class="vh-tags">
+              <span v-for="t in tagsOf(sel)" :key="t.path + ':' + t.name" class="badge vh-tag"><Icon name="tag" size="sm" /><span class="ell">{{ tagText(t) }}</span><button class="vh-untag" :disabled="!!busy" :title="`删除标签 ${t.name}（存档不受影响）`" @click="untag(t)">×</button></span>
+            </span>
           </div>
           <label class="vh-cmp">对比
             <select v-model="compareWith" class="input">
@@ -270,11 +323,12 @@ onMounted(() => { resolveBare(); load(); });
               <option v-for="v in versions.filter((x) => x.id !== sel.id)" :key="v.id" :value="v.id">{{ short(v.id) }} · {{ label(v) || '未写说明' }}</option>
             </select>
           </label>
-          <div class="vh-tagbox">
+          <div v-if="filter && (!sel.draft || recordPaths.length)" class="vh-tagbox">
             <input v-model="tagName" class="input" placeholder="标签名，如 v1.0" @keydown.enter="tagName.trim() && tag()" />
-            <button class="btn" :disabled="!!busy || !tagName.trim()" :title="sel.draft ? '把草稿记录为版本，并给它打上这个标签' : ''" @click="tag"><Icon name="tag" size="sm" />{{ sel.draft ? '记录并打标签' : '打标签' }}</button>
+            <button class="btn" :disabled="!!busy || !tagName.trim()" :title="sel.draft ? `用上方写的说明存档「${itemName(filter)}」，再给这个存档贴上标签` : `给「${itemName(filter)}」的这个存档贴上名字`" @click="tag"><Icon name="tag" size="sm" />{{ sel.draft ? '存档并打标签' : '打标签' }}</button>
           </div>
-          <div v-if="pushTargets.length" class="vh-pushbox" :title="`把这个版本中的 ${pushPaths.map(itemName).join('、')} 写到所选酒馆，工作区不变；之后${pushPaths.length > 1 ? '这些项' : '它'}在该酒馆固定在此版本，直到改为跟随最新。${filter ? '' : '只包括这个版本修改过、且绑定了该酒馆的项；要推送别的项，请先在左上角切换到那一项。'}`">
+          <span v-else-if="!filter" class="faint vh-taghint" title="标签属于某一项：在左上角选择一项后就能给它打标签">打标签请先在左上角选一项</span>
+          <div v-if="pushTargets.length" class="vh-pushbox" :title="`把这个版本中的 ${pushPaths.map(itemName).join('、')} 写到所选酒馆，工作区不变；之后${pushPaths.length > 1 ? '这些项' : '它'}在该酒馆固定在此版本，直到改为跟随最新。${filter ? '' : '只包括这个版本存档的、且绑定了该酒馆的项；要推送别的项，请先在左上角切换到那一项。'}`">
             <select v-model="pushTarget" class="input" aria-label="推送到哪个酒馆">
               <option v-for="t in pushTargets" :key="t.id" :value="t.id">{{ app.targetName(t.id) }}</option>
             </select>

@@ -175,6 +175,33 @@ async function loadVersions() {
   } catch { /* no history yet */ }
 }
 watch(() => [src.loc, src.id], loadVersions);
+/** 来源版本 picker: the current files, then the item's recorded versions */
+const versionOptions = computed(() => [{ value: '', label: '当前（工作区里的样子）' },
+  ...versions.value.map((v) => ({ value: v.id, label: `${v.id.slice(0, 8)} · ${relTime(v.time)} · ${v.message}` }))]);
+const revTitle = computed(() => (src.rev
+  ? `正在看历史版本：${versionOptions.value.find((o) => o.value === src.rev)?.label || src.rev.slice(0, 8)}（只读）。点击换一个版本，或选「当前」`
+  : '选择历史版本做新旧对比'));
+/** The workspace item a side edits (a tavern preset only once it is checked out), for 「在预设编辑器中打开」. */
+const editorPath = (/** @type {any} */ s) => (s.loc === 'ws' ? s.id : s.loc === 'col' ? '' : s.path);
+const editorTitle = (/** @type {any} */ s) => (editorPath(s) ? '在预设编辑器中打开'
+  : isTavern(s.loc) && s.id ? '这个酒馆预设还没取出到工作区：保存一次修改，或在资料库取出后才能在编辑器中打开' : '先选择预设');
+
+/** 交换来源与目标. The target is edited, so it cannot be the collection or a recorded version. */
+const swapBlock = computed(() => (src.loc === 'col' ? '收藏不能作为目标'
+  : src.rev ? '来源是历史版本（只读），不能作为目标；先把来源版本换回「当前」'
+  : !src.id && !tgt.id ? '先选择预设' : ''));
+function swapSides() {
+  if (swapBlock.value) return;
+  if (dirty.value) { ui.toast('有未保存的修改：请先「保存修改」或「取消」，再交换来源与目标', 'alert'); return; }
+  const a = { loc: src.loc, id: src.id }, b = { loc: tgt.loc, id: tgt.id };
+  Object.assign(src, b, { rev: '' });
+  Object.assign(tgt, a);
+  for (const s of [src, tgt]) {
+    if (isTavern(s.loc)) loadCatalog(s.loc);
+    load(s);
+  }
+  persist();
+}
 
 // workspace items changed elsewhere: reload sides without unsaved edits
 for (const s of [src, tgt]) {
@@ -488,6 +515,7 @@ const detailRow = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? rowS.va
         </span>
       </span>
       <label class="wk-cmp"><Toggle v-model="W.compare" />对比模式</label>
+      <button class="btn sm ghost" type="button" :disabled="!!swapBlock || saving" :title="swapBlock || '交换来源与目标预设'" @click="swapSides"><Icon name="swap" size="sm" />交换来源与目标</button>
       <span class="spacer" />
       <span v-if="col.saving" class="faint wk-colsave"><Icon name="spin" size="sm" />正在保存收藏…</span>
       <span v-if="dirty" class="wk-dirty"><Icon name="dot" size="sm" />有未保存的修改</span>
@@ -509,12 +537,13 @@ const detailRow = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? rowS.va
           <select class="input wk-loc" :value="src.loc" aria-label="来源位置" @change="change(src, { loc: val($event), id: '', rev: '' }); /** @type {any} */ ($event.target).value = src.loc">
             <option v-for="o in locOptions(true)" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
-          <SearchSelect v-if="src.loc !== 'col'" class="wk-pick" :model-value="src.id" :options="idOptions(src)" :placeholder="pickPlaceholder(src)" aria-label="来源预设" @update:model-value="change(src, { id: $event, rev: '' })" />
+          <div v-if="src.loc !== 'col'" class="wk-pickrow">
+            <a v-if="editorPath(src)" class="icon-btn" :href="'#/item/' + encodeURIComponent(editorPath(src))" :title="editorTitle(src)"><Icon name="external" size="sm" /></a>
+            <button v-else class="icon-btn" type="button" disabled :title="editorTitle(src)"><Icon name="external" size="sm" /></button>
+            <SearchSelect class="wk-pick" :model-value="src.id" :options="idOptions(src)" :placeholder="pickPlaceholder(src)" aria-label="来源预设" @update:model-value="change(src, { id: $event, rev: '' })" />
+            <SearchSelect v-if="src.loc === 'ws' && src.id && versions.length" icon="history" :model-value="src.rev" :options="versionOptions" :title="revTitle" aria-label="来源版本" @update:model-value="change(src, { rev: $event })" />
+          </div>
           <span v-else class="faint wk-colcount">{{ col.prompts.length }} 条 · workshop/prompts.json · 改动立即保存</span>
-          <select v-if="src.loc === 'ws'" class="input wk-rev" :value="src.rev" :disabled="!src.id" aria-label="来源版本" title="选择历史版本做新旧对比" @change="change(src, { rev: val($event) }); /** @type {any} */ ($event.target).value = src.rev">
-            <option value="">当前</option>
-            <option v-for="v in versions" :key="v.id" :value="v.id">{{ v.id.slice(0, 8) }} · {{ relTime(v.time) }} · {{ v.message }}</option>
-          </select>
         </div>
         <div class="wk-tools">
           <label class="search grow"><Icon name="search" size="sm" /><input v-model="qS" class="input" placeholder="搜索名称或内容" /></label>
@@ -570,8 +599,11 @@ const detailRow = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? rowS.va
           <select class="input wk-loc" :value="tgt.loc" aria-label="目标位置" @change="change(tgt, { loc: val($event), id: '' }); /** @type {any} */ ($event.target).value = tgt.loc">
             <option v-for="o in locOptions(false)" :key="o.value" :value="o.value">{{ o.label }}</option>
           </select>
-          <SearchSelect class="wk-pick" :model-value="tgt.id" :options="idOptions(tgt)" :placeholder="pickPlaceholder(tgt)" aria-label="目标预设" @update:model-value="change(tgt, { id: $event })" />
-          <a v-if="tgt.path" class="icon-btn" :href="'#/item/' + encodeURIComponent(tgt.path)" title="在预设编辑器中打开"><Icon name="external" size="sm" /></a>
+          <div class="wk-pickrow">
+            <a v-if="editorPath(tgt)" class="icon-btn" :href="'#/item/' + encodeURIComponent(editorPath(tgt))" :title="editorTitle(tgt)"><Icon name="external" size="sm" /></a>
+            <button v-else class="icon-btn" type="button" disabled :title="editorTitle(tgt)"><Icon name="external" size="sm" /></button>
+            <SearchSelect class="wk-pick" :model-value="tgt.id" :options="idOptions(tgt)" :placeholder="pickPlaceholder(tgt)" aria-label="目标预设" @update:model-value="change(tgt, { id: $event })" />
+          </div>
         </div>
         <div class="wk-tools">
           <label class="search grow"><Icon name="search" size="sm" /><input v-model="qT" class="input" placeholder="搜索名称或内容" /></label>
@@ -676,16 +708,20 @@ const detailRow = (/** @type {'src'|'tgt'} */ side) => (side === 'src' ? rowS.va
 .wk-dirty { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; color: var(--st-warn); font-size: var(--fs-xs); }
 .wk-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, .9fr) minmax(0, 1.1fr) minmax(0, 1.1fr); grid-template-rows: minmax(0, 1fr); gap: var(--sp-3); }
 .wk-col { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: var(--r-md, 8px); background: var(--bg-2); overflow: hidden; }
-.wk-col-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.wk-col-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--line); font-size: var(--fs-sm); min-width: 0; }
+.wk-col-head .icon-btn, .wk-col-head .wk-tag { flex: none; }
+/* 「在预设编辑器中打开」+ 预设选择栏 + 「选择历史版本」 stay on one line; in a narrow column they move below 位置 together */
+.wk-pickrow { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; }
 .wk-tag { font-size: var(--fs-xs); padding: 1px 8px; border-radius: var(--r-pill); flex: none; }
 .wk-tag.src { background: var(--bg-3); color: var(--text-2); }
 .wk-tag.tgt { background: var(--accent-soft); color: var(--accent-text); }
-.wk-loc { width: 108px; flex: none; }
-.wk-pick { flex: 1; min-width: 100px; }
-.wk-rev { flex: 1 0 100%; min-width: 0; }
+.wk-loc { flex: 1 0 108px; min-width: 0; }
+/* SearchSelect has two roots, so the scope id does not reach its trigger: :deep */
+.wk-pickrow :deep(.wk-pick) { flex: 1 1 0; min-width: 0; }
 .wk-colcount { font-size: var(--fs-xs); }
 .wk-tools { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
-.wk-tools .search { min-width: 0; }
+.wk-tools .search { flex: 1; min-width: 0; }
+.wk-tools .search .input { width: 100%; min-width: 0; }
 .wk-hint { font-size: var(--fs-xs); padding: 0 var(--sp-3) var(--sp-2); }
 .wk-rows { flex: 1; overflow: auto; min-height: 0; }
 .wk-rows.dropping { outline: 1px dashed var(--accent-line); outline-offset: -3px; }
