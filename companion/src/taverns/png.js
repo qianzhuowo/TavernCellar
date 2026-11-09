@@ -92,6 +92,19 @@ export function writeCard(png, card) {
     ]);
 }
 
+/** `cardPng`'s card chunks moved byte for byte into `imagePng` (a new avatar): the card data stays exactly as stored. */
+export function withImage(cardPng, imagePng) {
+    const isCard = c => {
+        if (c.type !== 'tEXt') return false;
+        const text = decodeText(c.data);
+        return Boolean(text && CARD_KEYS.includes(text.keyword.toLowerCase()));
+    };
+    const card = readChunks(cardPng).filter(isCard);
+    const kept = readChunks(imagePng).filter(c => !isCard(c));
+    const iend = kept.pop();
+    return Buffer.concat([SIGNATURE, ...kept.map(c => c.raw), ...card.map(c => c.raw), iend.raw]);
+}
+
 /**
  * Plain avatar for a card created offline (no tavern to pick its default image): a 400x600 grey PNG, the tavern's
  * avatar aspect ratio. Replace it in the tavern later.

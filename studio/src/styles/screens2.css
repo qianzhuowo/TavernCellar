@@ -181,6 +181,7 @@
 .vh-tag { display: inline-flex; align-items: center; gap: 3px; }
 .vh-dep { background: var(--ok-soft, var(--accent-soft)); color: var(--ok, var(--accent-text)); }
 .vh-empty { padding: var(--sp-4); }
+.vh-diffbar { display: flex; align-items: center; padding: var(--sp-2) var(--sp-4) 0; }
 .vh-detail { padding: 0; overflow: hidden; }
 .vh-detail-h { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--line); }
 .vh-title { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 180px; }
@@ -294,6 +295,7 @@
 .ws-home-mark svg { width: 88px; height: 88px; stroke-width: 1; color: var(--text-3); opacity: .35; }
 .ws-home-tip { margin: 6px 0 0; max-width: 520px; color: var(--text-2); font-size: var(--fs-md); line-height: 1.7; cursor: pointer; }
 .ws-home-by { color: var(--text-3); font-size: var(--fs-sm); }
+.ws-home-act { margin-top: 10px; }
 .ws-tip-enter-active, .ws-tip-leave-active { transition: opacity .35s var(--ease), transform .35s var(--ease); }
 .ws-tip-enter-from { opacity: 0; transform: translateY(4px); }
 .ws-tip-leave-to { opacity: 0; transform: translateY(-4px); }

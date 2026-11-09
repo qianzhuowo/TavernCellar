@@ -82,7 +82,7 @@ export const api = {
   /** @param {{target: string, kind: string, query?: string, offset?: number, limit?: number}} q @param {AbortSignal} [signal] */
   catalog: (q, signal) => call('POST', '/api/catalog', q, { signal }),
   /** @param {string} target @param {string} kind @param {string} id */
-  /** @param {{exclude?: string[], withWorld?: boolean}} [opts] characters: parts not extracted; also take the bound lorebook */
+  /** @param {{exclude?: string[], withWorld?: boolean, folder?: string}} [opts] characters: parts not extracted; also take the bound lorebook; project folder */
   checkout: (target, kind, id, opts = {}) => call('POST', '/api/checkout', { target, kind, id, ...opts }),
   /** @param {string} path @param {string} [target] */
   sync: (path, target) => call('POST', '/api/sync', { path, target }),
@@ -96,11 +96,22 @@ export const api = {
   /** One item read from a tavern without checking it out (预设工坊). */
   tavernItem: (target, kind, id) => call('POST', '/api/tavern/item', { target, kind, id }),
   /** New unbound workspace item made in Cellar. @param {string} kind @param {string} [name] */
-  createItem: (kind, name) => call('POST', '/api/create', { kind, name }),
+  /** @param {string} kind @param {string} [name] @param {string} [world] characters: lorebook to link (made when missing) @param {string} [folder] project folder */
+  createItem: (kind, name, world, folder) => call('POST', '/api/create', { kind, name, ...(world ? { world } : {}), ...(folder ? { folder } : {}) }),
+  /** Moves an item to a project folder ('' = its kind folder). @param {string} path @param {string} folder */
+  moveItem: (path, folder) => call('POST', '/api/move', { path, folder }),
+  /** Renames a bound character / lorebook in its taverns. @param {string} path @param {string} name @param {boolean} [withWorld] */
+  renameItem: (path, name, withWorld = false) => call('POST', '/api/rename', { path, name, withWorld }),
+  /** Replaces a bound character's avatar in its taverns. @param {string} path @param {string} image base64 PNG */
+  setAvatar: (path, image) => call('POST', '/api/avatar', { path, image }),
+  /** Copies Cellar item folders from disk into the workspace. @param {string} source @param {string} [folder] */
+  importItems: (source, folder) => call('POST', '/api/import', { source, ...(folder ? { folder } : {}) }),
   /** Creates an unbound item in a tavern and binds it there. */
-  publish: (path, target, name) => call('POST', '/api/publish', { path, target, name }),
+  publish: (path, target, name, withWorld = false) => call('POST', '/api/publish', { path, target, name, withWorld }),
   /** Conflicting slots of one binding. @param {string} path @param {string} [target] */
   conflict: (path, target) => call('POST', '/api/conflict', { path, target }),
+  /** What syncing / pulling one binding would carry: slots changed since the last sync. @param {string} path @param {string} target */
+  changes: (path, target) => call('POST', '/api/changes', { path, target }),
   /**
    * @param {string} path @param {string} target
    * @param {Record<string, 'workspace'|'tavern'|{value:any}|{delete:true}>} choices one per conflicting slot

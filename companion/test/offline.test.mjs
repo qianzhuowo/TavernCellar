@@ -9,7 +9,7 @@ import { SyncEngine } from '../src/sync.js';
 import { TargetRegistry } from '../src/targets.js';
 import { OfflineLink } from '../src/taverns/offline.js';
 import { resolveLocations } from '../src/taverns/locations.js';
-import { readCardText, writeCard } from '../src/taverns/png.js';
+import { placeholderPng, readCardText, writeCard } from '../src/taverns/png.js';
 import { startServer } from '../src/server.js';
 
 const TARGET = 'offline-target-1';
@@ -134,6 +134,33 @@ test('offline: a card that stores avatar "none" reads with its file name, so che
     assert.ok(!res.warnings.some(w => w.code === 'normalized'), 'the tavern stores exactly what was sent');
     assert.equal(JSON.parse(readCardText(await readFile(cardFile))).avatar, 'Card.png');
 });
+
+test('offline: `chat` is the tavern\'s own; opening a chat there changes nothing to sync, and a sync keeps it', async () => {
+    const cardFile = join(dataRoot, 'default-user', 'characters', 'Card.png');
+    const stored = JSON.parse(readCardText(await readFile(cardFile)));
+    await writeFile(cardFile, writeCard(await readFile(cardFile), { ...stored, chat: 'Card - 2026-11-09@12h00m00s' }));
+    const card = (await engine.status()).items.find(i => i.path === 'characters/Card').bindings[0];
+    assert.equal(card.status, 'in-sync');
+    await writeFile(join(ws.root, 'characters', 'Card', 'description.md'), 'changed again');
+    assert.equal((await engine.sync('characters/Card')).result, 'synced');
+    assert.equal(JSON.parse(readCardText(await readFile(cardFile))).chat, 'Card - 2026-11-09@12h00m00s');
+    assert.equal('chat' in JSON.parse(await readFile(join(ws.root, 'characters', 'Card', 'card.json'), 'utf8')), false);
+});
+test('offline: a new avatar keeps the card chunks byte for byte and the binding in sync', async () => {
+    const cardFile = join(dataRoot, 'default-user', 'characters', 'Card.png');
+    const before = readCardText(await readFile(cardFile));
+    const image = placeholderPng();
+    const r = await engine.setAvatar('characters/Card', { image: image.toString('base64') });
+    assert.equal(r.result, 'avatar-set');
+    const after = await readFile(cardFile);
+    assert.equal(readCardText(after), before);
+    assert.ok(after.includes(image.subarray(image.indexOf('IDAT') - 4, image.indexOf('IEND') - 4)), 'the new image data is in the card');
+    assert.equal((await engine.status()).items.find(i => i.path === 'characters/Card').bindings[0].status, 'in-sync');
+    running = true;
+    await assert.rejects(engine.setAvatar('characters/Card', { image: image.toString('base64') }), e => e.code === ERR.TAVERN_RUNNING);
+    running = false;
+});
+
 
 test('offline: global regex lives in settings.json; sync replaces only extension_settings.regex', async () => {
     const settingsFile = join(dataRoot, 'default-user', 'settings.json');

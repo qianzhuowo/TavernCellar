@@ -51,6 +51,8 @@
 | `item.put` | `{ kind, id, data, baseHash }` | `{ kind, id, hash, data, warnings: [] }` |
 | `watch.set` | `{ items: [{ kind, id }] }` | `{ count }` |
 | `item.create` | `{ kind, data }` | `{ kind, id, hash, data }` |
+| `item.rename` | `{ kind, id, name, baseHash }` | `{ kind, id, hash, data, warnings: [] }`（`id` 为改名后的 id） |
+| `item.avatar` | `{ kind: 'character', id, image }` | `{ kind, id, hash, data, warnings? }` |
 | `ping` | `{}` | `{}` |
 | `asset.get` | `{ type: 'avatar', id }` | `{ type, id, mime, data }`（`data` 为 base64，原始大小上限 512KB） |
 | `prompt.preview` | `{ input? }` | 见下文「提示词预览」 |
@@ -61,8 +63,10 @@
 - `catalog.list` 只返回摘要，数据来自酒馆前端内存，不读取全文（预设除外：名称取自 `/api/settings/get`，这样不经酒馆界面放进文件夹的预设也能列出）。
 - `item.put` 写入前复核：当前哈希 ≠ `baseHash` 时返回 `conflict`，`details.currentHash` 为酒馆当前哈希。
 - `item.put` 的响应是写入后从后端复读的结果，可能与提交的数据不同（宿主规范化），差异以 `warnings` 说明。
-- `item.create` 在酒馆中新建资料（Studio「发布到酒馆」）：`character`（`data` 为 V3 卡，用酒馆默认头像）、`lorebook`、`preset`（`data.name` 为名称），不支持 `regex`。同名已存在返回 `conflict`。插件在 `hello.capabilities.create` 中声明支持；旧插件不声明，伴侣程序提示更新插件。离线时伴侣程序直接写数据目录。
+- `item.create` 在酒馆中新建资料（Studio「发布到酒馆」）：`character`（`data` 为 V3 卡，用酒馆默认头像）、`lorebook`、`preset`（`data.name` 为名称），不支持 `regex`。同名已存在返回 `conflict`，`details` 为酒馆里已有的那一项 `{ kind, id }`（不覆盖；Studio 据此提供「绑定到它」，即 `/api/bind`）。插件在 `hello.capabilities.create` 中声明支持；旧插件不声明，伴侣程序提示更新插件。离线时伴侣程序直接写数据目录。
+- `item.rename` 给 `character`（新 id 是酒馆生成的头像文件名）或 `lorebook` 改名，其它类型返回 `bad_request`。插件先像 `item.put` 一样复核 `baseHash`（不符返回 `conflict`，`details.currentHash`）；新名称与现在相同（含只差大小写）返回 `bad_request`；酒馆里已有这个名称时返回 `conflict`，`details` 为已有的那一项 `{ kind, id }`。改名按酒馆前端自己的改名步骤执行（见 architecture.md §3「改名」），响应是改名后从后端复读的结果。插件在 `hello.capabilities.rename` 中声明支持的版本（当前 `1`，`RENAME_VERSION`），伴侣程序把它列在 `/api/status` 的 `targets[].rename`（旧插件为 `0`，伴侣程序提示更新插件）。离线链接不改名：角色改名要搬聊天、改酒馆内存里的设置，只有运行中的酒馆做得对，返回 `bad_request`「改名需要酒馆在运行」。
 - `watch.set` 整体替换监视列表。
+- `item.avatar` 给角色换头像：`image` 是 base64 的 PNG（上限 8MB，`AVATAR_MAX_BYTES`；Studio 在浏览器里把 PNG / JPEG / WebP 转成 PNG 再发），按原样使用、不裁剪。只换图片，卡片内容不变，所以没有 `baseHash`；响应是换完后从后端复读的卡（宿主重写了卡时哈希可能不同，见 architecture.md §3「换头像」）。插件经酒馆自己的 `/api/characters/edit-avatar`（ST 与 tt 同一个 multipart 接口）写入；离线链接把原卡的 `chara` / `ccv3` 块原样搬进新 PNG（规则同 `item.put`：酒馆未运行、先备份）。插件在 `hello.capabilities.avatar` 中声明版本（当前 `1`，`AVATAR_VERSION`），伴侣程序列在 `/api/status` 的 `targets[].avatar`（旧插件为 `0`）。
 - `asset.get` 读取角色头像缩略图，`id` 为头像文件名（不允许路径成分）。Cellar Link 通过酒馆自身的 `getThumbnailUrl('avatar', id)` 读取（ST 与 tt 同一条路径）；离线时伴侣程序读取酒馆生成过的 `thumbnails/avatar/<id>`（不早于卡片时），否则在不超过上限时读取卡片 PNG 本身，从不生成或写入缩略图。旧插件对该消息返回 `bad_request`，Studio 显示首字头像。
 - `ping` 是心跳：伴侣程序每 15 秒发送一次，10 秒内没有响应就把该酒馆标记为无响应（`/api/status` 中 `targets[].responsive = false`），之后的请求立即失败（`timeout`），不再逐个等待 30 秒；下一次心跳得到响应时自动恢复。原因是浏览器会冻结后台标签页：WebSocket 仍然连着，但页面脚本不运行。插件在已连接期间持有 Web Lock（`tavern-cellar-link`）以避免被冻结。
 
@@ -123,7 +127,8 @@
 
 `hash = sha256_hex(stableStringify(data))`，`stableStringify` 按键名排序、不含空白，`undefined` 值的键被忽略（与 `JSON.stringify` 一致）。浏览器与 Node 都使用 `crypto.subtle`。
 
-- 角色卡的 `data` 是 `JSON.parse(json_data)`，即 PNG 中保存的规范卡片 JSON（去掉 `json_data` 字段）。
+- 角色卡的 `data` 是 `JSON.parse(json_data)`，即 PNG 中保存的规范卡片 JSON（去掉 `json_data` 字段和酒馆自有字段）。
+- 酒馆自有字段（`shared/protocol.js` 的 `HOST_CHARACTER_FIELDS`，目前只有 `chat`：这台酒馆当前打开的聊天文件名）不属于卡：读取时去掉、不计入哈希、不同步；写入时保留酒馆里原来的值。酒馆打开聊天时会静默改写它（tt 和 ST 删除聊天后都不发事件），所以不能当作卡的内容。
 - 世界书的 `data` 是 `/api/worldinfo/get` 返回的对象。
 
 ## 9. HTTP 控制接口
@@ -137,8 +142,11 @@
 | `/api/checkout` | `{ target, kind, id }` | 取出到工作区并登记 |
 | `/api/sync` | `{ path, target?, force? }` | 工作区 → 酒馆 |
 | `/api/pull` | `{ path, target?, force? }` | 酒馆 → 工作区 |
+| `/api/changes` | `{ path, target? }` | 同步 / 取回会带过去的内容（Studio「查看差异」）：上次同步后工作区或酒馆当前版本改动的槽位，返回 `{ path, kind, target, slots }`；每行与 `/api/conflict` 同形 `{ slot, label, workspace, tavern, base, changed }`（各边 `{ value, present }`，未知的一边带 `unknown: true`：没有可用的基准快照时为 base，酒馆不可达时为 tavern）；`changed` 列出相对基准改动的一边（没有基准时为两边），`eolOnly` 表示只有换行符不同 |
 | `/api/auto-sync` | `{ path, target?, enabled }` | 切换随时同步 |
 | `/api/unbind` | `{ path, target? }` | 解除一个绑定（文件与酒馆内容都保留） |
+| `/api/rename` | `{ path, name, withWorld? }` | 在该项绑定的每个酒馆里改名（`item.rename`），规则见 architecture.md §3「改名」；返回 `{ path, from, result: 'renamed', ids: { <targetId>: 新 id }, warnings, relinked?: [卡的路径], world?: { name, path, from?, renamed } }` |
+| `/api/avatar` | `{ path, image }` | 在该角色卡绑定的每个酒馆里换头像（`item.avatar`，`image` 为 base64 PNG），规则见 architecture.md §3「换头像」；返回 `{ path, result: 'avatar-set', ids: { <targetId>: 头像文件名 }, avatarAt, warnings }`；这些头像的缓存同时失效 |
 | `/api/remove` | `{ path, keepFiles? }` | 从工作区移除一项：忘掉全部绑定、同步状态、基准快照与冲突，不动酒馆；默认删除编解码生成的文件，保留用户自己的文件（`keepFiles: true` 则一个文件都不删）；返回 `{ path, result: 'removed', kept }` |
 | `GET /api/assets/avatar?target=&id=` | — | 头像图片本身（供 `<img>` 使用）；按酒馆 + 文件名缓存 10 分钟，酒馆报告该角色被修改时失效；带 `ETag` |
 | `/api/preview` | `{ target?, input? }` | 转发 `prompt.preview`（只用实时连接，离线为 `not_connected`）；结果加 `target`，并给 `chat.character` 与每个触发条目附上绑定的工作区 `path`（没有绑定为 `null`） |

@@ -95,8 +95,8 @@ test('editing body, adding and deleting entries', () => {
     const out = encodeLorebook(files, { entryTemplate: { key: [], content: '', order: 100, disable: false, comment: '' } });
     assert.equal(out.entries[0].content, 'Edited\nsecond line');
     assert.equal(out.entries[10], undefined);
-    assert.deepEqual(out.entries[2], { key: ['fresh'], content: 'Brand new content\n', order: 100, disable: false, comment: 'New one', uid: 2 });
-    assert.deepEqual(Object.keys(out.entries), ['0', '1', '2']);
+    assert.deepEqual(out.entries[11], { key: ['fresh'], content: 'Brand new content\n', order: 100, disable: false, comment: 'New one', uid: 11 }, 'a new entry does not take a deleted entry\'s uid');
+    assert.deepEqual(Object.keys(out.entries), ['0', '1', '11']);
 });
 
 test('plain markdown without front matter becomes a new entry', () => {

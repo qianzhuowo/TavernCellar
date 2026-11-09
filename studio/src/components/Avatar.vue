@@ -3,6 +3,7 @@
 // The image comes from the companion (GET /api/assets/avatar, see companion/src/assets.js); any failure keeps the initial.
 import { computed, ref, watch } from 'vue';
 import { hueOf, initialOf } from '../lib/status.js';
+import { useApp } from '../stores/app.js';
 
 const props = defineProps({
   name: { type: String, default: '' },
@@ -14,11 +15,15 @@ const props = defineProps({
   lazy: { type: Boolean, default: true }
 });
 
+const app = useApp();
 const loaded = ref(false);
 const failed = ref(false);
-const src = computed(() => (props.target && props.file && /\.png$/i.test(props.file)
-  ? `/api/assets/avatar?target=${encodeURIComponent(props.target)}&id=${encodeURIComponent(props.file)}`
-  : ''));
+// `v`: the avatar was changed from Studio, so the browser's cached image is stale.
+const src = computed(() => {
+  if (!props.target || !props.file || !/\.png$/i.test(props.file)) return '';
+  const v = app.avatarAt[props.target + '/' + props.file];
+  return `/api/assets/avatar?target=${encodeURIComponent(props.target)}&id=${encodeURIComponent(props.file)}${v ? '&v=' + v : ''}`;
+});
 watch(src, () => { loaded.value = false; failed.value = false; });
 
 const style = computed(() => {

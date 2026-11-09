@@ -11,9 +11,9 @@
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { diffPaths, hashData } from '../../../shared/hash.js';
-import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, presetId } from '../../../shared/protocol.js';
+import { ASSET_MAX_BYTES, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, ProtocolError, assertAssetRef, assertAvatarRequest, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, withHostFields, presetId } from '../../../shared/protocol.js';
 import { isTavernRunning } from './locations.js';
-import { placeholderPng, readCardText, writeCard } from './png.js';
+import { placeholderPng, readCardText, withImage, writeCard } from './png.js';
 
 const BACKUPS_PER_ITEM = 5;
 
@@ -118,7 +118,10 @@ export class OfflineLink {
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
             case MSG.ITEM_CREATE: return this.create(payload);
+            // Renaming also moves chats and updates the tavern's settings in memory: only the running tavern does it.
+            case MSG.ITEM_RENAME: throw new ProtocolError(ERR.BAD_REQUEST, '改名需要酒馆在运行（打开酒馆后再试）');
             case MSG.ASSET_GET: return this.asset(payload);
+            case MSG.ITEM_AVATAR: return this.setAvatar(payload);
             default: throw new ProtocolError(ERR.BAD_REQUEST, `Unknown request type: ${type}`);
         }
     }
@@ -291,7 +294,7 @@ export class OfflineLink {
         if (currentHash !== baseHash) {
             throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
         }
-        const sent = kind === 'character' ? canonicalCharacter(data, id) : structuredClone(data);
+        const sent = kind === 'character' ? withHostFields(canonicalCharacter(data, id), JSON.parse(readCardText(current.content))) : structuredClone(data);
         delete sent.json_data;
         if (kind === 'regex') assertRegexData(sent);
         const content = kind === 'character' ? writeCard(current.content, sent)
@@ -309,6 +312,31 @@ export class OfflineLink {
     }
 
     /**
+     * Replaces a character's avatar (`item.avatar`): the new PNG gets the card's chunks byte for byte, so the card
+     * data and its hash stay. Same rules as `put`: only while the tavern is closed, backed up first, written
+     * atomically and re-read. The tavern regenerates its thumbnail since the card is newer.
+     */
+    async setAvatar(payload) {
+        assertAvatarRequest(payload);
+        const { kind, id, image } = payload;
+        if (await this.isRunning(this.location)) {
+            throw new ProtocolError(ERR.TAVERN_RUNNING, `${this.location.label} is running; enable Cellar Link in it to change the avatar, or close it to write offline`);
+        }
+        const file = this.fileFor(kind, id);
+        const current = await this.readItem(kind, id);
+        let content;
+        try {
+            content = withImage(current.content, Buffer.from(image, 'base64'));
+        } catch (error) {
+            throw new ProtocolError(ERR.BAD_REQUEST, `头像不是有效的 PNG 图片：${error.message}`);
+        }
+        const backup = await this.backup(kind, id, file);
+        await writeAtomic(file, content);
+        const stored = (await this.readItem(kind, id)).data;
+        return { kind, id, hash: await hashData(stored), data: stored, warnings: [{ code: 'offline-written', file, backup }] };
+    }
+
+    /**
      * Creates an item that is not in the data folder yet (`item.create`). Characters are named `<name>.png` (like the
      * tavern does) with a plain placeholder avatar; an existing file is never replaced.
      */
@@ -323,7 +351,7 @@ export class OfflineLink {
         const id = kind === 'character' ? `${name}.png` : kind === 'preset' ? (requested ?? presetId('openai', name)) : name;
         assertItemRef({ kind, id });
         const file = this.fileFor(kind, id);
-        if (await stat(file).then(() => true, () => false)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'character' ? '角色卡' : kind === 'preset' ? '预设' : '世界书'}：${name}`);
+        if (await stat(file).then(() => true, () => false)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'character' ? '角色卡' : kind === 'preset' ? '预设' : '世界书'}：${name}`, { kind, id });
         await mkdir(join(file, '..'), { recursive: true });
         const sent = kind === 'character' ? canonicalCharacter(data, id) : structuredClone(data);
         delete sent.json_data;

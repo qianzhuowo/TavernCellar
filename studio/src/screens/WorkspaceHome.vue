@@ -3,8 +3,10 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import Icon from '../components/Icon.vue';
 import { useApp } from '../stores/app.js';
+import { useUi } from '../stores/ui.js';
 
 const app = useApp();
+const ui = useUi();
 
 const EMPTY_TIPS = [
   '当前工作区还是空白哦，去资料库中提取或者自己新建一个项目吧~',
@@ -36,5 +38,6 @@ onBeforeUnmount(() => clearInterval(timer));
       <p :key="tip" class="ws-home-tip" title="点一下换一条" @click="next">{{ tip }}</p>
     </Transition>
     <div class="ws-home-by">—— by: 茄子</div>
+    <button class="btn sm ghost ws-home-act" type="button" title="把磁盘上 Cellar 格式的资料项文件夹复制进工作区" @click="ui.importAsk = true"><Icon name="folderOpen" size="sm" />导入文件夹…</button>
   </div>
 </template>

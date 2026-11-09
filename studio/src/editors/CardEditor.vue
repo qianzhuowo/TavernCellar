@@ -1,7 +1,7 @@
 <script setup>
 // S2 character card editor (docs/studio-design.md §4.3, §5.1-5.2). Edits `data.*` of the decoded card and keeps the
 // root mirrors equal (components/card/cardFields.js); useItem writes the workspace files after a short pause.
-import { ref, shallowRef, computed, watch, toRef, toRaw, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, watch, toRef, onBeforeUnmount, nextTick } from 'vue';
 import { Star } from 'lucide-vue-next';
 import { useItem } from '../lib/useItem.js';
 import { useApp } from '../stores/app.js';
@@ -14,6 +14,8 @@ import GreetingList from '../components/card/GreetingList.vue';
 import TagInput from '../components/card/TagInput.vue';
 import WorldPicker from '../components/card/WorldPicker.vue';
 import ItemFiles from '../components/ItemFiles.vue';
+import AvatarDialog from '../components/AvatarDialog.vue';
+import { avatarBlocked } from '../lib/syncOps.js';
 import LorebookEditor from './LorebookEditor.vue';
 import RegexList from './RegexList.vue';
 import { getField, setField, extraFields } from '../components/card/cardFields.js';
@@ -58,9 +60,6 @@ const rev = ref(0);
 watch(it.version, () => { rev.value++; });
 
 // Snapshot of the data as loaded: clearing a text field that had content shows a sync hint (saves don't reload).
-const orig = shallowRef(/** @type {any} */ (null));
-watch(it.version, () => { orig.value = it.data.value ? structuredClone(toRaw(it.data.value)) : null; }, { immediate: true });
-const was = (/** @type {string} */ path) => { const v = getField(orig.value, path); return typeof v === 'string' ? v : null; };
 
 /** @param {string} path */
 function f(path) {
@@ -77,6 +76,9 @@ function set(path, value) {
 
 const item = computed(() => app.item(props.path));
 const binding = computed(() => item.value?.bindings?.[0] || null);
+// 「更换头像…」: the avatar lives in the taverns; '' when every binding can take a new one.
+const avatarBlock = computed(() => avatarBlocked(app, item.value));
+const avatarAsk = ref(false);
 const frameworks = computed(() => (item.value?.frameworks || []).map((/** @type {any} */ x) => x.name).join('、'));
 
 const name = computed(() => f('name') || '');
@@ -314,7 +316,8 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
       <div id="ce-sec-head" class="ce-head">
         <div class="ce-avatar">
           <Avatar :name="name || '?'" :target="binding?.target || ''" :file="binding?.id || ''" :lazy="false" />
-          <span class="faint">换头像请在酒馆中操作</span>
+          <button class="btn sm ghost ce-avatar-btn" type="button" :disabled="!!avatarBlock" :title="avatarBlock || '在绑定的酒馆里换一张头像图片'" @click="avatarAsk = true">更换头像…</button>
+          <AvatarDialog v-if="avatarAsk" :path="path" @close="avatarAsk = false" />
         </div>
         <div class="ce-meta">
           <div class="ce-name-row">
@@ -349,9 +352,9 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
         </div>
       </div>
 
-      <CardText id="ce-sec-desc" big label="角色描述" :rows="8" :was="was('description')" :model-value="f('description')" @update:model-value="set('description', $event)" />
+      <CardText id="ce-sec-desc" big label="角色描述" :rows="8" :model-value="f('description')" @update:model-value="set('description', $event)" />
       <template v-if="extracted.has('greetings')">
-        <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :was="was('first_mes')" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
+        <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
         <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
       </template>
 
@@ -364,22 +367,22 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
           <section id="ce-sec-prompt" class="ce-block">
             <div class="ce-block-title"><h3>提示词覆盖</h3><p>可插入 <code v-pre>{{original}}</code> 引用全局设置中的原文</p></div>
             <div class="ce-block-body">
-              <CardText label="主要提示词" :rows="3" :was="was('system_prompt')" :model-value="f('system_prompt')" @update:model-value="set('system_prompt', $event)" />
-              <CardText label="后续历史指令" :rows="2" :was="was('post_history_instructions')" :model-value="f('post_history_instructions')" @update:model-value="set('post_history_instructions', $event)" />
+              <CardText label="主要提示词" :rows="3" :model-value="f('system_prompt')" @update:model-value="set('system_prompt', $event)" />
+              <CardText label="后续历史指令" :rows="2" :model-value="f('post_history_instructions')" @update:model-value="set('post_history_instructions', $event)" />
             </div>
           </section>
           <section id="ce-sec-persona" class="ce-block">
             <div class="ce-block-title"><h3>角色设定</h3></div>
             <div class="ce-block-body">
-              <CardText label="角色设定摘要" :rows="2" :was="was('personality')" :model-value="f('personality')" @update:model-value="set('personality', $event)" />
-              <CardText label="情景" :rows="2" :was="was('scenario')" :model-value="f('scenario')" @update:model-value="set('scenario', $event)" />
+              <CardText label="角色设定摘要" :rows="2" :model-value="f('personality')" @update:model-value="set('personality', $event)" />
+              <CardText label="情景" :rows="2" :model-value="f('scenario')" @update:model-value="set('scenario', $event)" />
               <CardText label="对话示例" code :rows="5" hint="每段以 <START> 开头" :model-value="f('mes_example')" @update:model-value="set('mes_example', $event)" />
             </div>
           </section>
           <section id="ce-sec-note" class="ce-block">
             <div class="ce-block-title"><h3>角色备注</h3><p>按深度插入到聊天记录中</p></div>
             <div class="ce-block-body">
-              <CardText label="角色备注" :rows="2" :was="was('extensions.depth_prompt.prompt')" :model-value="f('extensions.depth_prompt.prompt')" @update:model-value="set('extensions.depth_prompt.prompt', $event)" />
+              <CardText label="角色备注" :rows="2" :model-value="f('extensions.depth_prompt.prompt')" @update:model-value="set('extensions.depth_prompt.prompt', $event)" />
               <div class="field-row">
                 <div class="field">
                   <label>@ 深度</label>
@@ -405,7 +408,7 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
                   <input class="input mono" :value="f('character_version') ?? ''" @input="set('character_version', $event.target.value)">
                 </div>
               </div>
-              <CardText label="创作者的注释" :rows="3" hint="不随 AI 提示词发送" :was="was('creator_notes')" :model-value="f('creator_notes')" @update:model-value="set('creator_notes', $event)" />
+              <CardText label="创作者的注释" :rows="3" hint="不随 AI 提示词发送" :model-value="f('creator_notes')" @update:model-value="set('creator_notes', $event)" />
             </div>
           </section>
           <section id="ce-sec-group" class="ce-block">

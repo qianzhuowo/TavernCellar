@@ -12,6 +12,8 @@ import GroupPanel from './lorebook/GroupPanel.vue';
 import { useItem } from '../lib/useItem.js';
 import { usePreview } from '../stores/preview.js';
 import { useUi } from '../stores/ui.js';
+import { useApp } from '../stores/app.js';
+import { displayName } from '../lib/status.js';
 import {
   POS, LAMP_LABEL, SORTS, isSort, sortEntries, displayIndexOf, lampOf, posShort, groupOf, setGroup, normGroup,
   inclusionGroups, inGroup, setPosition
@@ -25,7 +27,7 @@ const book = computed(() => (it.data.value ? reactive(it.data.value) : null));
 const entryMap = computed(() => /** @type {Record<string, any>} */ (book.value?.entries ?? {}));
 const all = computed(() => Object.values(entryMap.value));
 const total = computed(() => all.value.length);
-const bookName = computed(() => props.path.split('/').pop());
+const bookName = computed(() => displayName(useApp().item(props.path) ?? { path: props.path }));
 /** @param {number} uid */
 const entryOf = (uid) => all.value.find((e) => e.uid === uid);
 

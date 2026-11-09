@@ -5,6 +5,7 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import Icon from '../components/Icon.vue';
 import SlotDiff from '../components/SlotDiff.vue';
+import Toggle from '../components/Toggle.vue';
 import LazyMount from '../components/LazyMount.vue';
 import { api, errorText } from '../api.js';
 import { useApp } from '../stores/app.js';
@@ -222,6 +223,9 @@ function restore(/** @type {string} */ path) {
 
 const statusText = { added: '新增', removed: '删除', changed: '修改', unreadable: '无法读取' };
 const slotView = (/** @type {any} */ s) => ({ ...s, workspace: s.to, tavern: s.from, base: { value: null, present: false } });
+/** 「完整文件」: both versions side by side instead of the changed lines (remembered). */
+const fullFile = ref(localStorage.getItem('cs.history.fullFile') === '1');
+watch(fullFile, (v) => localStorage.setItem('cs.history.fullFile', v ? '1' : '0'));
 const itemPaths = computed(() => app.items.map((/** @type {any} */ i) => i.path));
 
 watch(() => (routed.value ? ui.route.arg : ''), (arg) => {
@@ -351,6 +355,10 @@ onMounted(() => { resolveBare(); load(); });
           </div>
         </div>
 
+        <div v-if="diff && diff.items && diff.items.length" class="vh-diffbar">
+          <span class="grow" />
+          <Toggle v-model="fullFile" label="完整文件" title="并排显示两个版本的全部内容；关闭时只显示改动的行" />
+        </div>
         <div v-if="diffLoading && !diff" class="faint vh-empty">比较中…</div>
         <div v-else-if="diff && diff.error" class="sync-note err">{{ diff.error }}</div>
         <div v-else-if="diff && !diff.items.length" class="faint vh-empty">与{{ compareWith ? ' ' + versionName(compareWith) + ' ' : '上一个版本' }}相比，资料内容没有变化</div>
@@ -369,7 +377,7 @@ onMounted(() => { resolveBare(); load(); });
             <div v-if="it.error" class="sync-note err">{{ it.error }}</div>
             <LazyMount v-for="s in it.slots" :key="s.slot" class="vh-slot" :min-height="s.eolOnly ? 20 : 90">
               <div class="vh-slot-h">{{ s.label }}<span v-if="s.eolOnly" class="faint">（只有换行符不同，内容相同）</span></div>
-              <SlotDiff v-if="!s.eolOnly" :slot-view="slotView(s)" :sides="{ workspace: '此版本', tavern: compareWith ? versionName(compareWith) : '上一个版本' }" />
+              <SlotDiff v-if="!s.eolOnly" :slot-view="slotView(s)" :compact="!fullFile" :sides="{ workspace: '此版本', tavern: compareWith ? versionName(compareWith) : '上一个版本' }" />
             </LazyMount>
           </div>
         </template>

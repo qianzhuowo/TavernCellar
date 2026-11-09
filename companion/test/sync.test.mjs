@@ -230,6 +230,23 @@ test('resolve conflict: choosing the tavern side writes nothing new to the taver
     assert.equal((await bindingOf('characters/Alice')).status, 'in-sync');
 });
 
+test('pending changes: /api/changes lists the slots a sync or a pull would carry', async () => {
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'L6');
+    await until(async () => (await bindingOf('characters/Alice')).status === 'local-changes');
+    const local = (await api('POST', '/api/changes', { path: 'characters/Alice' })).result;
+    assert.deepEqual(local.slots.map(s => [s.slot, s.base.value, s.workspace.value, s.tavern.value, s.changed]), [['data.description', 'T5', 'L6', 'T5', ['workspace']]]);
+    await writeFile(join(dir, 'characters/Alice/description.md'), 'T5');
+    await until(async () => (await bindingOf('characters/Alice')).status === 'in-sync');
+    // A tavern edit Cellar was not told about: the preview reads the tavern's current version.
+    const stored = tavern.store.character.get('Alice.png');
+    tavern.store.character.set('Alice.png', { ...stored, data: { ...stored.data, scenario: 'silent tavern edit' } });
+    const remote = (await api('POST', '/api/changes', { path: 'characters/Alice' })).result;
+    assert.deepEqual(remote.slots.map(s => [s.slot, s.tavern.value, s.changed]), [['data.scenario', 'silent tavern edit', ['tavern']]]);
+    assert.equal(remote.slots[0].workspace.value, remote.slots[0].base.value);
+    await api('POST', '/api/pull', { path: 'characters/Alice' });
+    assert.deepEqual((await api('POST', '/api/changes', { path: 'characters/Alice' })).result.slots, []);
+});
+
 test('slot merge: the tavern changes again during the merge -> merged again before writing', async () => {
     await writeFile(join(dir, 'characters/Alice/description.md'), 'L3');
     await until(async () => (await bindingOf('characters/Alice')).status === 'local-changes');
@@ -255,6 +272,11 @@ test('auto sync pushes on file save', async () => {
     await writeFile(join(dir, 'lorebooks/Book/entries/new.md'), '---\ncomment: added\n---\nnew entry');
     await until(() => tavern.store.lorebook.get('Book').entries[1]?.content === 'new entry');
     assert.equal(tavern.store.lorebook.get('Book').entries[1].disable, false, 'entry template from capabilities applied');
+    // The uid the tavern now knows the entry by is written into the file, and the item stays in sync with it.
+    await until(async () => /^---\r?\nuid: 1\r?\n/.test(await readFile(join(dir, 'lorebooks/Book/entries/new.md'), 'utf8')));
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const item = (await api('GET', '/api/status')).result.items.find(i => i.path === 'lorebooks/Book');
+    assert.equal(item.bindings[0].status, 'in-sync', JSON.stringify(item.bindings[0]));
 });
 
 test('reconnect pushes auto-sync edits made while the tavern was away; a changed tavern gets a conflict', async () => {

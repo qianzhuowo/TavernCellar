@@ -4,13 +4,13 @@ import Icon from './Icon.vue';
 import Toggle from './Toggle.vue';
 import StatusBadge from './StatusBadge.vue';
 import CardParts from './card/CardParts.vue';
+import PublishPanel from './PublishPanel.vue';
 import { kindOf } from '../lib/kinds.js';
 import { useApp } from '../stores/app.js';
 import { useUi, historyHref } from '../stores/ui.js';
-import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, editStep } from '../lib/syncOps.js';
+import { runBindingOp, setAutoSync, canReach, followBinding, pinText, PIN_TIP, editStep, renameBlocked } from '../lib/syncOps.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
-import { uiStatus, isConflict, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT, displayName } from '../lib/status.js';
-import { api, errorText } from '../api.js';
+import { uiStatus, isConflict, hasChanges, HOST, MODE_LABEL, MODE_TIP, MODE_DOT, OFF_MODE, STATUS, STALE_HINT } from '../lib/status.js';
 
 const props = defineProps({ path: { type: String, required: true } });
 const app = useApp();
@@ -68,22 +68,10 @@ async function step(/** @type {'undo'|'redo'|'revert'} */ op) {
   try { await editStep(app, ui, props.path, op); } finally { stepBusy.value = ''; }
 }
 
-// ---- publish an item made in Cellar to a tavern (POST /api/publish) ----
-/** Taverns that can create items: live ones with a new enough Cellar Link, and offline data folders. */
-const pubTargets = computed(() => app.targets.filter((t) => (t.live && t.create >= 1) || (!t.live && t.offline)));
-const pubName = ref('');
-const pubBusy = ref('');
-watch(() => props.path, () => { pubName.value = item.value ? displayName(item.value) : ''; }, { immediate: true });
-async function publish(/** @type {any} */ t) {
-  pubBusy.value = t.id;
-  try {
-    await api.publish(props.path, t.id, pubName.value.trim());
-    ui.toast('已发布到 ' + app.targetName(t.id));
-    app.refreshStatus();
-  } catch (e) {
-    ui.toast(errorText(e), 'alert');
-  } finally { pubBusy.value = ''; }
-}
+// 「改名…」: bound characters and lorebooks (renamed in their taverns, RenameDialog).
+const renamable = computed(() => !!item.value && (item.value.kind === 'character' || item.value.kind === 'lorebook') && item.value.bindings.length > 0);
+const renameWhyNot = computed(() => (renamable.value ? renameBlocked(app, item.value) : ''));
+
 </script>
 
 <template>
@@ -93,16 +81,7 @@ async function publish(/** @type {any} */ t) {
       <section class="insp-sec">
         <h4>同步状态</h4>
         <div v-if="!item.bindings.length" class="faint" style="font-size: var(--fs-sm)">没有绑定任何酒馆。</div>
-        <div v-if="!item.bindings.length && item.kind !== 'regex'" class="publish">
-          <template v-if="pubTargets.length">
-            <div class="faint pub-tip">在酒馆里新建这一项并绑定，之后照常同步。</div>
-            <input v-model="pubName" class="input" :placeholder="'在酒馆中的名称'" aria-label="在酒馆中的名称" />
-            <button v-for="t in pubTargets" :key="t.id" class="btn sm primary" :disabled="!!pubBusy || !pubName.trim()" @click="publish(t)">
-              <Icon name="upload" size="sm" />{{ pubBusy === t.id ? '发布中…' : '发布到 ' + app.targetName(t.id) + (t.live ? '' : '（离线）') }}
-            </button>
-          </template>
-          <div v-else class="faint pub-tip">连接 ST/TT，或在设置中填写酒馆数据目录后，可以把它发布到酒馆。</div>
-        </div>
+        <PublishPanel v-if="!item.bindings.length" :path="path" />
         <div v-for="b in item.bindings" :key="b.target" class="sync-row" :class="'mode-' + app.modeOf(b)">
           <div class="sync-head">
             <span class="dot" :class="dotClass(app.modeOf(b))" :title="MODE_TIP[app.modeOf(b)]" />
@@ -120,6 +99,7 @@ async function publish(/** @type {any} */ t) {
             <button class="btn sm" :disabled="!!busy[b.target]" @click="follow(b)">跟随最新</button>
           </div>
           <a v-else-if="b.deployed" class="sync-note sync-dep" :href="historyHref(props.path)" title="在版本历史中查看这一项"><Icon name="history" size="sm" />酒馆中是版本 <span class="mono">{{ b.deployed.slice(0, 8) }}</span></a>
+          <a v-if="hasChanges(uiStatus(b.status))" class="sync-note sync-dep" href="#" title="列出上次同步之后改动的地方" @click.prevent="ui.changesAsk = { path: props.path, target: b.target }"><Icon name="eye" size="sm" />查看差异</a>
           <div v-if="isConflict(uiStatus(b.status))" class="sync-note err">
             <Icon name="alert" size="sm" /><span class="grow">两边都改了同一处</span>
             <a v-if="ui.route.name !== 'conflict'" href="#" @click.prevent="ui.openConflict(props.path)">处理冲突</a>
@@ -188,9 +168,18 @@ async function publish(/** @type {any} */ t) {
           </template>
           <button v-if="editor === 'vscode'" class="btn sm" title="在 VS Code 中打开这个文件夹" @click="openExternalEditor(abs, editor, ui.toast)"><Icon name="code" size="sm" />在 VS Code 中打开</button>
           <button class="btn sm" :title="abs" @click="copyPath"><Icon name="copy" size="sm" />复制路径</button>
+          <button class="btn sm" title="把这一项移到项目文件夹（如把角色卡和它的世界书放在一起），或移回默认文件夹" @click="ui.moveAsk = path"><Icon name="folderOpen" size="sm" />移到项目…</button>
+          <button
+            v-if="renamable"
+            class="btn sm"
+            :disabled="!!renameWhyNot"
+            :title="renameWhyNot || '在绑定的酒馆里改名（和在酒馆里改名一样），以旧名称命名的文件夹跟着改名'"
+            @click="ui.renameAsk = path"
+          ><Icon name="edit" size="sm" />改名…</button>
         </div>
         <dl class="kv" style="margin-top: 10px">
           <dt>类型</dt><dd>{{ kindOf(item.kind).type }}</dd>
+          <dt>项目</dt><dd>{{ item.project || '无（默认文件夹）' }}</dd>
           <dt>绑定</dt><dd>{{ item.bindings.length }} 个酒馆</dd>
         </dl>
       </section>

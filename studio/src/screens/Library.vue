@@ -7,7 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { initialOf, relTime, STALE_HINT, presetRef } from '../lib/status.js';
-import { LIB_KINDS, kindOf, libraryHref } from '../lib/kinds.js';
+import { LIB_KINDS, kindOf, libraryHref, projectFolders } from '../lib/kinds.js';
 import { CARD_PARTS, BASE_SECTIONS, excludeFor, lastExtraction, rememberExtraction } from '../lib/cardParts.js';
 
 const app = useApp();
@@ -54,6 +54,8 @@ function open(/** @type {any} */ e) {
 
 /** 文件提取 picked in the preview drawer before a character is taken out. */
 const extract = ref(lastExtraction());
+/** Project folder the character (and its lorebook) goes into; '' = the default folders. */
+const folder = ref('');
 function toggleExtract(/** @type {string} */ id, /** @type {boolean} */ on) {
   const next = new Set(extract.value);
   if (on) next.add(id); else next.delete(id);
@@ -64,7 +66,7 @@ async function take(/** @type {any} */ e, /** @type {boolean} */ thenOpen) {
   let opts;
   if (lib.kind === 'character') {
     rememberExtraction(extract.value);
-    opts = { exclude: excludeFor(extract.value), withWorld: extract.value.has('character_book') };
+    opts = { exclude: excludeFor(extract.value), withWorld: extract.value.has('character_book'), ...(folder.value.trim() ? { folder: folder.value.trim() } : {}) };
   }
   const p = await lib.checkout(e, opts);
   if (p && thenOpen) { preview.value = null; ui.openItem(p); }
@@ -212,6 +214,12 @@ watch(() => lib.sources.map((s) => s.id).join(), () => { if (!lib.current) lib.r
               <span v-else-if="p.optional" class="faint lib-extract-tip">卡中没有时不会生成文件</span>
               <span v-else-if="p.optional" class="faint lib-extract-tip">卡中没有这类数据时不会生成文件</span>
             </label>
+          </section>
+          <section v-if="lib.kind === 'character'" class="lib-extract">
+            <h4>项目文件夹</h4>
+            <p class="faint">可不填。填了就把这张卡（和一起取出的世界书）放进这个文件夹，不分在 characters/ 和 lorebooks/ 两处。</p>
+            <input v-model="folder" class="input" list="lib-folders" placeholder="不填 = 默认文件夹" aria-label="项目文件夹" />
+            <datalist id="lib-folders"><option v-for="f in projectFolders(app.items)" :key="f" :value="f" /></datalist>
           </section>
         </div>
         <div class="drawer-foot">

@@ -114,6 +114,7 @@ svg.ic.lg { width: 20px; height: 20px; }
 }
 .tree-group > .tg-head:hover { background: var(--bg-3); }
 .tree-group > .tg-head .count { margin-left: auto; color: var(--text-3); font-weight: 400; }
+.tree-group > .tg-head .tg-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-group > .tg-head .tg-add { width: 20px; height: 20px; opacity: 0; }
 .tree-group > .tg-head:hover .tg-add, .tree-group > .tg-head .tg-add:focus-visible { opacity: 1; }
 .tree-item {
@@ -125,6 +126,8 @@ svg.ic.lg { width: 20px; height: 20px; }
 .tree-item.on { background: var(--sel); color: var(--text); box-shadow: inset 2px 0 0 var(--sel-line); }
 .tree-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-item .badges { display: flex; gap: 3px; }
+/* an item's kind in a project group (items of a project folder are of mixed kinds) */
+.tree-item > .tree-kind { flex: none; opacity: .7; }
 .tree-item.reserved { opacity: .5; cursor: default; }
 .tree-item.reserved:hover { background: none; color: var(--text-2); }
 /* a character's extracted 世界书 / 角色正则 under it */

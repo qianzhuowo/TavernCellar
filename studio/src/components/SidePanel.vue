@@ -7,7 +7,7 @@ import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import { useLibrary } from '../stores/library.js';
 import { uiStatus, displayName, presetRef, HOST } from '../lib/status.js';
-import { LIB_KINDS, libraryHref } from '../lib/kinds.js';
+import { LIB_KINDS, libraryHref, kindOf, projectOf, projectFolders } from '../lib/kinds.js';
 import { extractedOf } from '../lib/cardParts.js';
 import { api, errorText } from '../api.js';
 import { desktop, joinPath, openNative, openExternalEditor, copyPathToast } from '../lib/desktop.js';
@@ -19,11 +19,26 @@ const lib = useLibrary();
 
 const mode = computed(() => (ui.route.name === 'library' ? 'library' : ui.route.name === 'settings' ? 'settings' : 'tree'));
 
+/**
+ * Items in a project folder are listed under their project (one group per folder, kinds mixed, shown by icon); the
+ * kind groups hold the items in the kinds' default folders.
+ */
+const KIND_GROUPS = [
+  { key: 'character', title: '角色', icon: 'user' },
+  { key: 'lorebook', title: '世界书', icon: 'book' },
+  { key: 'regex', title: '正则', icon: 'regex' },
+  { key: 'preset', title: '预设', icon: 'sliders' }
+];
+const KIND_ORDER = KIND_GROUPS.map((g) => g.key);
+/** What a project's 「+」 offers: the global regex list is one per workspace, not a project's. */
+const PROJECT_KINDS = KIND_ORDER.filter((k) => k !== 'regex');
+const projects = computed(() => projectFolders(app.items));
 const groups = computed(() => [
-  { key: 'character', title: '角色', icon: 'user', items: app.items.filter((i) => i.kind === 'character') },
-  { key: 'lorebook', title: '世界书', icon: 'book', items: app.items.filter((i) => i.kind === 'lorebook') },
-  { key: 'regex', title: '正则', icon: 'regex', items: app.items.filter((i) => i.kind === 'regex') },
-  { key: 'preset', title: '预设', icon: 'sliders', items: app.items.filter((i) => i.kind === 'preset') }
+  ...projects.value.map((p) => ({
+    key: 'project:' + p, title: p, icon: 'folder', project: p,
+    items: app.items.filter((i) => projectOf(i) === p).sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))
+  })),
+  ...KIND_GROUPS.map((g) => ({ ...g, project: '', items: app.items.filter((i) => i.kind === g.key && !projectOf(i)) }))
 ]);
 
 const SETTINGS_NAV = [
@@ -55,15 +70,20 @@ const sourceLabel = (/** @type {any} */ t) => app.targetName(t.id) + (t.live ? '
 // ---- 工作区「+」menu: take from the library, or make a new item in Cellar (POST /api/create) ----
 const NEW_LABEL = /** @type {Record<string, string>} */ ({ character: '新建角色卡', lorebook: '新建世界书', regex: '新建正则脚本', preset: '新建预设' });
 const KIND_TITLE = /** @type {Record<string, string>} */ ({ character: '角色', lorebook: '世界书', regex: '正则', preset: '预设' });
-/** @type {import('vue').Ref<{kinds: string[], x: number, y: number} | null>} */
+/** @type {import('vue').Ref<{kinds: string[], folder: string, x: number, y: number} | null>} */
 const menu = ref(null);
 const naming = ref('');
 const newName = ref('');
+/** Project folder the new item goes into ('' = the kind's default folder). */
+const newFolder = ref('');
+/** New characters: also make the lorebook the card links to (named like the card unless changed). */
+const withWorld = ref(false);
+const worldName = ref('');
 const menuBusy = ref(false);
 const nameInput = ref(/** @type {HTMLInputElement|null} */ (null));
-function openMenu(/** @type {MouseEvent} */ ev, /** @type {string[]} */ kinds) {
+function openMenu(/** @type {MouseEvent} */ ev, /** @type {string[]} */ kinds, folder = '') {
   const r = /** @type {HTMLElement} */ (ev.currentTarget).getBoundingClientRect();
-  menu.value = menu.value && menu.value.kinds.join() === kinds.join() ? null : { kinds, x: r.right + 6, y: r.top };
+  menu.value = menu.value && menu.value.kinds.join() === kinds.join() && menu.value.folder === folder ? null : { kinds, folder, x: r.right + 6, y: r.top };
   naming.value = '';
   newName.value = '';
 }
@@ -94,8 +114,8 @@ const editor = computed(() => app.settings?.ui?.externalEditor || 'system');
 function openCtx(/** @type {MouseEvent} */ ev, /** @type {string} */ path) {
   closeMenu();
   ctxArmed.value = false;
-  // keep the menu inside the window (it is about 230 × 220 px)
-  ctx.value = { path, x: Math.min(ev.clientX, window.innerWidth - 236), y: Math.min(ev.clientY, window.innerHeight - 230) };
+  // keep the menu inside the window (it is about 230 × 260 px)
+  ctx.value = { path, x: Math.min(ev.clientX, window.innerWidth - 236), y: Math.min(ev.clientY, window.innerHeight - 270) };
 }
 async function ctxRun(/** @type {string} */ action) {
   const c = ctx.value;
@@ -108,25 +128,35 @@ async function ctxRun(/** @type {string} */ action) {
   else if (action === 'open') await openExternalEditor(abs, editor.value, ui.toast);
   else if (action === 'copy') await copyPathToast(abs, ui.toast);
   else if (action === 'revert') await editStep(app, ui, c.path, 'revert');
+  else if (action === 'move') ui.moveAsk = c.path;
   else if (action === 'remove') ui.removeAsk = c.path;
 }
 async function pickNew(/** @type {string} */ kind) {
   if (kind === 'regex') { await newRegexScript(); return; }
   naming.value = kind;
   newName.value = '';
+  newFolder.value = menu.value?.folder ?? '';
+  withWorld.value = false;
+  worldName.value = '';
   await nextTick();
   nameInput.value?.focus();
+}
+function openImport() {
+  closeMenu();
+  ui.importAsk = true;
 }
 async function createNamed() {
   const name = newName.value.trim();
   if (!name || menuBusy.value) return;
   menuBusy.value = true;
   try {
-    const r = await api.createItem(naming.value, name);
+    const world = naming.value === 'character' && withWorld.value ? worldName.value.trim() || name : undefined;
+    const r = await api.createItem(naming.value, name, world, newFolder.value.trim());
     await app.refreshStatus();
     closeMenu();
     ui.openItem(r.path);
-    ui.toast('已新建「' + name + '」，可在检查栏发布到酒馆');
+    const book = r.world ? (r.world.created ? '和世界书「' + r.world.name + '」' : '，链接到工作区已有的世界书「' + r.world.name + '」') : '';
+    ui.toast('已新建「' + name + '」' + book + '，可在检查栏发布到酒馆');
   } catch (e) {
     ui.toast(errorText(e), 'alert');
   } finally { menuBusy.value = false; }
@@ -208,7 +238,7 @@ function jump(/** @type {string} */ id) {
       <div class="panel-body">
         <div v-for="g in groups" :key="g.key" class="tree-group" :class="{ collapsed: ui.collapsed[g.key] }">
           <div class="tg-head" @click="ui.toggleGroup(g.key)">
-            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.icon" size="sm" />{{ g.title }}<span class="count">{{ g.items.length }}</span><button class="tg-add icon-btn ws-add" type="button" :title="'取出或新建' + g.title" @click.stop="openMenu($event, [g.key])"><Icon name="plus" size="sm" /></button>
+            <Icon :name="ui.collapsed[g.key] ? 'chevRight' : 'chevDown'" size="sm" /><Icon :name="g.project && !ui.collapsed[g.key] ? 'folderOpen' : g.icon" size="sm" /><span class="tg-title" :title="g.project ? '项目文件夹 ' + g.project + '/' : ''">{{ g.title }}</span><span class="count">{{ g.items.length }}</span><button class="tg-add icon-btn ws-add" type="button" :title="'取出或新建' + (g.project ? '到项目 ' + g.project : g.title)" @click.stop="openMenu($event, g.project ? PROJECT_KINDS : [g.key], g.project)"><Icon name="plus" size="sm" /></button>
           </div>
           <template v-if="!ui.collapsed[g.key]">
             <template v-for="it in g.items" :key="it.path">
@@ -219,6 +249,7 @@ function jump(/** @type {string} */ id) {
               :title="it.kind === 'preset' ? (presetRef(it.bindings?.[0]?.id)?.type || '') + ' · ' + it.path : it.path"
               @contextmenu.prevent="openCtx($event, it.path)"
             >
+              <Icon v-if="g.project" class="tree-kind" :name="kindOf(it.kind).icon" size="sm" />
               <span class="name">{{ it.kind === 'regex' ? regexName(it) : displayName(it) }}</span>
               <span class="badges">
                 <StatusBadge v-if="it.error" status="invalid" icon-only :title="it.error" />
@@ -245,7 +276,7 @@ function jump(/** @type {string} */ id) {
               <Icon :name="s.icon" size="sm" /><span class="name">{{ s.label }}</span>
             </a>
             </template>
-            <div v-if="!g.items.length" class="tree-empty faint">还没有{{ g.title }} · <a :href="libraryHref(g.key)">去资料库取出</a></div>
+            <div v-if="!g.items.length && !g.project" class="tree-empty faint">还没有{{ g.title }} · <a :href="libraryHref(g.key)">去资料库取出</a></div>
           </template>
         </div>
         <div class="tree-legend faint">徽标按绑定的酒馆依次排列，悬停查看酒馆名</div>
@@ -256,10 +287,19 @@ function jump(/** @type {string} */ id) {
             <a v-for="k in menu.kinds" :key="'lib-' + k" class="ws-mi" role="menuitem" :href="libraryHref(k)" @click="closeMenu"><Icon name="download" size="sm" />从资料库导入{{ menu.kinds.length > 1 ? KIND_TITLE[k] : '' }}</a>
             <div class="ws-sep" />
             <button v-for="k in menu.kinds" :key="'new-' + k" class="ws-mi" role="menuitem" type="button" :disabled="menuBusy" @click="pickNew(k)"><Icon name="plus" size="sm" />{{ NEW_LABEL[k] }}</button>
+            <div class="ws-sep" />
+            <button class="ws-mi" role="menuitem" type="button" title="把磁盘上 Cellar 格式的资料项文件夹复制进工作区" @click="openImport"><Icon name="folderOpen" size="sm" />导入文件夹…</button>
           </template>
           <form v-else class="ws-name" @submit.prevent="createNamed">
             <label class="faint">{{ NEW_LABEL[naming] }} · 名称</label>
             <input ref="nameInput" v-model="newName" class="input" :placeholder="KIND_TITLE[naming] + '名称'" @keydown.esc="closeMenu" />
+            <template v-if="naming === 'character'">
+              <label class="ws-check"><input v-model="withWorld" type="checkbox" />同时新建世界书并链接到这张卡</label>
+              <input v-if="withWorld" v-model="worldName" class="input" :placeholder="'世界书名称（默认同角色名）'" aria-label="世界书名称" @keydown.esc="closeMenu" />
+            </template>
+            <label class="faint">项目文件夹（可不填）</label>
+            <input v-model="newFolder" class="input" list="ws-new-folders" :placeholder="'不填 = 默认文件夹'" aria-label="项目文件夹" :title="naming === 'character' ? '放进项目文件夹；同时新建的世界书也放在里面' : '放进项目文件夹'" @keydown.esc="closeMenu" />
+            <datalist id="ws-new-folders"><option v-for="p in projects" :key="p" :value="p" /></datalist>
             <div class="ws-name-btns">
               <button class="btn sm" type="button" @click="naming = ''">返回</button>
               <button class="btn sm primary" type="submit" :disabled="menuBusy || !newName.trim()">{{ menuBusy ? '创建中…' : '创建' }}</button>
@@ -273,6 +313,7 @@ function jump(/** @type {string} */ id) {
           <button v-if="desktop.available || editor === 'vscode'" class="ws-mi" role="menuitem" type="button" @click="ctxRun('open')"><Icon :name="editor === 'vscode' ? 'code' : 'external'" size="sm" />{{ editor === 'vscode' ? '在 VS Code 中打开' : '打开文件夹' }}</button>
           <button class="ws-mi" role="menuitem" type="button" @click="ctxRun('copy')"><Icon name="copy" size="sm" />复制路径</button>
           <div class="ws-sep" />
+          <button class="ws-mi" role="menuitem" type="button" @click="ctxRun('move')"><Icon name="folderOpen" size="sm" />移到项目…</button>
           <button class="ws-mi" :class="{ danger: ctxArmed }" role="menuitem" type="button" :disabled="!app.inDraft(ctx.path)" :title="app.inDraft(ctx.path) ? '恢复成最近一次记录的版本（还没记录过时恢复成刚取出 / 新建时的样子），之后可在检查栏撤回' : '这一项没有未记录的修改'" @click="ctxRun('revert')"><Icon name="revert" size="sm" />{{ ctxArmed ? '确定撤销当前的修改？' : '撤销当前的修改' }}</button>
           <div class="ws-sep" />
           <button class="ws-mi danger" role="menuitem" type="button" @click="ctxRun('remove')"><Icon name="trash" size="sm" />从工作区移除…</button>

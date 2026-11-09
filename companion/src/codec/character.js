@@ -2,6 +2,7 @@
  * Character card <-> workspace files. See docs/workspace-format.md §3.
  * Input/output is the canonical card JSON (what the PNG stores; JSON.parse(json_data)).
  */
+import { withoutHostFields } from '../../../shared/protocol.js';
 import { deepClone, getPath, hasPath, isPlainObject, setPath, unsetPath } from './object-path.js';
 import { needsRaw, normalizeText } from './text.js';
 import { HELPER_PATH, LEGACY_SCRIPTS_PATH, REGEX_PATH, hasHelper, joinParts, ownsPartFile, splitParts } from './character-parts.js';
@@ -242,7 +243,8 @@ export function encodeCharacter(files) {
         if (path && hasPath(card, path)) card[top] = getPath(card, path);
     }
 
-    return card;
+    // A card.json written before `chat` became host-owned (or pasted from an export) may still have it.
+    return withoutHostFields(card);
 }
 
 export function parseJsonFile(files, name) {

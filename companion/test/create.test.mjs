@@ -64,7 +64,26 @@ test('create unbound items, publish them to a tavern, read tavern items without 
         assert.equal((await t.api('/api/publish', { path: 'presets/openai-Mine', name: 'Mine' })).error.code, 'bad_request');
         await t.api('/api/create', { kind: 'lorebook', name: 'Dup' });
         t.tavern.store.lorebook.set('Dup', { entries: {} });
-        assert.equal((await t.api('/api/publish', { path: 'lorebooks/Dup', name: 'Dup' })).error.code, 'conflict');
+        const dup = await t.api('/api/publish', { path: 'lorebooks/Dup', name: 'Dup' });
+        assert.equal(dup.error.code, 'conflict');
+        assert.deepEqual(dup.error.details, { kind: 'lorebook', id: 'Dup' }, 'the existing item, so the user can bind to it');
+
+        // A card made with its lorebook, then published together.
+        const mage = await t.api('/api/create', { kind: 'character', name: 'Mage', world: 'Mage Lore' });
+        assert.equal(mage.ok, true, JSON.stringify(mage));
+        assert.deepEqual(mage.result.world, { name: 'Mage Lore', path: 'lorebooks/Mage Lore', created: true });
+        assert.equal((await t.api('/api/item', { path: 'characters/Mage' })).result.data.data.extensions.world, 'Mage Lore');
+        const pubMage = await t.api('/api/publish', { path: 'characters/Mage', name: 'Mage', withWorld: true });
+        assert.equal(pubMage.ok, true, JSON.stringify(pubMage));
+        assert.deepEqual(pubMage.result.world, { name: 'Mage Lore', path: 'lorebooks/Mage Lore', published: true });
+        assert.ok(t.tavern.store.lorebook.has('Mage Lore'));
+        // The tavern already has the linked book's name: the card is published, the book is reported with its id.
+        await t.api('/api/create', { kind: 'character', name: 'Bard', world: 'Dup' });
+        const pubBard = await t.api('/api/publish', { path: 'characters/Bard', name: 'Bard', withWorld: true });
+        assert.equal(pubBard.ok, true, JSON.stringify(pubBard));
+        assert.equal(pubBard.result.id, 'Bard.png');
+        const warning = pubBard.result.warnings.find(w => w.code === 'world-publish-failed');
+        assert.equal(warning?.existing, 'Dup', JSON.stringify(pubBard.result.warnings));
 
         const read = await t.api('/api/tavern/item', { kind: 'preset', id: 'openai/P1' });
         assert.equal(read.ok, true, JSON.stringify(read));

@@ -133,6 +133,42 @@ export function decodeLorebook(book, { template = null } = {}) {
     return files;
 }
 
+/** Entry files, parsed, in file name order (the order new uids are given out in). */
+function entryFiles(files) {
+    return Object.keys(files)
+        .filter(name => ENTRY_FILE_RE.test(name))
+        .sort((a, b) => a.localeCompare(b))
+        .map(name => ({ name, ...parseEntry(files[name], name) }));
+}
+
+/**
+ * Gives entry files that have no uid yet (written by hand) the next free uids, in file name order, and returns those
+ * files with the uid in their front matter. Encoding applies this in memory; the sync engine writes the files back
+ * before a tavern sees the uids, so an entry keeps its uid when more files are added (docs/workspace-format.md §4).
+ * @param {Record<string,string>} files
+ * @returns {Record<string,string>}
+ */
+export function assignEntryUids(files) {
+    const meta = parseJsonFile(files, META_FILE);
+    if (meta.opaque && Object.prototype.hasOwnProperty.call(meta.opaque, '$entries')) return {};
+    const keyByFile = meta.keys ?? {};
+    const parsed = entryFiles(files);
+    const lacking = parsed.filter(({ name, frontMatter }) => keyByFile[name] === undefined && (frontMatter.uid === undefined || frontMatter.uid === null));
+    if (!lacking.length) return {};
+    let maxUid = -1;
+    for (const { frontMatter } of parsed) {
+        if (Number.isInteger(frontMatter.uid)) maxUid = Math.max(maxUid, frontMatter.uid);
+    }
+    // Uids the item had, deleted ones included: a new entry never takes over a deleted entry's uid (the tavern keys
+    // timed effects by uid, and encoding tells new entries from known ones by meta.order).
+    for (const key of [...Object.keys(meta.opaque ?? {}), ...(meta.order ?? [])]) {
+        if (/^\d+$/.test(key)) maxUid = Math.max(maxUid, Number(key));
+    }
+    const out = {};
+    for (const { name, frontMatter, body } of lacking) out[name] = serializeEntry({ uid: ++maxUid, ...frontMatter }, body);
+    return out;
+}
+
 /**
  * @param {Record<string,string>} files
  * @param {{entryTemplate?: object}} [options] the tavern's current entry template; used for new entries only when
@@ -163,34 +199,16 @@ export function encodeLorebook(files, { entryTemplate } = {}) {
         return book;
     }
 
-    const parsed = Object.keys(files)
-        .filter(name => ENTRY_FILE_RE.test(name))
-        .sort((a, b) => a.localeCompare(b))
-        .map(name => ({ name, ...parseEntry(files[name], name) }));
-
-    let maxUid = -1;
-    for (const { frontMatter } of parsed) {
-        if (Number.isInteger(frontMatter.uid)) maxUid = Math.max(maxUid, frontMatter.uid);
-    }
-    for (const key of Object.keys(meta.opaque ?? {})) {
-        if (/^\d+$/.test(key)) maxUid = Math.max(maxUid, Number(key));
-    }
+    const assigned = assignEntryUids(files);
+    const parsed = entryFiles({ ...files, ...assigned });
+    /** Entries the item already had (decode lists every key in meta.order); others are new and take the template. */
+    const known = new Set(meta.order ?? []);
 
     const byKey = new Map();
-    const newKeys = [];
     for (const { name, frontMatter, body } of parsed) {
-        let key = keyByFile[name] ?? (frontMatter.uid !== undefined && frontMatter.uid !== null ? String(frontMatter.uid) : null);
-        let entry;
-        let isNew = false;
-        if (key === null) {
-            isNew = true;
-            const uid = ++maxUid;
-            entry = { ...deepClone(snapshot ?? entryTemplate ?? {}), ...frontMatter, uid };
-            key = String(uid);
-            newKeys.push(key);
-        } else {
-            entry = { ...defaultsFor(key), ...frontMatter };
-        }
+        const key = keyByFile[name] ?? String(frontMatter.uid);
+        const isNew = !known.has(key);
+        const entry = isNew ? { ...deepClone(snapshot ?? entryTemplate ?? {}), ...frontMatter } : { ...defaultsFor(key), ...frontMatter };
         if (byKey.has(key) || Object.prototype.hasOwnProperty.call(meta.opaque ?? {}, key)) {
             throw new Error(`${name}: duplicate entry uid ${key}`);
         }

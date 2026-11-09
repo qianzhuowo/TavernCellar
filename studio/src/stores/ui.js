@@ -62,7 +62,15 @@ export const useUi = defineStore('ui', {
     /** Lorebook entry to select once its editor shows (set by the preview page). @type {{path: string, uid: number}|null} */
     focusEntry: null,
     /** item whose 「从工作区移除」 confirmation dialog is open (RemoveDialog in App.vue) */
-    removeAsk: ''
+    removeAsk: '',
+    /** item whose 「移到项目…」 dialog is open (MoveDialog in App.vue) */
+      moveAsk: '',
+      /** item whose 「改名…」 dialog is open (RenameDialog in App.vue) */
+      renameAsk: '',
+    /** 「导入文件夹…」 dialog open (ImportDialog in App.vue) */
+    importAsk: false,
+    /** binding whose 「查看差异」 dialog is open (ChangesDialog in App.vue) @type {{path: string, target: string}|null} */
+    changesAsk: null
   }),
 
   actions: {
@@ -97,6 +105,20 @@ export const useUi = defineStore('ui', {
       const keep = this.tabs.filter((k) => !pathOfKey(k) || paths.includes(pathOfKey(k)));
       if (keep.length !== this.tabs.length) { this.tabs = keep; ls.set('cs.tabs', keep); }
       if (this.lastItem && !paths.includes(this.lastItem)) { this.lastItem = ''; ls.set('cs.lastItem', ''); }
+    },
+    /**
+     * An item moved to another folder (POST /api/move): its tabs, remembered views and the open route follow it.
+     * @param {string} from @param {string} to
+     */
+    itemMoved(from, to) {
+      const swap = (/** @type {string} */ k) => (pathOfKey(k) === from ? k.slice(0, k.indexOf(':') + 1) + to : k);
+      this.tabs = this.tabs.map(swap);
+      ls.set('cs.tabs', this.tabs);
+      if (this.lastItem === from) { this.lastItem = to; ls.set('cs.lastItem', to); }
+      if (this.lastHistory === from) { this.lastHistory = to; ls.set('cs.lastHistory', to); }
+      if (this.itemView[from]) { const { [from]: view, ...rest } = this.itemView; this.itemView = { ...rest, [to]: view }; }
+      if (pathOfKey(this.route.key) === from) this.replace(hrefOf(swap(this.route.key)));
+      else if (this.route.name === 'history' && this.route.arg === from) this.replace(historyHref(to));
     },
     toggleInspector() {
       if (window.innerWidth < 1100) { this.inspectorDrawer = !this.inspectorDrawer; return; }

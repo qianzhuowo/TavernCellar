@@ -108,12 +108,12 @@ test('tags, deployed pointers and log filtering by item', async () => {
         await mkdir(join(ws.root, 'lorebooks', 'B'), { recursive: true });
         await file('lorebooks/B/book.json', '{}');
         const v2 = await vcs.commit('add book');
-        await vcs.tag('v1.0', 'lorebooks/B');
+        await vcs.tag('v1.0', ['lorebooks/B']);
         assert.equal(await vcs.resolve('v1.0'), v2);
         assert.equal(await vcs.resolve('lorebooks/B:v1.0'), v2);
         assert.deepEqual((await vcs.log())[0].tags, [{ path: 'lorebooks/B', name: 'v1.0' }]);
-        assert.deepEqual((await vcs.log({ path: 'lorebooks/B' })).map(c => c.message), ['add book']);
-        assert.equal((await vcs.log({ path: 'characters/A' })).length, 1);
+        assert.deepEqual((await vcs.log({ paths: ['lorebooks/B'] })).map(c => c.message), ['add book']);
+        assert.equal((await vcs.log({ paths: ['characters/A'] })).length, 1);
 
         // An amended draft stays reachable through its deployed pointer.
         await file('characters/A/description.md', 'deployed text');
@@ -206,7 +206,7 @@ test('压缩历史 deletes replaced draft states, packs the rest, and every vers
         await vcs.init();
         for (const text of ['d1', 'd2', 'd3']) { await file('characters/A/description.md', text); await vcs.snapshot(); }
         const v1 = await vcs.commit('v1');
-        await vcs.tag('keep', 'characters/A', v1);
+        await vcs.tag('keep', ['characters/A'], v1);
         await file('characters/A/description.md', 'draft');
         const draft = await vcs.snapshot();
         await vcs.setDeployed('t1', 'characters/A', v1);
@@ -226,7 +226,7 @@ test('压缩历史 deletes replaced draft states, packs the rest, and every vers
         assert.equal((await fresh.readItemAt('keep', 'characters/A'))['description.md'], 'd3');
         assert.equal((await fresh.readItemAt(draft, 'characters/A'))['description.md'], 'draft');
         assert.equal(await fresh.getDeployed('t1', 'characters/A'), v1);
-        assert.equal((await fresh.revertPoint('characters/A')).oid, draft);
+        assert.equal((await fresh.revertPoint(['characters/A'])).oid, draft);
         // unchanged files are not written again as loose objects after a restart
         assert.equal(await fresh.snapshot(), draft);
         assert.equal((await fresh.storage()).loose, 0);
@@ -272,8 +272,8 @@ test('recording only some items leaves the others in the draft, with their origi
         const info = await vcs.draftInfo();
         assert.deepEqual(info.items, ['lorebooks/B']);
         assert.equal((await vcs.parentOf(info.id)), v);
-        assert.equal((await vcs.revertPoint('lorebooks/B')).oid !== null, true, 'B can still be undone to where it came in');
-        assert.deepEqual((await vcs.log({ path: 'characters/A' })).map(c => c.message).slice(0, 1), ['只存 A']);
+        assert.equal((await vcs.revertPoint(['lorebooks/B'])).oid !== null, true, 'B can still be undone to where it came in');
+        assert.deepEqual((await vcs.log({ paths: ['characters/A'] })).map(c => c.message).slice(0, 1), ['只存 A']);
         await assert.rejects(vcs.commit('x', ['characters/A']), /没有未存档的修改/);
         const v2 = await vcs.commit('', ['lorebooks/B']);
         assert.equal((await vcs.log())[0].id, v2);
@@ -287,24 +287,24 @@ test('descriptions are notes (the id stays); tags belong to items; tagging the d
         await mkdir(join(ws.root, 'lorebooks', 'B'), { recursive: true });
         await file('lorebooks/B/book.json', '{}');
         const v1 = await vcs.commit('第一版');
-        await vcs.tag('v1', 'characters/A', v1);
-        await vcs.tag('v1', 'lorebooks/B', v1);
+        await vcs.tag('v1', ['characters/A'], v1);
+        await vcs.tag('v1', ['lorebooks/B'], v1);
         assert.equal(await vcs.describeVersion(v1, '改过的说明'), v1);
         const [top] = await vcs.log();
         assert.equal(top.id, v1);
         assert.equal(top.message, '改过的说明');
         assert.deepEqual(top.tags, [{ path: 'characters/A', name: 'v1' }, { path: 'lorebooks/B', name: 'v1' }]);
         assert.equal(await vcs.resolve('v1'), v1, 'same version: not ambiguous');
-        await assert.rejects(vcs.tag('v1', 'characters/A', v1), /已有标签/);
+        await assert.rejects(vcs.tag('v1', ['characters/A'], v1), /已有标签/);
 
         await file('characters/A/description.md', 'A2');
         await file('lorebooks/B/book.json', '{"x":1}');
         const draft = await vcs.snapshot();
-        const v2 = await vcs.tag('v2', 'characters/A', draft, '带标签的存档');
+        const v2 = await vcs.tag('v2', ['characters/A'], draft, '带标签的存档');
         assert.notEqual(v2, draft);
-        assert.equal((await vcs.log({ path: 'characters/A' }))[0].message, '带标签的存档');
+        assert.equal((await vcs.log({ paths: ['characters/A'] }))[0].message, '带标签的存档');
         assert.deepEqual((await vcs.draftInfo()).items, ['lorebooks/B']);
-        await vcs.tag('v2', 'lorebooks/B', 'HEAD');
+        await vcs.tag('v2', ['lorebooks/B'], 'HEAD');
         await assert.rejects(vcs.resolve('v2'), /多个项/);
         assert.equal(await vcs.resolve('characters/A:v2'), v2);
         assert.equal(await vcs.untag('v2', 'lorebooks/B'), true);

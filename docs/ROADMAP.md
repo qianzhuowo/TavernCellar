@@ -227,7 +227,7 @@ VS Code / 记事本 / Cellar Studio / AI（MCP）
 | 项 | 状态 | 说明 / 备选 |
 |---|---|---|
 | tt WebView 能否连 `ws://127.0.0.1` | 已验证可连（阶段 1，tt 2.4.0） | 备选方案（本机 HTTP 长轮询）不再需要 |
-| 角色写入用 `edit` 还是 `merge-attributes` | 已定：`merge-attributes`（tt、ST 均已验证） | 数组整体替换；删除字段无法同步，宿主保留的字段会回写工作区 |
+| 角色写入用 `edit` 还是 `merge-attributes` | 已定：`merge-attributes`（tt、ST 均已验证） | 数组整体替换；删除的键以 `null` 发送（两边都存为 `null`，见 architecture §2） |
 | 刷新当前打开的角色时与酒馆自动保存互相覆盖 | tt、ST 均已验证：编辑器打开时同步，表单随之刷新 | 阶段 1 实机验证 |
 | 插件目录在 ST 的 public 下，`companion/node_modules` 会被当作静态文件提供 | 已知 | 阶段 6 把插件与伴侣程序分开发布 |
 | 多用户 ST（非 default-user） | 待定 | 在线模式下由酒馆的登录状态天然隔离；离线模式需要用户指定目录 |

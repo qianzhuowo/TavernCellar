@@ -246,6 +246,30 @@ const FIELD_LABELS = {
     'greetings.$len': '其他开场数量', 'helper.variables': '酒馆助手变量', 'helper.$rest': '酒馆助手设置', 'book.$meta': '内嵌世界书设置',
 };
 
+/** Visible slots (not the `.$` markers) where any of the slot maps differ, in slot order. */
+export function changedSlots(...maps) {
+    return [...new Set(maps.flatMap(m => [...m.keys()]))].filter(s => !s.endsWith('.$') && maps.some(m => !same(m.get(s), maps[0].get(s))));
+}
+
+/**
+ * Rows of the views that compare versions of one item slot by slot (conflict, pending changes, version history):
+ * `{ slot, label, [side]: { value, present } }` for each slot. `sides` maps a side name to its slot map; null marks a
+ * side that is not known (`{ value: null, present: false, unknown: true }`). The label comes from the first side that
+ * has the slot. Rows whose sides are all text differing only by line endings get `eolOnly` (nothing to see in a diff).
+ */
+export function slotRows(sides, slots) {
+    const known = Object.values(sides).filter(Boolean);
+    return slots.map(slot => {
+        const row = { slot, label: slotLabel(slot, known.find(m => m.has(slot))?.get(slot)) };
+        for (const [name, m] of Object.entries(sides)) {
+            row[name] = m ? { value: m.has(slot) ? m.get(slot) : null, present: m.has(slot) } : { value: null, present: false, unknown: true };
+        }
+        const texts = known.map(m => m.get(slot));
+        if (texts.length > 1 && texts.every(v => typeof v === 'string') && new Set(texts).size > 1 && new Set(texts.map(v => v.replace(/\r\n/g, '\n'))).size === 1) row.eolOnly = true;
+        return row;
+    });
+}
+
 /** Human-readable name of a slot; `value` (either side's) supplies item names. */
 export function slotLabel(slot, value) {
     if (FIELD_LABELS[slot]) return FIELD_LABELS[slot];

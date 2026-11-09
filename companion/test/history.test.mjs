@@ -182,7 +182,7 @@ test('预设工坊: an item as of a version, and the prompt collection guarded b
     assert.equal(now.result.kind, 'character');
     assert.equal(typeof now.result.data.data.name, 'string');
     assert.equal((await api('/api/history/item', { rev: first, path: 'characters/Alice' })).error.code, 'not_found');
-    assert.equal((await api('/api/history/item', { rev: 'HEAD', path: 'nowhere/x' })).error.code, 'bad_request');
+    assert.equal((await api('/api/history/item', { rev: 'HEAD', path: 'nowhere/x' })).error.code, 'not_found');
 
     const put = async body => (await fetch(`http://127.0.0.1:${server.port}/api/workshop/collection`, {
         method: 'PUT', headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body),

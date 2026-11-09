@@ -9,12 +9,16 @@
  *   W != B, T != B  conflict       -> never overwritten silently
  */
 import { hashData } from '../../shared/hash.js';
-import { ERR, MSG, ProtocolError, assertItemRef, assertNewItemName, parsePresetId } from '../../shared/protocol.js';
+import { ERR, MSG, ProtocolError, RENAME_KINDS, assertAvatarRequest, assertItemRef, assertNewItemName, parsePresetId } from '../../shared/protocol.js';
 import { newItem } from './defaults.js';
 import { CODECS, codecFor } from './codec/index.js';
+import { assignEntryUids } from './codec/lorebook.js';
 import { CHARACTER_PARTS, META_FILE as ITEM_META_FILE, migrateExclude, omitParts, presentParts, restoreParts } from './codec/character.js';
 import { detectFrameworks } from './codec/frameworks.js';
-import { assemble, merge3, sameSlot as same, slotLabel, slotsOf } from './codec/slots.js';
+import { assemble, changedSlots, merge3, sameSlot as same, slotLabel, slotRows, slotsOf } from './codec/slots.js';
+import { safeSegment } from './codec/text.js';
+import { isItemEntry } from './vcs/vcs.js';
+import { isProjectFolder } from './workspace/workspace.js';
 
 /** Re-merge attempts when the tavern changes again between our merge and the write (rule 6). */
 const MAX_MERGE_ATTEMPTS = 2;
@@ -32,6 +36,12 @@ function linkedWorldName(card) {
 /** A card with its name set in both places the tavern keeps it (V1 field and data.name). */
 function renameCharacter(card, name) {
     return { ...card, name, ...(card.data && typeof card.data === 'object' ? { data: { ...card.data, name } } : {}) };
+}
+
+/** A card linking to the lorebook `world` (data.extensions.world). */
+function relinkWorld(card, world) {
+    const data = card.data && typeof card.data === 'object' ? card.data : {};
+    return { ...card, data: { ...data, extensions: { ...(data.extensions ?? {}), world } } };
 }
 import { diffPaths } from './codec/object-path.js';
 
@@ -78,11 +88,25 @@ export class SyncEngine {
         return run;
     }
 
+    /**
+     * Writes the uids encoding gives hand-written lorebook entries into their files (codec/lorebook.js
+     * assignEntryUids). Called before data goes to a tavern: from then on the uid is the entry's identity there.
+     */
+    async #persistEntryUids(item) {
+        if (item.kind !== 'lorebook') return;
+        const assigned = assignEntryUids(await this.ws.readItemFiles(item.path));
+        for (const [rel, text] of Object.entries(assigned)) await this.ws.writeItemFile(item.path, rel, text);
+    }
+
     async encodeItem(item) {
-        const files = await this.ws.readItemFiles(item.path);
-        const options = item.kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
-        const data = codecFor(item.kind).encode(files, options);
+        const data = await this.#encodeFiles(item.kind, await this.ws.readItemFiles(item.path));
         return { data, hash: await hashData(data) };
+    }
+
+    /** Item data from an item folder's files (the workspace's, a version's, or a folder being imported). */
+    async #encodeFiles(kind, files) {
+        const options = kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
+        return codecFor(kind).encode(files, options);
     }
 
     // ---- item editing (Studio editors, docs/studio-design.md §6) -----------------------------------------------
@@ -387,25 +411,28 @@ export class SyncEngine {
 
     /** Resolves which bound + connected target to use for an item. */
     resolveBinding(item, targetSpec) {
-        const bound = Object.keys(item.bindings ?? {});
-        let targetId;
-        if (targetSpec) {
-            const matches = bound.filter(id => id === targetSpec || id.startsWith(targetSpec));
-            if (matches.length !== 1) throw new ProtocolError(ERR.BAD_REQUEST, `Item ${item.path} has no unique binding for "${targetSpec}"`);
-            targetId = matches[0];
-        } else {
-            const connected = bound.filter(id => this.targets.tryGet(id));
-            const live = connected.filter(id => this.targets.tryGetLive(id));
-            const candidates = live.length === 1 ? live : connected;
-            if (candidates.length !== 1) {
-                throw new ProtocolError(candidates.length ? ERR.BAD_REQUEST : ERR.NOT_CONNECTED,
-                    candidates.length ? `Item ${item.path} is bound to several available taverns; specify a target` : `No bound tavern of ${item.path} is connected or configured for offline access`);
-            }
-            targetId = candidates[0];
-        }
+        const targetId = this.#pickTarget(item, targetSpec);
         const conn = this.targets.tryGet(targetId);
         if (!conn) throw new ProtocolError(ERR.NOT_CONNECTED, `Target ${targetId} is not connected`);
         return { targetId, binding: item.bindings[targetId], link: conn.link };
+    }
+
+    /** The binding `targetSpec` (id or prefix) names, or else the only available one (live first). */
+    #pickTarget(item, targetSpec) {
+        const bound = Object.keys(item.bindings ?? {});
+        if (targetSpec) {
+            const matches = bound.filter(id => id === targetSpec || id.startsWith(targetSpec));
+            if (matches.length !== 1) throw new ProtocolError(ERR.BAD_REQUEST, `Item ${item.path} has no unique binding for "${targetSpec}"`);
+            return matches[0];
+        }
+        const connected = bound.filter(id => this.targets.tryGet(id));
+        const live = connected.filter(id => this.targets.tryGetLive(id));
+        const candidates = live.length === 1 ? live : connected;
+        if (candidates.length !== 1) {
+            throw new ProtocolError(candidates.length ? ERR.BAD_REQUEST : ERR.NOT_CONNECTED,
+                candidates.length ? `Item ${item.path} is bound to several available taverns; specify a target` : `No bound tavern of ${item.path} is connected or configured for offline access`);
+        }
+        return candidates[0];
     }
 
     // ---- connection lifecycle --------------------------------------------
@@ -487,34 +514,36 @@ export class SyncEngine {
     }
 
     /**
-     * Checks out one item. For characters, `withWorld` also checks out the lorebook named in
-     * data.extensions.world (or reuses it when it is already checked out from the same tavern, so a book shared by
-     * several cards exists once). The link itself is not stored: status derives it from the card each time.
+     * Checks out one item into its kind folder or the project folder `folder`. For characters, `withWorld` also
+     * checks out the lorebook named in data.extensions.world into the same folder (or reuses it when it is already
+     * checked out from the same tavern, so a book shared by several cards exists once). The link itself is not
+     * stored: status derives it from the card each time.
      */
-    async checkout(targetSpec, { kind, id, exclude, withWorld = false }) {
-        const result = await this.checkoutOne(targetSpec, { kind, id, exclude });
+    async checkout(targetSpec, { kind, id, exclude, withWorld = false, folder }) {
+        const result = await this.checkoutOne(targetSpec, { kind, id, exclude, folder });
         if (kind !== 'character' || !withWorld || !result.worldName) return result;
         const name = result.worldName;
         const existing = this.ws.findBinding(result.target, 'lorebook', name);
         if (existing) return { ...result, world: { name, path: existing.item.path, checkedOut: false } };
         try {
-            const book = await this.checkoutOne(result.target, { kind: 'lorebook', id: name });
+            const book = await this.checkoutOne(result.target, { kind: 'lorebook', id: name, folder });
             return { ...result, world: { name, path: book.path, checkedOut: true }, warnings: [...result.warnings, ...book.warnings] };
         } catch (error) {
             return { ...result, warnings: [...result.warnings, { code: 'world-checkout-failed', name, detail: error.message }] };
         }
     }
 
-    async checkoutOne(targetSpec, { kind, id, exclude }) {
+    async checkoutOne(targetSpec, { kind, id, exclude, folder }) {
         const { target, link } = this.targets.resolve(targetSpec);
         assertItemRef({ kind, id });
+        this.ws.itemFolder(kind, folder);
         const existing = this.ws.findBinding(target.id, kind, id);
         if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `${kind} "${id}" is already checked out at ${existing.item.path}`);
         if (exclude !== undefined && (kind !== 'character' || !Array.isArray(exclude) || exclude.some(p => !CHARACTER_PARTS.includes(p)))) {
             throw new ProtocolError(ERR.BAD_REQUEST, `exclude must list character parts: ${CHARACTER_PARTS.join(', ')}`);
         }
         const remote = await link.request(MSG.ITEM_GET, { kind, id });
-        const path = this.ws.allocateItemPath(kind, id);
+        const path = this.ws.allocateItemPath(kind, id, folder);
         const item = { path, kind, bindings: { [target.id]: { id, autoSync: false } }, ...(exclude?.length ? { layout: { exclude } } : {}) };
         return this.withLock(path, async () => {
             this.ws.manifest.items.push(item);
@@ -548,6 +577,7 @@ export class SyncEngine {
 
     async #syncLocked(item, targetId, binding, link, force, attempt = 0) {
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
+        await this.#persistEntryUids(item);
         const local = await this.encodeItem(item);
         if (local.hash === state.base && !force) {
             // Nothing to send: workspace and tavern agree on the last written version, so earlier sync warnings go.
@@ -722,6 +752,358 @@ export class SyncEngine {
     }
 
     /**
+     * Moves an item to the project folder `folder` (empty: back to its kind folder), named by the workspace's one
+     * naming rule (Workspace.movePath). Everything kept under the item path follows: its files (the user's own
+     * included), sync state, base snapshots, an open conflict, version pointers and tags, undo steps. Bindings and
+     * so the taverns' watch lists do not change. The old path is kept in `formerPaths`, so the item's history still
+     * lists, reads and restores the versions from before.
+     */
+    async moveItem(path, { folder } = {}) {
+        const item = this.requireItem(path);
+        return this.withLock(item.path, async () => {
+            const from = item.path;
+            const to = this.ws.movePath(item, folder);
+            if (to === from) return { path: from, from, result: 'unchanged' };
+            await this.#moveTo(item, to);
+            return { path: to, from, result: 'moved' };
+        });
+    }
+
+    /** Moves an item folder and everything kept under its path (caller holds the item lock); see moveItem. */
+    async #moveTo(item, to) {
+        const from = item.path;
+        // Version refs first (all or nothing), then the files; a failed file move puts the refs back, so either the
+        // whole item moved or nothing did.
+        const vcs = await this.versions();
+        await vcs.renameItem(from, to);
+        try {
+            await this.ws.moveItem(item, to);
+        } catch (error) {
+            await vcs.renameItem(to, from).catch(e => this.log(`version history: ${e.message}`));
+            throw error;
+        }
+        for (const map of [this.edits, this.local]) {
+            if (!map.has(from)) continue;
+            map.set(to, map.get(from));
+            map.delete(from);
+        }
+        await this.#draftChanged();
+        this.log(`moved ${from} -> ${to}`);
+    }
+
+    // ---- renaming in the taverns (docs/architecture.md §3 改名) ------------------------------------------------
+
+    /**
+     * Renames a bound character or lorebook in every tavern it is bound to (`item.rename`: the tavern's own rename,
+     * which also moves a character's chats), so the binding ids, the workspace card's name and — when the folder was
+     * named after the item — the folder follow (moved like moveItem, history included). All bindings must be live,
+     * support `item.rename` and be in sync (no local or tavern changes, no conflict, not pinned); this is checked for
+     * every binding before anything changes.
+     * Renaming a lorebook relinks the workspace cards that link to it (#relink). Characters with `withWorld`: the
+     * linked lorebook is renamed to the new card name too, when it had the card's old name (else it keeps its name
+     * and the link: warning `world-name-differs`); both are checked before either is renamed.
+     */
+    async renameItem(path, { name, withWorld = false } = {}) {
+        const item = this.requireItem(path);
+        if (withWorld && item.kind !== 'character') throw new ProtocolError(ERR.BAD_REQUEST, 'withWorld 只用于角色卡');
+        const { local } = await this.#renameCheck(item, name);
+        const warnings = [];
+        let book = null;
+        const world = withWorld ? this.#worldOf(item, local.data) : null;
+        if (world && !world.item) warnings.push({ code: 'world-not-in-workspace', name: world.name });
+        else if (world && world.name !== this.#tavernName(item, local.data)) warnings.push({ code: 'world-name-differs', name: world.name });
+        else if (world) {
+            await this.#renameCheck(world.item, name);
+            book = world.item;
+        }
+        const result = await this.#renameOne(item, name);
+        result.warnings.unshift(...warnings);
+        if (!book) return result;
+        const bookFrom = book.path;
+        try {
+            const renamed = await this.#renameOne(book, name);
+            result.world = { name, path: renamed.path, from: bookFrom, renamed: true };
+            result.warnings.push(...renamed.warnings);
+        } catch (error) {
+            result.world = { name: world.name, path: book.path, renamed: false };
+            result.warnings.push({ code: 'world-rename-failed', name: world.name, detail: error.message });
+        }
+        return result;
+    }
+
+    /** The name an item has in a tavern's UI: a card's own name, else the name its id gives. */
+    #tavernName(item, data) {
+        return item.kind === 'character' ? (data?.data?.name ?? data?.name ?? this.ws.itemName(item)) : this.ws.itemName(item);
+    }
+
+    /**
+     * The lorebook a card links to (data.extensions.world) and the workspace item it resolves to for the card's first
+     * binding (null when not in the workspace); undefined when the card links none. Status shows the same link.
+     */
+    #worldOf(card, data) {
+        const name = linkedWorldName(data);
+        if (!name) return undefined;
+        return { name, item: this.ws.findWorld(name, Object.keys(card.bindings ?? {})[0], card.path) };
+    }
+
+    /** Refuses a rename that could not be done in every binding; nothing has changed when it throws. */
+    async #renameCheck(item, name) {
+        if (!RENAME_KINDS.includes(item.kind)) throw new ProtocolError(ERR.BAD_REQUEST, '只能给角色卡和世界书改名');
+        assertNewItemName(name);
+        const targets = Object.keys(item.bindings ?? {});
+        if (!targets.length) throw new ProtocolError(ERR.BAD_REQUEST, `${item.path} 没有绑定酒馆；改名改的是酒馆里的名称，未发布的项在发布时起名`);
+        const local = await this.encodeItem(item);
+        // Case-insensitive: names are file names, and the taverns refuse a case-only rename the same way.
+        if (this.#tavernName(item, local.data).toLowerCase() === name.toLowerCase()) throw new ProtocolError(ERR.BAD_REQUEST, `新名称与现在的名称相同（不区分大小写）：${name}`);
+        const newId = item.kind === 'character' ? `${name}.png` : name;
+        for (const targetId of targets) {
+            const binding = item.bindings[targetId];
+            const label = this.#targetLabel(targetId);
+            const conn = this.targets.tryGetLive(targetId);
+            if (!conn) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 没有在运行：改名需要酒馆在运行（打开酒馆后再试）`);
+            if (!(conn.target.rename >= 1)) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 的 Cellar Link 太旧，不支持改名；请更新插件`);
+            if (binding.pin) throw new ProtocolError(ERR.BAD_REQUEST, `${item.path} 在 ${label} 固定在某个版本；先改为跟随最新再改名`);
+            const state = this.ws.getSyncState(item.path, targetId) ?? {};
+            if (state.conflict || local.hash !== state.base) throw new ProtocolError(ERR.BAD_REQUEST, `${item.path} 与 ${label} 还没有同步一致；先同步再改名`);
+            const remote = await conn.link.request(MSG.ITEM_GET, { kind: item.kind, id: binding.id });
+            if (remote.hash !== state.base) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 里的「${binding.id}」有还没取回的修改；先取回再改名`);
+            const other = this.ws.findBinding(targetId, item.kind, newId);
+            if (other && other.item !== item) throw new ProtocolError(ERR.CONFLICT, `${item.kind} "${newId}" 已绑定在 ${other.item.path}`, { kind: item.kind, id: newId });
+            // From the tavern's list (what its own rename checks), not by reading the item: a missing item is a
+            // backend error the tavern may show to the user (tt does), and the list gives the existing id's real case.
+            const { items } = await conn.link.request(MSG.CATALOG_LIST, { kind: item.kind, query: newId, limit: 500 });
+            const existing = items.find(entry => entry.id.toLowerCase() === newId.toLowerCase());
+            if (existing) throw new ProtocolError(ERR.CONFLICT, `${label} 里已有同名的${item.kind === 'lorebook' ? '世界书' : '角色卡'}：${name}`, { kind: item.kind, id: existing.id });
+        }
+        return { local };
+    }
+
+    /** Renames one checked item (#renameCheck) in each binding, then moves its folder; lorebooks relink their cards. */
+    async #renameOne(item, name) {
+        const cards = item.kind === 'lorebook' ? await this.#cardsLinkingTo(item) : [];
+        const oldName = this.ws.itemName(item);
+        const result = await this.withLock(item.path, () => this.#renameLocked(item, name));
+        for (const card of cards) {
+            const relinked = await this.#relink(card, oldName, name);
+            result.warnings.push(...relinked.warnings);
+            (result.relinked ??= []).push(relinked.path);
+        }
+        return result;
+    }
+
+    /**
+     * `item.rename` timed out (a throttled or busy tavern page): the tavern may have renamed the item anyway, and a
+     * binding left on the old id would fail every later sync. Reads the tavern once more — the old id gone and the
+     * new one there means it was renamed, and that read stands in for the response. Anything else: null (it failed).
+     */
+    async #renamedAnyway(targetId, kind, oldId, name, error) {
+        if (error?.code !== ERR.TIMEOUT) return null;
+        const conn = this.targets.tryGetLive(targetId);
+        if (!conn) return null;
+        const newId = kind === 'character' ? `${name}.png` : name;
+        const read = id => conn.link.request(MSG.ITEM_GET, { kind, id }).catch(e => (e?.code === ERR.NOT_FOUND ? null : Promise.reject(e)));
+        try {
+            const [old, renamed] = [await read(oldId), await read(newId)];
+            if (old || !renamed) return null;
+            this.log(`rename of ${oldId} in ${targetId} timed out, but the tavern has ${newId}: taking it`);
+            return { kind, id: newId, data: renamed.data, hash: renamed.hash, warnings: [{ code: 'rename-confirmed-late', target: targetId }] };
+        } catch {
+            return null;
+        }
+    }
+
+    async #renameLocked(item, name) {
+        const from = item.path;
+        const oldName = this.ws.itemName(item);
+        const done = [];
+        const warnings = [];
+        let failure;
+        for (const targetId of Object.keys(item.bindings)) {
+            const binding = item.bindings[targetId];
+            const state = this.ws.getSyncState(item.path, targetId) ?? {};
+            let result;
+            try {
+                const conn = this.targets.tryGetLive(targetId);
+                if (!conn) throw new ProtocolError(ERR.NOT_CONNECTED, `${this.#targetLabel(targetId)} 已断开`);
+                result = await conn.link.request(MSG.ITEM_RENAME, { kind: item.kind, id: binding.id, name, baseHash: state.base });
+            } catch (error) {
+                result = await this.#renamedAnyway(targetId, item.kind, binding.id, name, error);
+                if (!result) {
+                    failure = error;
+                    break;
+                }
+            }
+            item.bindings[targetId] = { ...binding, id: result.id };
+            const local = await this.encodeItem(item);
+            if (result.hash !== local.hash) await this.writeItem(item, result.data);
+            await this.#agree(item, targetId, result.data, result.hash);
+            await this.ws.saveManifest();
+            await this.ws.saveState();
+            warnings.push(...(result.warnings ?? []));
+            done.push(targetId);
+            this.log(`renamed ${item.path} in ${targetId}: ${binding.id} -> ${result.id}`);
+        }
+        if (done.length) {
+            const to = this.ws.renamedPath(item, oldName);
+            if (to !== item.path) await this.#moveTo(item, to);
+            for (const targetId of done) {
+                await this.#deployed(item, targetId);
+                await this.pushWatchList(targetId).catch(error => this.log(`watch list for ${targetId} not updated: ${error.message}`));
+            }
+        }
+        if (failure) {
+            if (!done.length) throw failure;
+            throw new ProtocolError(failure.code ?? ERR.HOST_ERROR,
+                `${failure.message}（已在 ${done.map(id => this.#targetLabel(id)).join('、')} 改名为「${name}」，现在在 ${item.path}；这个酒馆里仍是旧名称）`, { path: item.path, renamed: done });
+        }
+        return { path: item.path, from, result: 'renamed', ids: Object.fromEntries(done.map(id => [id, item.bindings[id].id])), warnings };
+    }
+
+    /** Workspace cards whose lorebook link (#worldOf) resolves to `book`. */
+    async #cardsLinkingTo(book) {
+        const cards = [];
+        for (const card of this.ws.manifest.items) {
+            if (card.kind !== 'character') continue;
+            const data = await this.encodeItem(card).then(r => r.data, () => null);
+            if (data && this.#worldOf(card, data)?.item === book) cards.push(card);
+        }
+        return cards;
+    }
+
+    /**
+     * A lorebook a card links to was renamed from `oldName` to `name`: the card's link is changed in the workspace,
+     * and synced to each tavern where the card was in sync and the tavern is live (the normal sync path, so the
+     * tavern card links to the renamed book). Elsewhere the change waits as a local change (`world-link-not-synced`).
+     */
+    async #relink(card, oldName, name) {
+        return this.withLock(card.path, async () => {
+            const warnings = [];
+            const local = await this.encodeItem(card);
+            if (linkedWorldName(local.data) !== oldName) return { path: card.path, warnings };
+            const ready = Object.keys(card.bindings ?? {}).filter(targetId => {
+                const state = this.ws.getSyncState(card.path, targetId) ?? {};
+                return !state.conflict && !card.bindings[targetId].pin && state.base === local.hash && this.targets.tryGetLive(targetId);
+            });
+            await this.writeItem(card, relinkWorld(local.data, name));
+            for (const targetId of Object.keys(card.bindings ?? {})) {
+                const label = this.#targetLabel(targetId);
+                if (!ready.includes(targetId)) {
+                    warnings.push({ code: 'world-link-not-synced', path: card.path, label });
+                    continue;
+                }
+                try {
+                    await this.#syncLocked(card, targetId, card.bindings[targetId], this.targets.tryGetLive(targetId).link, false);
+                } catch (error) {
+                    warnings.push({ code: 'world-link-not-synced', path: card.path, label, detail: error.message });
+                }
+            }
+            this.log(`relinked ${card.path}: lorebook ${oldName} -> ${name}`);
+            return { path: card.path, warnings };
+        });
+    }
+
+    // ---- avatars (docs/architecture.md §3 换头像) -----------------------------------------------------------
+
+    /**
+     * Replaces a bound character's avatar in every tavern it is bound to (`item.avatar`). The image lives in the
+     * tavern only; the card data stays, so sync state is not required to be in agreement. Every binding must be
+     * reachable for writing (live with `capabilities.avatar`, or offline in mode 'write'); checked before anything
+     * changes. A returned card hash other than the base (the tavern re-serialized it, or had changes of its own) goes
+     * the way of any tavern-side change: onItemChanged for live links, the status' tavern-changes offline.
+     * @param {{image: string}} body image: base64 PNG
+     */
+    async setAvatar(path, { image } = {}) {
+        const item = this.requireItem(path);
+        if (item.kind !== 'character') throw new ProtocolError(ERR.BAD_REQUEST, '只有角色卡有头像');
+        const targets = Object.keys(item.bindings ?? {});
+        if (!targets.length) throw new ProtocolError(ERR.BAD_REQUEST, `${item.path} 没有绑定酒馆；头像存在酒馆里，先发布到酒馆再换头像`);
+        for (const targetId of targets) {
+            assertAvatarRequest({ kind: item.kind, id: item.bindings[targetId].id, image });
+            this.#avatarConn(targetId);
+        }
+        const done = [];
+        const changed = [];
+        const warnings = [];
+        let failure;
+        await this.withLock(item.path, async () => {
+            for (const targetId of targets) {
+                const { id } = item.bindings[targetId];
+                try {
+                    const result = await this.#avatarConn(targetId).link.request(MSG.ITEM_AVATAR, { kind: item.kind, id, image });
+                    warnings.push(...(result.warnings ?? []));
+                    if (result.hash !== this.ws.getSyncState(item.path, targetId)?.base) changed.push({ targetId, id, hash: result.hash });
+                    done.push(targetId);
+                    this.log(`avatar of ${item.path} replaced in ${targetId}`);
+                } catch (error) {
+                    failure = error;
+                    break;
+                }
+            }
+        });
+        for (const { targetId, id, hash } of changed) {
+            if (this.targets.tryGetLive(targetId)) await this.onItemChanged(targetId, { kind: item.kind, id, hash });
+        }
+        if (failure) {
+            if (!done.length) throw failure;
+            throw new ProtocolError(failure.code ?? ERR.HOST_ERROR,
+                `${failure.message}（已在 ${done.map(id => this.#targetLabel(id)).join('、')} 换了头像；这个酒馆里仍是旧头像）`, { path: item.path, done });
+        }
+        return { path: item.path, result: 'avatar-set', ids: Object.fromEntries(targets.map(id => [id, item.bindings[id].id])), avatarAt: Date.now(), warnings };
+    }
+
+    /** The link that can change an avatar in this tavern now, else a ProtocolError saying why not. */
+    #avatarConn(targetId) {
+        const label = this.#targetLabel(targetId);
+        const live = this.targets.tryGetLive(targetId);
+        if (live) {
+            if (!(live.target.avatar >= 1)) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 的 Cellar Link 太旧，不支持换头像；请更新插件`);
+            return live;
+        }
+        if (!this.targets.tryGet(targetId)) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 没有连接，也没有设置离线访问：打开酒馆后再换头像`);
+        const conn = this.#writableConn(targetId);
+        if (!conn) throw new ProtocolError(ERR.BAD_REQUEST, `${label} 没有在运行，并且设为等酒馆启动再同步：打开酒馆后再换头像，或在设置里改为不开酒馆也同步`);
+        return conn;
+    }
+
+    /**
+     * Copies Cellar-format item folders from anywhere on disk into the workspace as unbound items: `source` is one
+     * item folder (with cellar-item.json) or a folder of them. Each goes to `<folder>/<name>` (folder: default the
+     * source folder's name; names by the workspace naming rule). A folder whose files do not read as its kind is
+     * reported in `items[].error` and not taken in.
+     */
+    async importItems({ source, folder } = {}) {
+        if (typeof source !== 'string' || !source.trim()) throw new ProtocolError(ERR.BAD_REQUEST, 'source 应为要导入的文件夹路径');
+        const found = await this.ws.itemFoldersAt(source.trim());
+        if (!found.length) throw new ProtocolError(ERR.BAD_REQUEST, `${source} 里没有 Cellar 格式的资料项（含 cellar-item.json 的文件夹）`);
+        const into = folder || safeSegment(source.trim().split(/[\\/]/).filter(Boolean).pop() ?? '');
+        const items = [];
+        for (const entry of found) {
+            try {
+                if (entry.error) throw new Error(entry.error);
+                try {
+                    await this.#encodeFiles(entry.kind, entry.files);
+                } catch (error) {
+                    throw new Error(`文件无法读取：${error.message}`);
+                }
+                const path = this.ws.importPath(entry.kind, entry.name, into);
+                await this.withLock(path, async () => {
+                    await this.ws.copyIntoWorkspace(entry.dir, path);
+                    const item = { path, kind: entry.kind, bindings: {} };
+                    this.ws.manifest.items.push(item);
+                    await this.ws.saveManifest();
+                    await this.#markOrigin(item);
+                });
+                items.push({ source: entry.dir, path, kind: entry.kind });
+                this.log(`imported ${entry.dir} -> ${path}`);
+            } catch (error) {
+                items.push({ source: entry.dir, error: error.message });
+            }
+        }
+        this.onHistory();
+        return { folder: into, items };
+    }
+
+    /**
      * Binds an existing workspace item to an item in a tavern (the way back from `unbind`, or adopting a tavern item
      * for a folder made elsewhere). Nothing is written on either side: identical data is recorded as in sync;
      * otherwise there is no common base, so a whole-item conflict is recorded and the user picks a side.
@@ -766,17 +1148,36 @@ export class SyncEngine {
     /**
      * Creates a workspace item that no tavern has yet (unbound); `publish` creates it in a tavern later. Regex: the
      * workspace holds one global regex list, so this only creates it when there is none.
+     * Characters: `world` names the lorebook the card links to (`extensions.world`); the workspace lorebook of that
+     * name is created too unless there is one (like `checkout` with `withWorld`). `folder`: the project folder the
+     * new items go into (empty: their kind folders).
      */
-    async createItem({ kind, name } = {}) {
+    async createItem({ kind, name, world, folder } = {}) {
         if (!CODECS[kind]) throw new ProtocolError(ERR.BAD_REQUEST, `Unknown kind: ${kind}`);
+        this.ws.itemFolder(kind, folder);
         if (kind === 'regex') {
             const existing = this.ws.manifest.items.find(item => item.kind === 'regex');
             if (existing) throw new ProtocolError(ERR.BAD_REQUEST, `工作区已有全局正则：${existing.path}`, { path: existing.path });
         } else {
             assertNewItemName(name);
         }
-        const { id, data } = newItem(kind, name);
-        const path = this.ws.allocateItemPath(kind, id);
+        if (world !== undefined && world !== null && world !== '') {
+            if (kind !== 'character') throw new ProtocolError(ERR.BAD_REQUEST, 'world is only for characters');
+            assertNewItemName(world);
+        } else {
+            world = undefined;
+        }
+        const created = await this.#createOne(kind, name, world, folder);
+        if (!world) return created;
+        const existing = this.ws.findWorld(world, null, created.path);
+        if (existing) return { ...created, world: { name: world, path: existing.path, created: false } };
+        const book = await this.#createOne('lorebook', world, undefined, folder);
+        return { ...created, world: { name: world, path: book.path, created: true } };
+    }
+
+    async #createOne(kind, name, world, folder) {
+        const { id, data } = newItem(kind, name, { world });
+        const path = this.ws.allocateItemPath(kind, id, folder);
         const item = { path, kind, bindings: {} };
         return this.withLock(path, async () => {
             this.ws.manifest.items.push(item);
@@ -794,8 +1195,31 @@ export class SyncEngine {
     /**
      * Creates a workspace item in a tavern where it does not exist yet and binds it there, in sync. `name` is the
      * character / lorebook / preset name in the tavern; characters get their avatar file name from the tavern.
+     * A name the tavern already has is refused (`conflict`, details `{ kind, id }` of the existing item): the way
+     * to use that item is `bind`, which compares both sides and lets the user pick.
+     * Characters with `withWorld`: the unbound workspace lorebook the card links to is published under the linked
+     * name too; that step's failure is reported as a warning (`world-publish-failed`, with the same details).
      */
-    async publish(path, { target: targetSpec, name } = {}) {
+    async publish(path, { target: targetSpec, name, withWorld = false } = {}) {
+        const result = await this.#publishOne(path, { target: targetSpec, name });
+        const item = this.requireItem(path);
+        const worldName = item.kind === 'character' && withWorld ? linkedWorldName(result.data) : undefined;
+        const { data: _data, ...out } = result;
+        if (!worldName) return out;
+        const book = this.ws.findWorld(worldName, result.target, path);
+        if (!book) return { ...out, warnings: [...out.warnings, { code: 'world-not-in-workspace', name: worldName }] };
+        if (book.bindings?.[result.target]) return { ...out, world: { name: worldName, path: book.path, published: false } };
+        try {
+            const pub = await this.#publishOne(book.path, { target: result.target, name: worldName });
+            return { ...out, world: { name: worldName, path: book.path, published: true }, warnings: [...out.warnings, ...pub.warnings] };
+        } catch (error) {
+            const warning = { code: 'world-publish-failed', name: worldName, path: book.path, detail: error.message };
+            if (error.code === ERR.CONFLICT && error.details?.id) warning.existing = error.details.id;
+            return { ...out, world: { name: worldName, path: book.path, published: false }, warnings: [...out.warnings, warning] };
+        }
+    }
+
+    async #publishOne(path, { target: targetSpec, name } = {}) {
         const item = this.requireItem(path);
         if (item.kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, '全局正则在每个酒馆都已存在，请用「绑定」');
         assertNewItemName(name);
@@ -806,6 +1230,7 @@ export class SyncEngine {
         }
         this.#assertCanWrite(target.id);
         return this.withLock(path, async () => {
+            await this.#persistEntryUids(item);
             const local = await this.encodeItem(item);
             const data = item.kind === 'character' ? renameCharacter(local.data, name) : local.data;
             const id = item.kind === 'preset' ? `${(await this.decodeOptions(item)).apiId ?? 'openai'}/${name}` : item.kind === 'character' ? undefined : name;
@@ -820,7 +1245,7 @@ export class SyncEngine {
             await this.#deployed(item, target.id);
             await this.pushWatchList(target.id).catch(error => this.log(`watch list for ${target.id} not updated: ${error.message}`));
             this.log(`published ${path} -> ${target.id} (${result.id})`);
-            return { path, target: target.id, id: result.id, hash: result.hash, warnings: result.warnings ?? [] };
+            return { path, target: target.id, id: result.id, hash: result.hash, data: result.data, warnings: result.warnings ?? [] };
         });
     }
 
@@ -919,15 +1344,44 @@ export class SyncEngine {
             this.ws.loadConflict(path, targetId),
             this.ws.loadBase(path, targetId),
         ]);
-        const l = slotsOf(item.kind, local ?? {}), t = slotsOf(item.kind, saved?.data ?? {}), b = base ? slotsOf(item.kind, base) : new Map();
-        const side = (m, slot) => ({ value: m.has(slot) ? m.get(slot) : null, present: m.has(slot) });
-        const slots = (conflict.slots ?? ['*']).map(slot => slot === '*'
-            ? { slot, label: '整项', workspace: { value: null, present: local != null }, tavern: { value: null, present: Boolean(saved) }, base: { value: null, present: false },
+        const l = slotsOf(item.kind, local ?? {}), t = slotsOf(item.kind, saved?.data ?? {});
+        const wanted = conflict.slots ?? ['*'];
+        const slots = wanted.includes('*')
+            ? [{ slot: '*', label: '整项', workspace: { value: null, present: local != null }, tavern: { value: null, present: Boolean(saved) }, base: { value: null, present: false },
                 // No base to merge against: show what differs between the two sides, slot by slot, to choose from.
-                differences: [...new Set([...l.keys(), ...t.keys()])].filter(s => !same(l.get(s), t.get(s)) && !s.endsWith('.$'))
-                    .map(s => ({ slot: s, label: slotLabel(s, l.get(s) ?? t.get(s)), workspace: side(l, s), tavern: side(t, s), base: { value: null, present: false } })) }
-            : { slot, label: slotLabel(slot, l.get(slot) ?? t.get(slot)), workspace: side(l, slot), tavern: side(t, slot), base: base ? side(b, slot) : { value: null, present: false, unknown: true } });
+                differences: slotRows({ workspace: l, tavern: t, base: new Map() }, changedSlots(l, t)) }]
+            : slotRows({ workspace: l, tavern: t, base: base ? slotsOf(item.kind, base) : null }, wanted);
         return { path, kind: item.kind, target: targetId, at: conflict.at, slots };
+    }
+
+    /**
+     * What syncing or pulling one binding would carry (the 「查看差异」 view of 本地有修改 / 酒馆有修改): the slots
+     * where the workspace or the tavern's current version differs from the last synced version (the base), as
+     * conflict-view rows with `changed` naming the sides that moved. Without a usable base snapshot the rows compare
+     * the two sides directly (`changed` lists both); an unreachable tavern counts as unknown.
+     */
+    async changeDetails(path, { target: targetSpec } = {}) {
+        const item = this.requireItem(path);
+        const targetId = this.#pickTarget(item, targetSpec);
+        const state = this.ws.getSyncState(path, targetId) ?? {};
+        const link = this.targets.tryGet(targetId)?.link;
+        const [local, remote, base] = await Promise.all([
+            this.encodeItem(item),
+            link ? link.request(MSG.ITEM_GET, { kind: item.kind, id: item.bindings[targetId].id }) : null,
+            this.ws.loadBase(path, targetId),
+        ]);
+        const baseUsable = base !== undefined && (await hashData(base)) === (state.mergeBase ?? state.base);
+        const sides = {
+            workspace: slotsOf(item.kind, local.data),
+            tavern: remote ? slotsOf(item.kind, remote.data) : null,
+            base: baseUsable ? slotsOf(item.kind, base) : null,
+        };
+        const known = Object.values(sides).filter(Boolean);
+        const slots = slotRows(sides, changedSlots(...known)).map(row => ({
+            ...row,
+            changed: ['workspace', 'tavern'].filter(s => sides[s] && (!sides.base || !same(sides[s].get(row.slot), sides.base.get(row.slot)))),
+        }));
+        return { path, kind: item.kind, target: targetId, slots };
     }
 
     /**
@@ -1046,7 +1500,10 @@ export class SyncEngine {
         this.snapshotTimer = null;
     }
 
-    /** Draft, versions (optionally only those touching `path`) and where each binding is deployed. */
+    /**
+     * Draft, versions (optionally only those touching `path`) and where each binding is deployed. Item paths are
+     * given as they are now: a moved item's versions from before the move are listed under its current path.
+     */
     async history({ path, limit = 100 } = {}) {
         const vcs = await this.versions();
         await vcs.snapshot();
@@ -1058,7 +1515,8 @@ export class SyncEngine {
                 if (rev) deployed.push({ path: item.path, target: targetId, label: this.#targetLabel(targetId), rev, ...(binding.pin ? { pinned: true } : {}) });
             }
         }
-        const versions = await vcs.log({ path, limit: Math.min(Math.max(Number(limit) || 100, 1), 500) });
+        const versions = (await vcs.log({ paths: path ? this.#historyPaths(path) : undefined, limit: Math.min(Math.max(Number(limit) || 100, 1), 500) }))
+            .map(v => ({ ...v, items: this.#asCurrent(v.items), tags: this.#tagsAsCurrent(v.tags) }));
         // A deployed draft that was amended afterwards is not in the list: show it on the version it became
         // (same parent), marked as an earlier state unless only the description changed.
         const ids = new Set(versions.map(v => v.id));
@@ -1072,7 +1530,54 @@ export class SyncEngine {
                 if (!(await vcs.sameContent(d.rev, later.id).catch(() => false))) d.earlier = true;
             }
         }
-        return { draft: await vcs.draftInfo(), versions, deployed };
+        return { draft: await this.#draftInfo(vcs), versions, deployed };
+    }
+
+    // One rule for items in the history: an item is every path it has had (Workspace.itemPaths, current first), and
+    // history output names each item by its current path.
+
+    /** The paths of the item at `path` (a removed item: just `path`). */
+    #historyPaths(path) {
+        const item = this.ws.getItem(path);
+        return item ? this.ws.itemPaths(item) : [path];
+    }
+
+    /** Version entries -> current item paths (an entry from before a move names the item where it is now). */
+    #asCurrent(paths) {
+        return [...new Set(paths.map(p => this.ws.currentPath(p)))];
+    }
+
+    #tagsAsCurrent(tags) {
+        return tags.map(t => ({ ...t, path: this.ws.currentPath(t.path) }));
+    }
+
+    async #tagsAt(vcs, oid) {
+        return this.#tagsAsCurrent(await vcs.tagsAt(oid));
+    }
+
+    async #draftInfo(vcs) {
+        const info = await vcs.draftInfo();
+        return { ...info, items: this.#asCurrent(info.items) };
+    }
+
+    /** Files of an item in a version, at whichever of its `paths` the version has it; null when absent there. */
+    async #filesAt(vcs, rev, paths) {
+        for (const path of paths) {
+            const files = await vcs.readItemAt(rev, path);
+            if (files) return files;
+        }
+        return null;
+    }
+
+    /** Kind of an item folder in a version, from its cellar-item.json (items no longer in the workspace). */
+    async #kindAt(vcs, rev, paths) {
+        const files = await this.#filesAt(vcs, rev, paths);
+        try {
+            const kind = JSON.parse(files?.[ITEM_META_FILE] ?? 'null')?.kind;
+            return CODECS[kind] ? kind : null;
+        } catch {
+            return null;
+        }
     }
 
     /** Description of the draft (no `rev`) or of a recorded version (a note: the version keeps its id). */
@@ -1093,7 +1598,7 @@ export class SyncEngine {
         if (paths !== undefined && (!Array.isArray(paths) || !paths.every(p => typeof p === 'string'))) throw new ProtocolError(ERR.BAD_REQUEST, 'paths 应为项路径列表');
         let oid;
         try {
-            oid = await (await this.versions()).commit(String(message ?? ''), paths?.length ? paths : undefined);
+            oid = await (await this.versions()).commit(String(message ?? ''), paths?.length ? paths.flatMap(p => this.#historyPaths(p)) : undefined);
         } catch (error) {
             throw new ProtocolError(ERR.BAD_REQUEST, error.message);
         }
@@ -1110,7 +1615,7 @@ export class SyncEngine {
         const vcs = await this.versions();
         let oid;
         try {
-            oid = await vcs.tag(name, path, rev, message === undefined ? undefined : String(message));
+            oid = await vcs.tag(name, this.#historyPaths(path), rev, message === undefined ? undefined : String(message));
         } catch (error) {
             throw new ProtocolError(ERR.BAD_REQUEST, error.message);
         }
@@ -1125,13 +1630,12 @@ export class SyncEngine {
         return { name, path };
     }
 
-    /** Item data of a version (null when the item is absent there or cannot be read). */
-    async #dataAt(vcs, rev, path, kind) {
-        const files = await vcs.readItemAt(rev, path);
+    /** Item data of a version (null when the item is absent there or cannot be read); `paths`: see #historyPaths. */
+    async #dataAt(vcs, rev, paths, kind) {
+        const files = await this.#filesAt(vcs, rev, paths);
         if (!files) return { present: false, data: null };
         try {
-            const options = kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
-            return { present: true, data: codecFor(kind).encode(files, options) };
+            return { present: true, data: await this.#encodeFiles(kind, files) };
         } catch (error) {
             return { present: true, data: null, error: error.message };
         }
@@ -1151,23 +1655,18 @@ export class SyncEngine {
         } catch (error) {
             throw new ProtocolError(ERR.NOT_FOUND, error.message);
         }
-        const kindOf = p => this.ws.getItem(p)?.kind ?? Object.entries(CODECS).find(([, c]) => p.startsWith(`${c.folder}/`))?.[0];
-        const paths = (path ? [path] : await vcs.changedItems(fromId, toId)).filter(kindOf);
+        const paths = path ? [path] : this.#asCurrent((await vcs.changedItems(fromId, toId)).filter(isItemEntry));
         const items = [];
         for (const p of paths) {
-            const kind = kindOf(p);
-            const [a, b] = await Promise.all([fromId ? this.#dataAt(vcs, fromId, p, kind) : { present: false, data: null }, this.#dataAt(vcs, toId, p, kind)]);
+            const at = this.#historyPaths(p);
+            const kind = this.ws.getItem(p)?.kind ?? await this.#kindAt(vcs, toId, at) ?? (fromId ? await this.#kindAt(vcs, fromId, at) : null);
+            if (!kind) continue; // not an item folder (e.g. workshop/prompts.json)
+            const [a, b] = await Promise.all([fromId ? this.#dataAt(vcs, fromId, at, kind) : { present: false, data: null }, this.#dataAt(vcs, toId, at, kind)]);
             const status = !a.present && b.present ? 'added' : a.present && !b.present ? 'removed' : 'changed';
             if (a.error || b.error) { items.push({ path: p, kind, status: 'unreadable', error: a.error ?? b.error, slots: [] }); continue; }
             const sa = slotsOf(kind, a.data ?? {}), sb = slotsOf(kind, b.data ?? {});
-            const side = (m, s) => ({ value: m.has(s) ? m.get(s) : null, present: m.has(s) });
-            const slots = [...new Set([...sa.keys(), ...sb.keys()])].filter(s => !s.endsWith('.$') && !same(sa.get(s), sb.get(s)))
-                .map(s => {
-                    const x = sa.get(s), y = sb.get(s);
-                    // e.g. the tavern's editor saved CRLF: a real change, but nothing visible in a text diff
-                    const eolOnly = typeof x === 'string' && typeof y === 'string' && x.replace(/\r\n/g, '\n') === y.replace(/\r\n/g, '\n');
-                    return { slot: s, label: slotLabel(s, y ?? x), from: side(sa, s), to: side(sb, s), ...(eolOnly ? { eolOnly } : {}) };
-                });
+            // eolOnly: e.g. the tavern's editor saved CRLF, a real change with nothing visible in a text diff
+            const slots = slotRows({ to: sb, from: sa }, changedSlots(sa, sb));
             if (slots.length || status !== 'changed') items.push({ path: p, kind, status, slots });
         }
         return { from: fromId, to: toId, items };
@@ -1176,12 +1675,13 @@ export class SyncEngine {
     /** One item's data as it was in a version (预设工坊 compares it with the workspace). */
     async itemAtVersion({ rev, path } = {}) {
         if (typeof path !== 'string' || !path) throw new ProtocolError(ERR.BAD_REQUEST, 'path is required');
-        const kind = this.ws.getItem(path)?.kind ?? Object.entries(CODECS).find(([, c]) => path.startsWith(`${c.folder}/`))?.[0];
-        if (!kind) throw new ProtocolError(ERR.BAD_REQUEST, `${path} 不是资料项路径`);
         const vcs = await this.versions();
         let id;
         try { id = await vcs.resolve(rev ?? 'HEAD'); } catch (error) { throw new ProtocolError(ERR.NOT_FOUND, error.message); }
-        const at = await this.#dataAt(vcs, id, path, kind);
+        const paths = this.#historyPaths(path);
+        const kind = this.ws.getItem(path)?.kind ?? await this.#kindAt(vcs, id, paths);
+        if (!kind) throw new ProtocolError(ERR.NOT_FOUND, `${path} 在版本 ${id.slice(0, 8)} 中不存在`);
+        const at = await this.#dataAt(vcs, id, paths, kind);
         if (!at.present) throw new ProtocolError(ERR.NOT_FOUND, `${path} 在版本 ${id.slice(0, 8)} 中不存在`);
         if (at.error) throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${at.error}`);
         return { rev: id, path, kind, data: at.data };
@@ -1234,7 +1734,7 @@ export class SyncEngine {
         const item = this.requireItem(path);
         const vcs = await this.versions();
         await vcs.snapshot();
-        const point = await vcs.revertPoint(item.path);
+        const point = await vcs.revertPoint(this.ws.itemPaths(item));
         if (!point) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 没有记录过的版本，也没有取出时的状态可以恢复`);
         return { ...(await this.#restoreTo(vcs, item, point.oid)), origin: point.origin };
     }
@@ -1251,11 +1751,10 @@ export class SyncEngine {
     }
 
     async #restoreTo(vcs, item, id) {
-        const files = await vcs.readItemAt(id, item.path);
+        const files = await this.#filesAt(vcs, id, this.ws.itemPaths(item));
         if (!files) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 在版本 ${id.slice(0, 8)} 中不存在`);
         const result = await this.withLock(item.path, async () => {
-            const options = item.kind === 'lorebook' ? { entryTemplate: await this.ws.loadTemplate(ENTRY_TEMPLATE) } : undefined;
-            try { codecFor(item.kind).encode(files, options); } catch (error) { throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${error.message}`); }
+            try { await this.#encodeFiles(item.kind, files); } catch (error) { throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${error.message}`); }
             await this.#undoable(item, () => this.ws.writeItemFiles(item.path, files, codecFor(item.kind).owns));
             return { path: item.path, rev: id, hash: (await this.encodeItem(item)).hash };
         });
@@ -1329,7 +1828,7 @@ export class SyncEngine {
         const tagged = typeof rev === 'string' && rev.lastIndexOf(':') > 0 ? rev.slice(0, rev.lastIndexOf(':')) : null;
         if (!paths?.length && tagged && this.ws.manifest.items.some(i => i.path === tagged)) paths = [tagged];
         if (!paths?.length && typeof rev === 'string') {
-            const carrying = (await vcs.tagsAt(id)).filter(t => t.name === rev).map(t => t.path);
+            const carrying = (await this.#tagsAt(vcs, id)).filter(t => t.name === rev).map(t => t.path);
             if (carrying.length) paths = carrying.filter(p => bound.some(i => i.path === p));
             if (carrying.length && !paths.length) throw new ProtocolError(ERR.BAD_REQUEST, `带标签 ${rev} 的项都没有绑定这个酒馆`);
         }
@@ -1342,7 +1841,7 @@ export class SyncEngine {
             });
         } else {
             items = [];
-            for (const item of bound) if (await vcs.readItemAt(id, item.path)) items.push(item);
+            for (const item of bound) if (await this.#filesAt(vcs, id, this.ws.itemPaths(item))) items.push(item);
             if (!items.length) throw new ProtocolError(ERR.BAD_REQUEST, `版本 ${id.slice(0, 8)} 里没有绑定了这个酒馆的项`);
         }
         this.#assertCanWrite(target.id);
@@ -1354,7 +1853,7 @@ export class SyncEngine {
         }
         this.onHistory();
         const pushed = new Set(items.map(i => i.path));
-        const tags = (await vcs.tagsAt(id)).filter(t => pushed.has(t.path));
+        const tags = (await this.#tagsAt(vcs, id)).filter(t => pushed.has(t.path));
         const names = [...new Set(tags.map(t => t.name))];
         return { rev: id, name: names.length === 1 ? names[0] : id.slice(0, 8), target: target.id, results };
     }
@@ -1363,7 +1862,7 @@ export class SyncEngine {
         const binding = item.bindings[targetId];
         const { link } = this.targets.tryGet(targetId) ?? {};
         if (!link) throw new ProtocolError(ERR.NOT_CONNECTED, `Target ${targetId} is not connected`);
-        const version = await this.#dataAt(vcs, id, item.path, item.kind);
+        const version = await this.#dataAt(vcs, id, this.ws.itemPaths(item), item.kind);
         if (!version.present) throw new ProtocolError(ERR.NOT_FOUND, `${item.path} 在版本 ${id.slice(0, 8)} 中不存在`);
         if (!version.data) throw new ProtocolError(ERR.BAD_REQUEST, `这个版本的文件无法读取：${version.error}`);
         const state = this.ws.getSyncState(item.path, targetId) ?? {};
@@ -1415,11 +1914,8 @@ export class SyncEngine {
                 if (item.kind === 'character') {
                     frameworks = detectFrameworks(local.data);
                     parts = presentParts(local.data);
-                    const name = linkedWorldName(local.data);
-                    if (name) {
-                        const targetId = Object.keys(item.bindings ?? {})[0];
-                        world = { name, path: (targetId && this.ws.findBinding(targetId, 'lorebook', name)?.item.path) ?? null };
-                    }
+                    const link = this.#worldOf(item, local.data);
+                    if (link) world = { name: link.name, path: link.item?.path ?? null };
                 }
             } catch (e) {
                 error = e.message;
@@ -1438,7 +1934,7 @@ export class SyncEngine {
                         tavernError = e.message;
                     }
                 }
-                const pinned = binding.pin ? { rev: binding.pin, name: (vcs && (await vcs.tagsAt(binding.pin).catch(() => [])).find(t => t.path === item.path)?.name) || binding.pin.slice(0, 8), ahead: !error && localHash !== state.pinHash } : null;
+                const pinned = binding.pin ? { rev: binding.pin, name: (vcs && (await this.#tagsAt(vcs, binding.pin).catch(() => [])).find(t => t.path === item.path)?.name) || binding.pin.slice(0, 8), ahead: !error && localHash !== state.pinHash } : null;
                 // Pinned: the workspace moving on is not "unsynced"; only a tavern edit counts.
                 const localChanged = !pinned && !error && localHash !== state.base;
                 const tavernChanged = Boolean(tavernHash) && tavernHash !== state.base;
@@ -1463,7 +1959,8 @@ export class SyncEngine {
                     ...(state.warnings?.length ? { warnings: state.warnings, warnedAt: state.warnedAt } : {}),
                 };
             }));
-            items.push({ path: item.path, kind: item.kind, hash: localHash, error, bindings, edits: await this.undoState(item.path), ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(parts ? { parts } : {}), ...(world ? { world } : {}) });
+            const top = item.path.split('/')[0];
+            items.push({ path: item.path, kind: item.kind, name: this.ws.itemName(item), ...(isProjectFolder(top) ? { project: top } : {}), hash: localHash, error, bindings, edits: await this.undoState(item.path), ...(item.layout ? { layout: item.layout } : {}), ...(frameworks ? { frameworks } : {}), ...(parts ? { parts } : {}), ...(world ? { world } : {}) });
         }
         return {
             workspace: this.ws.root,
@@ -1473,7 +1970,7 @@ export class SyncEngine {
             knownTargets: Object.entries(this.ws.manifest.targets ?? {}).map(([id, t]) => ({ id, host: t.host, label: t.label })),
             items,
             // the draft as last snapshotted (the watcher snapshots shortly after file changes)
-            draft: vcs ? await vcs.draftInfo().catch(() => null) : null,
+            draft: vcs ? await this.#draftInfo(vcs).catch(() => null) : null,
         };
     }
 }

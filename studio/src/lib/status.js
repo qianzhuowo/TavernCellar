@@ -38,6 +38,8 @@ export function worstStatus(/** @type {any} */ item) {
 
 export const isDirty = (/** @type {string} */ s) => s === 'local' || s === 'remote' || s === 'both' || s === 'conflict';
 export const isConflict = (/** @type {string} */ s) => s === 'conflict' || s === 'both';
+/** One side moved since the last sync: 「查看差异」 previews what 同步 / 取回 would carry (ChangesDialog). */
+export const hasChanges = (/** @type {string} */ s) => s === 'local' || s === 'remote';
 
 export const HOST = {
   st: { name: 'SillyTavern', mark: 'ST' },
@@ -126,13 +128,10 @@ export function presetRef(id) {
   return i > 0 ? { apiId: id.slice(0, i), name: id.slice(i + 1), type: PRESET_TYPES[/** @type {'openai'} */ (id.slice(0, i))] || id.slice(0, i) } : null;
 }
 /**
- * Name to show for a workspace item: presets by their tavern name (folders are "<apiId>-<name>"), the rest by folder.
+ * Name to show for a workspace item: its name in the taverns (status `name`: from the binding, or the folder name
+ * for an unbound item; the companion's Workspace.itemName).
  * @param {any} it status item
  */
 export function displayName(it) {
-  if (it?.kind === 'preset') {
-    const ref = presetRef(it.bindings?.[0]?.id);
-    if (ref) return ref.name;
-  }
-  return itemName(it?.path ?? '');
+  return it?.name ?? itemName(it?.path ?? '');
 }

@@ -9,6 +9,11 @@ export const KIND = {
 /** @param {string} k */
 export const kindOf = (k) => KIND[/** @type {keyof typeof KIND} */ (k)] || { label: k, type: k, icon: 'box' };
 
+/** The project folder a workspace item is in (status `project`), or '' when it is in its kind folder. @param {any} it */
+export const projectOf = (it) => (it && it.project) || '';
+/** Project folders of the workspace, sorted. @param {any[]} items */
+export const projectFolders = (items) => [...new Set(items.map(projectOf).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
 /** 资料库 kind switch. */
 export const LIB_KINDS = [
   { value: 'character', label: '角色' },

@@ -11,7 +11,6 @@ const v2Card = () => ({
     mes_example: '<START>\n{{char}}: hi',
     creatorcomment: 'notes',
     avatar: 'none',
-    chat: 'Alice - 2024',
     talkativeness: '0.5',
     fav: false,
     tags: ['a', 'b'],

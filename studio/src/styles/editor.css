@@ -47,7 +47,9 @@
 @keyframes ce-flash { 0%, 30% { box-shadow: 0 0 0 2px var(--accent-soft); background-color: var(--accent-soft); } 100% { box-shadow: 0 0 0 2px transparent; } }
 [id^="ce-sec-"], [id^="ce-greet-"] { scroll-margin-top: var(--sp-4); border-radius: var(--r-md); }
 @container (max-width: 900px) {
-  .ce-layout { grid-template-columns: minmax(0, 1fr); }
+  /* max-content: the strip scrolls sideways, so it is a scroll container; in this scrolling grid an auto row sized
+     it to its minimum (its padding) and the form's first row slid up under it. */
+  .ce-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: max-content; }
   .ce-outline {
     position: sticky; top: 0; z-index: 2; flex-direction: row; max-height: none; overflow-x: auto; padding: 4px 0;
     background: var(--bg-1, var(--bg)); border-bottom: 1px solid var(--line);

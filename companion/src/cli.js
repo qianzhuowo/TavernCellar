@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** cellar — TavernCellar companion CLI. Run `cellar help` for usage. */
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { configPath, defaultWorkspaceDir, loadConfig, saveConfig } from './config.js';
 import { Workspace } from './workspace/workspace.js';
@@ -31,9 +32,26 @@ const USAGE = `TavernCellar 伴侣程序
   cellar status                         查看已连接的酒馆与工作区各项状态
   cellar catalog <character|lorebook> [搜索词] [--target ID] [--offset N] [--limit N]
                                         浏览酒馆中的资料（只取摘要）
-  cellar checkout <character|lorebook> <id> [--target ID] [--with-world] [--keep 部分,部分]
+  cellar checkout <character|lorebook> <id> [--target ID] [--with-world] [--keep 部分,部分] [--folder 项目]
                                         取出到工作区（角色 id 为头像文件名，如 Alice.png）
-                                        --with-world 一起取出角色绑定的世界书；--keep 见 cellar layout
+                                        --with-world 一起取出角色绑定的世界书；--keep 见 cellar layout；
+                                        --folder 放进项目文件夹（角色卡和它的世界书放在一起）
+  cellar create <character|lorebook|preset|regex> [名称] [--world 世界书名] [--folder 项目]
+                                        在工作区新建资料项（未绑定酒馆）；角色加 --world 链接该世界书，工作区没有时一并新建
+  cellar move <项路径> [项目]          把一项移到项目文件夹（不写 = 移回默认文件夹）；同步状态和版本记录跟着走
+  cellar rename <项路径> <新名称> [--with-world]
+                                        在绑定的酒馆里给角色卡 / 世界书改名（酒馆需在运行，且已同步一致）；聊天跟着角色走，
+                                         以旧名称命名的文件夹一并改名；--with-world 世界书与角色同名时一起改名
+  cellar avatar <项路径> <图片.png>     在绑定的每个酒馆里给角色卡换头像（只换图片，卡片内容不变；只接受 PNG，
+                                         按原样使用，不裁剪）；酒馆需在运行，或设为不开酒馆也同步
+  cellar import <源文件夹> [--folder 项目]
+                                        把 Cellar 格式的资料项文件夹（或装着它们的文件夹）复制进工作区（未绑定）；
+                                        项目文件夹默认同源文件夹名
+  cellar publish <项路径> <名称> [--target ID] [--with-world]
+                                        在酒馆里新建这一项并绑定；--with-world 连同角色链接的世界书一起发布
+                                        酒馆里已有同名项时不会覆盖，改用 cellar bind 绑定到它
+  cellar bind <项路径> <id> [--target ID]  把工作区项绑定到酒馆里已有的项（id 为头像文件名或世界书名）；
+                                        两边不同时记为整项冲突，在 Studio 或用 sync --force / pull 选一边
   cellar layout <项路径> [--keep 部分,部分]   角色卡文件提取：--keep 列出不提取、留在 card.json 的部分（不写 = 全部提取）
                                         部分: ${CHARACTER_PARTS.join(', ')}（greetings = 第一条消息 + 其他开场；xiaobaix = 小白X，helper = 酒馆助手；
                                         描述、设定等基础字段始终提取）
@@ -77,6 +95,11 @@ function parseArgs(argv) {
 }
 
 /** `--keep regex,helper` -> ['regex', 'helper']; the companion rejects unknown names. */
+/** An item path typed on the command line (\\ or a trailing / from tab completion) as the API takes it. */
+function itemPath(path) {
+    return path.replace(/\\/g, '/').replace(/\/$/, '');
+}
+
 function parseParts(value) {
     if (value === true) return [];
     return String(value).split(',').map(s => s.trim()).filter(Boolean);
@@ -387,38 +410,83 @@ async function main() {
         case 'checkout': {
             const [kind, id] = positional;
             if (!kind || !id) throw new Error('用法: cellar checkout <character|lorebook> <id>');
-            print(await api(config, 'POST', '/api/checkout', { target, kind, id, withWorld: Boolean(flags['with-world']), ...(flags.keep !== undefined ? { exclude: parseParts(flags.keep) } : {}) }));
+            print(await api(config, 'POST', '/api/checkout', { target, kind, id, withWorld: Boolean(flags['with-world']), ...(flags.keep !== undefined ? { exclude: parseParts(flags.keep) } : {}), ...(typeof flags.folder === 'string' ? { folder: flags.folder } : {}) }));
+            return;
+        }
+        case 'create': {
+            const [kind, name] = positional;
+            if (!kind || (kind !== 'regex' && !name)) throw new Error('用法: cellar create <character|lorebook|preset|regex> [名称] [--world 世界书名] [--folder 项目]');
+            print(await api(config, 'POST', '/api/create', { kind, name, ...(typeof flags.world === 'string' ? { world: flags.world } : {}), ...(typeof flags.folder === 'string' ? { folder: flags.folder } : {}) }));
+            return;
+        }
+        case 'move': {
+            const [path, folder] = positional;
+            if (!path) throw new Error('用法: cellar move <项路径> [项目文件夹]');
+            const r = await api(config, 'POST', '/api/move', { path: itemPath(path), folder: folder ?? '' });
+            console.log(r.result === 'moved' ? `已把 ${r.from} 移到 ${r.path}` : `${r.path} 已经在那里`);
+            return;
+        }
+        case 'rename': {
+            const [path, name] = positional;
+            if (!path || !name) throw new Error('用法: cellar rename <项路径> <新名称> [--with-world]');
+            print(await api(config, 'POST', '/api/rename', { path: itemPath(path), name, withWorld: Boolean(flags['with-world']) }));
+            return;
+        }
+        case 'avatar': {
+            const [path, file] = positional;
+            if (!path || !file) throw new Error('用法: cellar avatar <项路径> <图片.png>');
+            const image = (await readFile(resolve(file))).toString('base64');
+            print(await api(config, 'POST', '/api/avatar', { path: itemPath(path), image }));
+            return;
+        }
+        case 'import': {
+            const [source] = positional;
+            if (!source) throw new Error('用法: cellar import <源文件夹> [--folder 项目文件夹]');
+            const r = await api(config, 'POST', '/api/import', { source: resolve(source), ...(typeof flags.folder === 'string' ? { folder: flags.folder } : {}) });
+            for (const x of r.items) console.log(x.error ? `  未导入 ${x.source}：${x.error}` : `  ${x.source} -> ${x.path}`);
+            return;
+        }
+        case 'publish': {
+            const [path, name] = positional;
+            if (!path || !name) throw new Error('用法: cellar publish <项路径> <名称> [--target ID] [--with-world]');
+            print(await api(config, 'POST', '/api/publish', { path: itemPath(path), name, target, withWorld: Boolean(flags['with-world']) }));
+            return;
+        }
+        case 'bind': {
+            const [path, id] = positional;
+            if (!path || !id) throw new Error('用法: cellar bind <项路径> <id> [--target ID]');
+            print(await api(config, 'POST', '/api/bind', { path: itemPath(path), id, target }));
             return;
         }
         case 'layout': {
             const [path] = positional;
             if (!path) throw new Error('用法: cellar layout <项路径> [--keep 部分,部分]');
-            print(await api(config, 'POST', '/api/layout', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), exclude: flags.keep === undefined ? [] : parseParts(flags.keep) }));
+            print(await api(config, 'POST', '/api/layout', { path: itemPath(path), exclude: flags.keep === undefined ? [] : parseParts(flags.keep) }));
             return;
         }
         case 'sync':
         case 'pull': {
             const [path] = positional;
             if (!path) throw new Error(`用法: cellar ${command} <项路径>`);
-            print(await api(config, 'POST', `/api/${command}`, { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target, force: Boolean(flags.force) }));
+            print(await api(config, 'POST', `/api/${command}`, { path: itemPath(path), target, force: Boolean(flags.force) }));
             return;
         }
         case 'auto': {
             const [path, mode] = positional;
             if (!path || !['on', 'off'].includes(mode)) throw new Error('用法: cellar auto <项路径> <on|off>');
-            print(await api(config, 'POST', '/api/auto-sync', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target, enabled: mode === 'on' }));
+            print(await api(config, 'POST', '/api/auto-sync', { path: itemPath(path), target, enabled: mode === 'on' }));
             return;
         }
         case 'remove': {
             const [path] = positional;
             if (!path) throw new Error('用法: cellar remove <项路径> [--keep-files]');
-            const r = await api(config, 'POST', '/api/remove', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), keepFiles: Boolean(flags['keep-files']) });
+            const r = await api(config, 'POST', '/api/remove', { path: itemPath(path), keepFiles: Boolean(flags['keep-files']) });
             console.log(`已从工作区移除 ${r.path}（酒馆里的内容不受影响）`);
             if (r.kept?.length) console.log(`  文件夹中保留了你自己的文件：${r.kept.join('、')}`);
             return;
         }
         case 'log': {
-            const path = positional[0]?.replace(/\\/g, '/').replace(/\/$/, '');
+            const path = (positional[0] === undefined ? undefined : itemPath(positional[0]));
             const h = await api(config, 'POST', '/api/history', { path, limit: Number(flags.limit ?? 30) });
             console.log(formatHistory(h));
             return;
@@ -432,7 +500,7 @@ async function main() {
         case 'commit': {
             const [message, ...paths] = positional;
             if (!message) throw new Error('用法: cellar commit "说明" [项路径...]');
-            const r = await api(config, 'POST', '/api/history/commit', { message, paths: paths.length ? paths.map(p => p.replace(/\\/g, '/').replace(/\/$/, '')) : undefined });
+            const r = await api(config, 'POST', '/api/history/commit', { message, paths: paths.length ? paths.map(p => itemPath(p)) : undefined });
             console.log(`已记录版本 ${r.id.slice(0, 8)}`);
             return;
         }
@@ -441,7 +509,7 @@ async function main() {
             if (typeof flags.delete === 'string') positional.unshift(flags.delete);
             const [name, rawPath, rev] = positional;
             if (!name || !rawPath) throw new Error('用法: cellar tag <名称> <项路径> [版本]；删除: cellar tag --delete <名称> <项路径>');
-            const path = rawPath.replace(/\\/g, '/').replace(/\/$/, '');
+            const path = itemPath(rawPath);
             if (flags.delete) {
                 await api(config, 'POST', '/api/history/untag', { name, path });
                 console.log(`已删除 ${path} 的标签 ${name}`);
@@ -454,20 +522,20 @@ async function main() {
         case 'diff': {
             const [from, to, path] = positional;
             if (!from) throw new Error('用法: cellar diff <版本A> [版本B] [项路径]');
-            console.log(formatDiff(await api(config, 'POST', '/api/history/diff', { from, to: to || undefined, path: path?.replace(/\\/g, '/').replace(/\/$/, '') })));
+            console.log(formatDiff(await api(config, 'POST', '/api/history/diff', { from, to: to || undefined, path: (path === undefined ? undefined : itemPath(path)) })));
             return;
         }
         case 'restore': {
             const [rev, path] = positional;
             if (!rev || !path) throw new Error('用法: cellar restore <版本> <项路径>');
-            const r = await api(config, 'POST', '/api/history/restore', { rev, path: path.replace(/\\/g, '/').replace(/\/$/, '') });
+            const r = await api(config, 'POST', '/api/history/restore', { rev, path: itemPath(path) });
             console.log(`${r.path} 已恢复到 ${r.rev.slice(0, 8)}；用 cellar sync ${r.path} 同步到酒馆`);
             return;
         }
         case 'push': {
             const [rev, ...paths] = positional;
             if (!rev || !target) throw new Error('用法: cellar push <版本|标签> [项路径...] --target <酒馆> [--force]');
-            const r = await api(config, 'POST', '/api/push', { rev, target, paths: paths.length ? paths.map(p => p.replace(/\\/g, '/').replace(/\/$/, '')) : undefined, force: Boolean(flags.force) });
+            const r = await api(config, 'POST', '/api/push', { rev, target, paths: paths.length ? paths.map(p => itemPath(p)) : undefined, force: Boolean(flags.force) });
             console.log(`推送 ${r.name}（${r.rev.slice(0, 8)}）到 ${r.target.slice(0, 8)}`);
             for (const x of r.results) {
                 const text = x.result === 'pushed' ? `已推送，固定在 ${r.name}` : x.result === 'tavern-changed' ? `未推送：酒馆里有新的修改（可先取回，或用 --force 覆盖）` : `失败：${x.error}`;
@@ -479,7 +547,7 @@ async function main() {
         case 'follow': {
             const [path] = positional;
             if (!path) throw new Error('用法: cellar follow <项路径> [--target <酒馆>]');
-            const r = await api(config, 'POST', '/api/follow', { path: path.replace(/\\/g, '/').replace(/\/$/, ''), target });
+            const r = await api(config, 'POST', '/api/follow', { path: itemPath(path), target });
             console.log(`${r.path} 在 ${r.target.slice(0, 8)} 改为跟随最新${r.sync ? `（同步：${r.sync}${r.error ? ` ${r.error}` : ''}）` : ''}`);
             return;
         }

@@ -9,7 +9,7 @@ import StatusBadge from '../components/StatusBadge.vue';
 import { useApp } from '../stores/app.js';
 import { useUi, hrefOf } from '../stores/ui.js';
 import {
-  uiStatus, isConflict, itemName, displayName, relTime,
+  uiStatus, isConflict, hasChanges, itemName, displayName, relTime,
   HOST, STATUS, MODE_DOT, MODE_LABEL, MODE_TIP, OFF_MODE, STALE_HINT
 } from '../lib/status.js';
 import { runBindingOp, setAutoSync, unbindBinding, canReach, bindItem, followBinding, pinText, PIN_TIP } from '../lib/syncOps.js';
@@ -319,6 +319,7 @@ const warnTime = (/** @type {any} */ b) => { const t = Date.parse(b.warnedAt || 
                       <div class="cell-ops">
                         <button v-if="v.conflict" class="btn sm primary" @click="ui.openConflict(r.it.path)"><Icon name="alert" size="sm" />处理冲突</button>
                         <template v-else>
+                          <button v-if="hasChanges(v.status)" class="btn sm ghost" title="列出上次同步之后改动的地方" @click="ui.changesAsk = { path: r.it.path, target: b.target }"><Icon name="eye" size="sm" />查看差异</button>
                           <button v-if="b.pinned" class="btn sm" :disabled="!!busy[keyOf(r.it.path, b)] || bulk.running" title="取消固定；之后工作区的修改按正常方式同步到这个酒馆" @click="follow(r.it.path, b)">
                             <Icon :name="busy[keyOf(r.it.path, b)] === 'follow' ? 'spin' : 'refresh'" size="sm" />跟随最新
                           </button>

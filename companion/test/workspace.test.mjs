@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Workspace } from '../src/workspace/workspace.js';
 import { CODECS } from '../src/codec/index.js';
 import { diffPaths } from '../src/codec/object-path.js';
+import { hashData } from '../../shared/hash.js';
 
 test('diffPaths lists differing fields, capped', () => {
     const a = { data: { description: 'x', alternate_greetings: ['a', 'b'], extensions: { k: 1 } }, spec: 'v3' };
@@ -66,6 +67,34 @@ test('writeItemFiles refuses to run without an ownership test', async () => {
     try {
         const ws = await Workspace.init(join(root, 'ws'));
         await assert.rejects(ws.writeItemFiles('characters/A', {}), /ownership/);
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('state v1 -> v2: `chat` leaves character bases and card.json, hashes follow, so items stay in sync', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cellar-migrate-'));
+    try {
+        const ws = await Workspace.init(root);
+        const old = { name: 'A', avatar: 'A.png', chat: 'A - 1', data: { name: 'A' } };
+        const files = CODECS.character.decode(old);
+        files['card.json'] = JSON.stringify({ ...JSON.parse(files['card.json']), chat: 'A - 1' });
+        await ws.writeItemFiles('characters/A', files, () => true);
+        ws.manifest.items.push({ path: 'characters/A', kind: 'character', bindings: { t1: { id: 'A.png' } } });
+        await ws.saveManifest();
+        await ws.saveBase('characters/A', 't1', old);
+        const h = await hashData(old);
+        ws.state = { version: 1, items: { 'characters/A': { t1: { base: h, tavern: h } } } };
+        await ws.saveState();
+
+        const again = new Workspace(root);
+        await again.load();
+        const { chat, ...card } = old;
+        const want = await hashData(card);
+        assert.equal(again.state.version, 2);
+        assert.deepEqual(again.state.items['characters/A'].t1, { base: want, tavern: want });
+        assert.deepEqual(await again.loadBase('characters/A', 't1'), card);
+        assert.equal('chat' in JSON.parse(await readFile(join(root, 'characters', 'A', 'card.json'), 'utf8')), false);
     } finally {
         await rm(root, { recursive: true, force: true });
     }

@@ -25,7 +25,7 @@ import { AssetCache } from './assets.js';
 import { previewPrompt } from './preview.js';
 
 export const SERVER_NAME = 'TavernCellar';
-export const SERVER_VERSION = '0.2.2';
+export const SERVER_VERSION = '0.3.0';
 export const STUDIO_PATH = '/studio/';
 
 /** Folder served at /studio/: the built Studio UI when present, otherwise the prototype. */
@@ -555,6 +555,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/sync': b => engine.sync(b.path, b),
         'POST /api/pull': b => engine.pull(b.path, b),
         'POST /api/conflict': b => engine.conflictDetails(b.path, b),
+        'POST /api/changes': b => engine.changeDetails(b.path, b),
             'POST /api/conflict/resolve': b => engine.resolveConflict(b.path, b),
             'POST /api/item': b => engine.readItemData(b.path),
             'PUT /api/item': b => engine.writeItemData(b.path, b),
@@ -568,6 +569,17 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         'POST /api/bind': b => engine.bind(b.path, b),
         'POST /api/tavern/item': b => engine.readTavernItem(b.target, b),
         'POST /api/create': b => engine.createItem(b),
+        'POST /api/move': b => engine.moveItem(b.path, b),
+        'POST /api/rename': b => engine.renameItem(b.path, b),
+        'POST /api/avatar': async b => {
+            try {
+                return await engine.setAvatar(b.path, b);
+            } finally {
+                // Also after a partial failure: some taverns may have the new image.
+                for (const [targetId, binding] of Object.entries(engine.ws.getItem(b.path)?.bindings ?? {})) assets.invalidate(targetId, binding.id);
+            }
+        },
+        'POST /api/import': b => engine.importItems(b),
         'POST /api/publish': b => engine.publish(b.path, b),
         'POST /api/layout': b => engine.setLayout(b.path, b),
         'POST /api/history': b => engine.history(b),
@@ -644,6 +656,10 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
                     link.target.preview = Number.isInteger(capabilities.preview) && capabilities.preview > 0 ? capabilities.preview : 0;
                     // Version of item.create (0: older plugin, cannot create items in this tavern).
                     link.target.create = Number.isInteger(capabilities.create) && capabilities.create > 0 ? capabilities.create : 0;
+                    // Version of item.rename (0: older plugin, cannot rename items in this tavern).
+                    link.target.rename = Number.isInteger(capabilities.rename) && capabilities.rename > 0 ? capabilities.rename : 0;
+                    // Version of item.avatar (0: older plugin, cannot change avatars in this tavern).
+                    link.target.avatar = Number.isInteger(capabilities.avatar) && capabilities.avatar > 0 ? capabilities.avatar : 0;
                     const previous = targets.add(link.target, link);
                     if (previous) previous.link.close(CLOSE.REPLACED, 'replaced by a newer connection');
                     log(`tavern connected: ${link.target.label} [${link.target.host} ${link.target.hostVersion}] id=${link.target.id} origin=${origin}`);

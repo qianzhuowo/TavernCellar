@@ -44,6 +44,8 @@ export const useApp = defineStore('app', {
     detect: null,
     /** @type {any} /api/taverns/locations result */
     locations: null,
+    /** @type {Record<string, number>} avatar changed from Studio (POST /api/avatar), by `${target}/${file}`: Avatar.vue busts its image cache with it */
+    avatarAt: {},
     detecting: false
   }),
 

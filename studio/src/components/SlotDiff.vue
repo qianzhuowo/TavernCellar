@@ -1,8 +1,10 @@
 <script setup>
 // One slot side by side: workspace | tavern (| base). Text gets an inline diff, objects list only the fields that
-// differ, anything else is shown as JSON.
+// differ, anything else is shown as JSON. `compact`: one line diff tavern -> workspace (the older side is passed as
+// `tavern`), objects field by field, JSON pretty-printed.
 import { computed, ref } from 'vue';
 import Icon from './Icon.vue';
+import DiffHunks from './DiffHunks.vue';
 import { fmt, kindOf, fieldRows, parts } from '../lib/slot-view.js';
 import { isNoise } from '../lib/entryNoise.js';
 
@@ -14,7 +16,9 @@ const props = defineProps({
   noiseTemplate: { type: Object, default: null },
   foldNoise: { type: Boolean, default: false },
   /** column titles when the sides are not workspace / tavern (version history: {workspace: '此版本', tavern: '之前'}) */
-  sides: { type: Object, default: null }
+  sides: { type: Object, default: null },
+  /** line diff from the tavern side to the workspace side instead of the columns */
+  compact: { type: Boolean, default: false }
 });
 const r = computed(() => props.slotView);
 const kind = computed(() => kindOf(r.value));
@@ -23,10 +27,25 @@ const allFields = computed(() => (kind.value === 'object' ? fieldRows(r.value) :
 const noiseKeys = computed(() => (props.foldNoise ? new Set(allFields.value.filter((f) => isNoise(f.key, f.ws, f.tv, props.noiseTemplate)).map((f) => f.key)) : new Set()));
 const showNoise = ref(false);
 const fields = computed(() => (showNoise.value ? allFields.value : allFields.value.filter((f) => !noiseKeys.value.has(f.key))));
+const sideText = (/** @type {any} */ s) => (s.present ? fmt(s.value) : '');
+const fieldText = (/** @type {any} */ v) => (v === undefined ? '' : fmt(v));
 </script>
 
 <template>
-  <div class="cf-cols" :class="{ 'with-base': withBase }">
+  <div v-if="compact" class="cf-compact">
+    <div class="cf-side-h">
+      {{ sides ? sides.tavern : '酒馆' + (targetLabel ? ' · ' + targetLabel : '') }} → {{ sides ? sides.workspace : '工作区' }}
+      <span v-if="!r.tavern.present" class="faint">（新增）</span><span v-else-if="!r.workspace.present" class="faint">（已删除）</span>
+    </div>
+    <template v-if="kind === 'object'">
+      <div v-for="f in fields" :key="f.key" class="cf-kv">
+        <span class="cf-key mono">{{ f.key }}</span>
+        <DiffHunks :from="fieldText(f.tv)" :to="fieldText(f.ws)" :mono="typeof (f.ws === undefined ? f.tv : f.ws) !== 'string'" />
+      </div>
+    </template>
+    <DiffHunks v-else :from="sideText(r.tavern)" :to="sideText(r.workspace)" :mono="kind === 'json'" />
+  </div>
+  <div v-else class="cf-cols" :class="{ 'with-base': withBase }">
     <div v-if="withBase" class="cf-side base">
       <div class="cf-side-h">基准版本</div>
       <template v-if="kind === 'object'">
@@ -78,4 +97,7 @@ const fields = computed(() => (showNoise.value ? allFields.value : allFields.val
 .cf-noise-toggle:hover { background: var(--bg-3); color: var(--text); }
 .cf-noise-toggle:focus-visible { outline: 1px solid var(--accent); }
 .cf-noise-toggle .faint { font-size: var(--fs-xs); }
+.cf-compact { padding: var(--sp-2) 0; min-width: 0; }
+.cf-compact .cf-kv + .cf-kv { margin-top: var(--sp-2); }
+.cf-compact .cf-key { display: block; margin-bottom: 4px; }
 </style>

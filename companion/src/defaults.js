@@ -225,7 +225,7 @@ export const DEFAULT_OPENAI_PRESET = Object.freeze({
 });
 
 /** New character card (V3, like the tavern's create endpoint writes it); the avatar is set when published. */
-export function newCharacter(name) {
+export function newCharacter(name, { world = '' } = {}) {
     const fields = { name, description: '', personality: '', scenario: '', first_mes: '', mes_example: '' };
     return {
         ...fields,
@@ -245,16 +245,16 @@ export function newCharacter(name) {
             creator: '',
             character_version: '',
             alternate_greetings: [],
-            extensions: { talkativeness: '0.5', fav: false, world: '', depth_prompt: { prompt: '', depth: 4, role: 'system' } },
+            extensions: { talkativeness: '0.5', fav: false, world, depth_prompt: { prompt: '', depth: 4, role: 'system' } },
             group_only_greetings: [],
         },
         create_date: new Date().toISOString(),
     };
 }
 
-/** Item id and data of a new item of `kind` called `name` (presets: chat completion). */
-export function newItem(kind, name) {
-    if (kind === 'character') return { id: name, data: newCharacter(name) };
+/** Item id and data of a new item of `kind` called `name` (presets: chat completion; characters: linked `world`). */
+export function newItem(kind, name, { world } = {}) {
+    if (kind === 'character') return { id: name, data: newCharacter(name, { world: world ?? '' }) };
     if (kind === 'lorebook') return { id: name, data: { entries: {} } };
     if (kind === 'preset') return { id: `openai/${name}`, data: structuredClone(DEFAULT_OPENAI_PRESET) };
     return { id: GLOBAL_REGEX_ID, data: { scripts: [] } };

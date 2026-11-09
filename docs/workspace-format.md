@@ -11,17 +11,20 @@
 ├─ .gitattributes              `* -text`：git 不改换行
 ├─ .gitignore                  默认忽略 .cellar/
 ├─ .cellar/                    伴侣程序内部状态（不进版本记录）
-│   ├─ state.json              每项、每个目标的基准哈希与冲突状态
+│   ├─ state.json              每项、每个目标的基准哈希与冲突状态（`version: 2`；从 1 升级时去掉角色基准快照和 card.json 里的酒馆自有字段 `chat`，基准哈希随之更新）
 │   ├─ base/<项路径>/<targetId>.json      两边一致时的数据快照（按槽位合并用）
 │   ├─ templates/worldinfo-entry.json   酒馆提供的世界书条目模板
 │   └─ conflicts/<项路径>/<targetId>.json  冲突时保存的酒馆版本
 ├─ characters/<名称>/          角色卡
 ├─ lorebooks/<名称>/           世界书
 ├─ regex/global/               全局正则（每个酒馆一份，第二个起为 global-2 …）
-└─ presets/<类型>-<名称>/      预设（如 presets/openai-Default）
+├─ presets/<类型>-<名称>/      预设（如 presets/openai-Default）
+└─ <项目>/<名称>/              放在项目文件夹里的资料项（第 8 节）
 ```
 
-`<名称>` 取自头像文件名（去掉 `.png`）或世界书名称，替换 Windows 非法字符；重名时追加 `-2`、`-3`。
+资料项始终是两段路径 `<顶层文件夹>/<名称>`：顶层文件夹是本类的默认文件夹（上面四个）或一个项目文件夹。一项是什么类型只看 `cellar.json` 中的 `kind`（以及它的 `cellar-item.json`），不看所在文件夹。
+
+`<名称>` 取自头像文件名（去掉 `.png`）或世界书名称，替换 Windows 非法字符；重名时追加 `-2`、`-3`（项目文件夹里先试 `（世界书）` 这样的类型后缀，见第 8 节）。一项移走后留下的旧路径（`formerPaths`）也算已占用，新项不会拿到它——否则两项的历史会混在一起。
 
 **自己的文件可以放在资料项文件夹里。** 伴侣程序只管理下面第 3、4 节列出的文件（角色：`card.json`、`cellar-item.json`、各正文字段 `.md`、`alternate_greetings/NN.md`；世界书：`book.json`、`cellar-item.json`、`entries/*.md`）。从酒馆取回时，它只会删除这些文件中不再需要的那些；`调研.md`、`notes/` 之类的其他文件不会进卡，也不会被删除；「从工作区移除」（`cellar remove`、Studio 检查栏）同样只删这些文件，文件夹里还有别的文件时保留文件夹。注意 `entries/` 下的 `.md` 和 `alternate_greetings/` 下的数字文件名属于卡内容，笔记不要用这些位置。
 
@@ -46,6 +49,8 @@
 ```
 
 一项可以绑定多个目标：取出时创建绑定，也可以在 Studio 的同步矩阵中绑定到其他酒馆（`POST /api/bind`）。
+
+移动过的项多一个 `"formerPaths": ["characters/Alice", …]`：它以前的路径，最早的在前。版本历史靠它找到移动前记下的版本（`docs/versioning.md` §1）。
 
 把某个版本推送到一个酒馆后，那个绑定多一个 `"pin": "<版本编号>"`，表示该酒馆固定在这个版本；没有 `pin` 就是跟随最新。
 规则见 `docs/versioning.md` §3。
@@ -195,8 +200,27 @@ presets/openai-<名称>/
 
 ## 7. 无损往返
 
+对任意卡片、世界书、全局正则或预设数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。
+
 ### 预设工坊收藏 `workshop/prompts.json`
 
 不属于任何资料项的工作区文件，随工作区一起进入版本历史。内容为 `{ version: 1, prompts: [{ id, title, from, savedAt, enabled, prompt }] }`，`prompt` 是收藏时预设中那条提示词的完整对象。读写：`POST /api/workshop/collection` 返回 `{ collection, hash }`；`PUT /api/workshop/collection { collection, hash }` 在文件已被别处修改时拒绝（`conflict`）。
 
-对任意卡片、世界书、全局正则或预设数据 `x`：`encode(decode(x))` 与 `x` 深度相等。这是测试中的硬性要求（`test/codec-*.test.mjs`）。
+## 8. 项目文件夹、移动、改名与导入
+
+一张卡和它的世界书可以放进同一个项目文件夹，不必分在 `characters/` 和 `lorebooks/` 两处：
+
+```
+诡异复苏/
+├─ 诡异复苏/              角色卡
+├─ 诡异复苏（世界书）/      它的世界书（与卡重名，所以加了类型后缀）
+└─ 设定笔记.md              不属于任何项的文件也可以放这里（不是资料项，不同步）
+```
+
+- **仅限工作区内**。工作区外的文件夹不能作为项目：版本历史、文件监视、撤回、备份都以工作区根目录为界。外面的文件夹用「导入」复制进来。
+- **项目名**：一段合法的文件夹名（规则同 `<名称>`），不能以 `.` 开头，不能是 `workshop`，也不能是别的类型的默认文件夹（把角色卡放进 `lorebooks/` 会报错）。填本类的默认文件夹名或不填 = 默认文件夹。已有的项目文件夹沿用它原来的大小写。
+- **命名**：同一条规则用于取出、新建、移动和导入：先试 `<项目>/<名称>`；被占用时在项目文件夹里试 `<名称>（角色卡 | 世界书 | 预设 | 正则）`，再不行追加 `-2`、`-3`。未绑定酒馆的项，将来发布时的名称去掉这个后缀（`诡异复苏（世界书）` 发布后叫 `诡异复苏`）。
+- **取出 / 新建到项目**：`POST /api/checkout`、`POST /api/create` 的可选参数 `folder`（CLI `--folder <项目>`）。带出的世界书（`withWorld`、`world`）放进同一个文件夹；已经在工作区里的世界书不动。
+- **移动**：`POST /api/move { path, folder }`（CLI `cellar move <项路径> [项目]`，不写项目 = 移回默认文件夹）返回 `{ path, from, result: "moved" | "unchanged" }`。整个文件夹改名（自己的笔记文件一起走），清单路径、同步状态、基准快照、冲突保存的酒馆版本、撤回记录、部署/来源/标签引用都跟着走，旧路径记入 `formerPaths`。移动要么整个完成、要么什么都不改：先迁版本引用（失败即拒绝），再移文件夹（失败则把引用迁回）。有未解决的冲突也可以移动，冲突随项一起走。绑定的酒馆条目不变（移动不是改名）。一个项目文件夹的最后一项移走后，空文件夹被删除。
+- **改名**（`POST /api/rename`，见 architecture.md §3「改名」）：酒馆里改名后，绑定的 id 换成新的头像文件名 / 世界书名。文件夹名按上面的命名规则等于旧名称（`<名称>` 或 `<名称>（<类型>）`）时，在同一个顶层文件夹里按同一规则换成新名称，和移动一样跟走一切（旧路径记入 `formerPaths`）；带 `-2` 后缀或用户自己起的文件夹名不动。
+- **导入**：`POST /api/import { source, folder }`（CLI `cellar import <源文件夹> [--folder 项目]`）把磁盘上任意位置的 Cellar 格式文件夹**复制**进工作区（不链接）。`source` 自己含 `cellar-item.json` 时是一项，否则它的直接子文件夹各是一项；`source` 不能在工作区里，也不能包含工作区。项目名默认取源文件夹的名字。每项先按它的 `kind` 编码一遍，失败的不登记、在结果里报告；其余按上面的命名规则复制（跳过 `.git` 等忽略的文件），登记为未绑定的项，然后可以像新建的项一样发布。返回 `{ folder, items: [{ source, path, kind } | { source, error }] }`。

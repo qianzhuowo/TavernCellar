@@ -42,13 +42,34 @@ export function parsePresetId(id) {
 export const presetId = (apiId, name) => `${apiId}/${name}`;
 
 /**
+ * Card fields that belong to one tavern installation, not to the card: `chat` names that tavern's current chat file
+ * (tt and ST rewrite it when a chat is opened, without an event). They are not part of the item — never read into
+ * it, never hashed, never synced — and a write keeps the tavern's own value (ST's export drops them too).
+ */
+export const HOST_CHARACTER_FIELDS = Object.freeze(['chat']);
+
+/** `card` without the host-owned fields (HOST_CHARACTER_FIELDS). */
+export function withoutHostFields(card) {
+    const out = { ...card };
+    for (const key of HOST_CHARACTER_FIELDS) delete out[key];
+    return out;
+}
+
+/** `card` to store over `stored` (the raw card in the tavern): the tavern's own host-owned fields stay. */
+export function withHostFields(card, stored) {
+    const out = { ...card };
+    for (const key of HOST_CHARACTER_FIELDS) if (stored && key in stored) out[key] = stored[key];
+    return out;
+}
+
+/**
  * Character card as read from a tavern (live or offline): the JSON stored in the PNG, without the tavern's
- * `json_data` copy, with `avatar` set to the card's file name. Cards made elsewhere often store `avatar: "none"`;
- * the tavern replaces it with the file name on its first save (merge-attributes locates the card by `avatar`), so
- * reading it this way from the start keeps a fresh checkout equal to what the first sync stores.
+ * `json_data` copy and the host-owned fields, with `avatar` set to the card's file name. Cards made elsewhere often
+ * store `avatar: "none"`; the tavern replaces it with the file name on its first save (merge-attributes locates the
+ * card by `avatar`), so reading it this way from the start keeps a fresh checkout equal to what the first sync stores.
  */
 export function canonicalCharacter(card, avatar) {
-    const out = { ...card, avatar };
+    const out = { ...withoutHostFields(card), avatar };
     delete out.json_data;
     return out;
 }
@@ -61,6 +82,10 @@ export const MSG = Object.freeze({
     ITEM_PUT: 'item.put',
     /** Creates an item that does not exist in the tavern yet; Cellar Link declares it as `capabilities.create`. */
     ITEM_CREATE: 'item.create',
+    /** Renames a character or lorebook the way the tavern's own rename does; declared as `capabilities.rename`. */
+    ITEM_RENAME: 'item.rename',
+    /** Replaces a character's avatar image, keeping the card data; declared as `capabilities.avatar`. */
+    ITEM_AVATAR: 'item.avatar',
     WATCH_SET: 'watch.set',
     PING: 'ping',
     ASSET_GET: 'asset.get',
@@ -71,11 +96,33 @@ export const MSG = Object.freeze({
 /** Version of `item.create` a Cellar Link declares in `hello.capabilities.create` (absent: not supported). */
 export const CREATE_VERSION = 1;
 
-/** Validates an `item.create` name: a character / lorebook / preset name that can be a file name. */
+/** Version of `item.rename` a Cellar Link declares in `hello.capabilities.rename` (absent: not supported). */
+export const RENAME_VERSION = 1;
+/** Kinds `item.rename` renames (presets and the global regex list keep their names). */
+export const RENAME_KINDS = Object.freeze(['character', 'lorebook']);
+
+/** Validates an `item.create` / `item.rename` name: a character / lorebook / preset name that can be a file name. */
 export function assertNewItemName(name) {
     if (typeof name !== 'string' || !name.trim() || name !== name.trim() || name.length > 200 || /[\\/:*?"<>|\u0000-\u001f]/.test(name) || name === '.' || name === '..') {
         throw new ProtocolError(ERR.BAD_REQUEST, `名称不能为空，也不能包含 \\ / : * ? " < > |：${name}`);
     }
+}
+
+/** Version of `item.avatar` a Cellar Link declares in `hello.capabilities.avatar` (absent: not supported). */
+export const AVATAR_VERSION = 1;
+/** Largest avatar image `item.avatar` accepts, in bytes (Studio sends a 512px PNG, far below). */
+export const AVATAR_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Validates an `item.avatar` payload: `{ kind: 'character', id, image }`, image a base64 PNG of at most AVATAR_MAX_BYTES. */
+export function assertAvatarRequest(payload) {
+    assertItemRef(payload);
+    if (payload.kind !== 'character') throw new ProtocolError(ERR.BAD_REQUEST, '只有角色卡有头像');
+    const { image } = payload;
+    // "iVBORw0KGgo" is the base64 of the PNG signature.
+    if (typeof image !== 'string' || !image.startsWith('iVBORw0KGgo') || !/^[A-Za-z0-9+/]+={0,2}$/.test(image)) {
+        throw new ProtocolError(ERR.BAD_REQUEST, '头像必须是 PNG 图片（base64）');
+    }
+    if (image.length > Math.ceil(AVATAR_MAX_BYTES / 3) * 4) throw new ProtocolError(ERR.BAD_REQUEST, `头像图片超过 ${AVATAR_MAX_BYTES / 1024 / 1024}MB`);
 }
 
 /** Version of `prompt.preview` a Cellar Link declares in `hello.capabilities.preview` (absent: not supported). */

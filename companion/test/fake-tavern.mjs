@@ -54,14 +54,30 @@ export class FakeTavern {
         }
         if (type === MSG.ITEM_CREATE) {
             const id = payload.kind === 'character' ? `${payload.name}.png` : payload.id ?? payload.name;
-            if (items.has(id)) throw new ProtocolError(ERR.CONFLICT, `exists: ${id}`);
+            if (items.has(id)) throw new ProtocolError(ERR.CONFLICT, `exists: ${id}`, { kind: payload.kind, id });
             const data = payload.kind === 'character' ? { ...payload.data, avatar: id } : payload.data;
             items.set(id, data);
             return { kind: payload.kind, id, data, hash: await hashData(data), warnings: [] };
         }
         const current = items.get(payload.id);
         if (!current) throw new ProtocolError(ERR.NOT_FOUND, payload.id);
+        if (type === MSG.ITEM_RENAME) {
+            if (payload.baseHash !== await hashData(current)) throw new ProtocolError(ERR.CONFLICT, 'changed', { currentHash: await hashData(current) });
+            const id = payload.kind === 'character' ? `${payload.name}.png` : payload.name;
+            if (items.has(id)) throw new ProtocolError(ERR.CONFLICT, `exists: ${id}`, { kind: payload.kind, id });
+            const data = payload.kind === 'character' ? { ...current, name: payload.name, avatar: id, data: { ...current.data, name: payload.name } } : current;
+            items.delete(payload.id);
+            items.set(id, data);
+            this.renames = [...(this.renames ?? []), [payload.kind, payload.id, id]];
+            // The tavern renamed it, but the answer never arrived in time (a throttled page): what the companion sees.
+            if (this.renameTimesOut) throw new ProtocolError(ERR.TIMEOUT, 'item.rename timed out');
+            return { kind: payload.kind, id, data, hash: await hashData(data), warnings: [] };
+        }
         if (type === MSG.ITEM_GET) return { data: current, hash: await hashData(current) };
+        if (type === MSG.ITEM_AVATAR) {
+            this.avatars = { ...this.avatars, [payload.id]: payload.image };
+            return { kind: payload.kind, id: payload.id, data: current, hash: await hashData(current) };
+        }
         if (type === MSG.ITEM_PUT) {
             const sneak = this.beforePut?.shift();
             if (sneak) { sneak(current); return this.handle({ type, payload }); }

@@ -36,11 +36,11 @@
 
 - 这些函数都来自 `SillyTavern.getContext()`。ST 与 tt 共用同一份前端代码，所以插件里没有按宿主分支的写入逻辑。
 - **写入前复核**：插件先读取当前内容并计算哈希，与 `baseHash` 不一致就返回 `conflict`，不写入。
-- **写入后复读**：插件写完后重新从后端读取一次，把结果数据和哈希返回。宿主可能对数据做规范化（例如 `merge-attributes` 会把 `avatar` 写进卡片，且无法删除对象中的键），伴侣程序以复读结果为准，把差异拉回工作区。
+- **写入后复读**：插件写完后重新从后端读取一次，把结果数据和哈希返回。宿主可能对数据做规范化（例如 `merge-attributes` 会把 `avatar` 写进卡片），伴侣程序以复读结果为准，把差异拉回工作区。
 
 ### 已知限制（第 1 阶段）
 
-- `merge-attributes` 对对象做深度合并：数组整体替换，但**无法删除对象中的键**。删除了 `card.json` 里某个嵌套对象键时，复读结果仍会带着它，伴侣程序会把它拉回工作区并给出提示。
+- `merge-attributes` 对对象做深度合并（数组整体替换），不发送的键会保留旧值。所以插件写角色时，把酒馆现有卡里有、工作区卡里已删除的键（含嵌套对象里的）以 `null` 发送；ST 与 tt 都把它存为 `null`，复读后 `card.json` 里该键显示为 `null`，不会带回旧值。
 - 角色正在酒馆编辑器里打开、并且用户刚在酒馆里输入（自动保存的防抖尚未触发）时同步，酒馆里这次未保存的输入可能被覆盖。
 - 酒馆端对角色的修改只有通过编辑表单保存（会触发 `CHARACTER_EDITED`）时才会被即时感知；其它扩展经 `merge-attributes` 做的修改不会触发事件，会在下一次同步前的复核中以冲突形式暴露。
 
@@ -71,6 +71,25 @@ CLI → `POST /api/checkout` → 伴侣程序向插件发 `item.get` → 解码�
 
 ### 版本记录（`vcs/vcs.js`）
 工作区是 git 仓库（isomorphic-git）。文件变化去抖后替换式更新草稿提交；记录版本、标签、对比、恢复见 `docs/versioning.md`。同步引擎在每次与某个酒馆达成一致时设置该项的已部署指针；酒馆内容写入工作区前先结束用户的草稿，再把写入的内容记为「来自 <酒馆>」。版本记录只读同步结果，不参与同步判断（判断仍用 B 与基准快照）。
+
+### 改名（工作区 → 酒馆，`POST /api/rename`）
+Studio「改名…」/ `cellar rename <项路径> <新名称> [--with-world]` → `SyncEngine.renameItem`。只给绑定了酒馆的角色卡和世界书改名，改的是酒馆里的名称（未发布的项在发布时起名）。
+- **先检查、再动手**：每个绑定都必须是实时连接、Cellar Link 支持 `item.rename`、没有固定版本、并且同步一致（W = B、酒馆当前 T = B、没有冲突），新名称在酒馆和工作区的绑定里都未被占用（酒馆一侧按它的资料列表 `catalog.list` 查、不区分大小写，不去读不存在的项：tt 会把读不到当作后端错误弹给用户；只差大小写算同一名称）；否则整个改名被拒绝，什么都不变（未同步时提示先同步 / 取回）。离线的酒馆不改名：角色改名要搬聊天、改酒馆内存里的设置，直接改文件会被运行中的酒馆覆盖或漏掉这些引用。
+- **每个绑定**：`item.rename {kind, id, name, baseHash: B}`；绑定 id 换成返回的新 id，返回数据与工作区不同（角色卡的名称）就写回工作区，记为一致（与发布相同：基准哈希、基准快照、已部署指针、监视列表）。绑了多个酒馆时逐个改；中途失败则已改的保留并在错误里列出，其余酒馆仍是旧名称。`item.rename` 超时（酒馆页面被限速或卡住）时结果未知：伴侣程序再读一次酒馆，旧 id 已不在、新 id 存在就当作改名成功（警告 `rename-confirmed-late`），否则按失败处理。
+- **文件夹**：文件夹名按命名规则等于旧名称时，在同一个顶层文件夹里改成新名称（与「移动」同一条路径，历史经 `formerPaths` 跟着走，workspace-format.md §8）。
+- **世界书链接（一条规则）**：世界书改名后，工作区里链接到它的角色卡（`extensions.world`，按状态里显示的同一个解析规则指向这本书）把链接改成新名称，并走正常同步写到该卡原本同步一致且在运行的酒馆；其它绑定留作本地修改（提示 `world-link-not-synced`）。不在工作区里的卡不动（酒馆自己改名也不改卡）。
+- **角色卡连同世界书**（`withWorld`）：卡链接的世界书与卡原名相同时，也改成新的卡名（两者在动手前一起检查），卡的链接按上一条规则跟着改；名称不同则世界书和链接都不动（`world-name-differs`）。
+- **Cellar Link 按酒馆自己的改名步骤执行**（去掉弹窗，也不要求该角色正打开）。`getContext()` 没有提供的（`renameTagKey`、`setCharacterId`、`setActiveCharacter`/`active_character`、`renameGroupMember`、`world_info`、`selected_world_info`、`getCharaFilename`）直接从酒馆前端模块导入，ST 与 tt 是同一份前端：
+  - 角色（对应 `script.js` 的 `renameCharacter`）：`POST /api/characters/rename {avatar_url, new_name}`（后端改卡名、改文件名、搬聊天文件夹）→ `renameTagKey`、`world_info.charLore`、角色作者注释 `extension_settings.note.chara`、`active_character` 跟着新头像，保存设置，发出 `CHARACTER_RENAMED`；重新加载角色列表（该角色正打开时先卸下、再按新头像选中，否则酒馆会因「当前角色不见了」刷新页面）；`renameGroupMember` 更新群组成员与群聊里的头像引用。不改旧聊天里的名字（相当于在酒馆的提示里选「否」）。
+  - 世界书（对应 `world-info.js` 的 `renameWorldInfo`）：`saveWorldInfo(新名, data, true)`，删除旧文件，全局启用列表、角色的附加世界书 `charLore`、人设世界书都指向新名称，刷新世界书列表（编辑器正显示它时切到新名称）。删除旧文件不经 `deleteWorldInfo`：它会解除当前打开角色的世界书并在后台保存该角色（与伴侣程序更新卡链接的同步竞争），还会清空人设世界书。角色卡的 `extensions.world` 由伴侣程序按上面的链接规则更新。
+
+### 换头像（工作区 → 酒馆，`POST /api/avatar`）
+Studio 角色编辑器头部「更换头像…」/ `cellar avatar <项路径> <图片.png>` → `SyncEngine.setAvatar`。头像只存在酒馆里（工作区不存图片），换头像与改名一样是酒馆一侧的操作，对绑定的每个酒馆都做。
+- **先检查、再动手**：必须绑定了酒馆；每个绑定都能写入——实时连接且 Cellar Link 支持 `item.avatar`，或酒馆未运行且设为「不开酒馆也同步」（`write`）。否则整个操作被拒绝，哪里都不变。卡片内容不变，所以不要求同步一致，也不管固定版本。绑了多个酒馆时逐个换；中途失败（如离线写入时发现酒馆已启动）则已换的保留并在错误里列出。
+- **同步状态**：酒馆返回的卡哈希等于基准 B 时什么都不记。不同（宿主重写了卡，或酒馆里本来就有没取回的修改）就按普通的酒馆一侧修改处理：实时连接走 `onItemChanged`（工作区无修改则拉取、否则按槽位合并），离线在状态里显示为 `tavern-changes`。
+- **Cellar Link**：`POST /api/characters/edit-avatar`（multipart `avatar_url` + `avatar`，不带 `crop`，ST 与 tt 同一个接口；后端保留卡块、作废缩略图）→ `getOneCharacter`（该角色正打开时重新填充表单）→ 用 `cache: 'reload'` 重新请求缩略图与 `/characters/<头像>`，把页面里用到它们的图片重新加载（同 tt 的 `refreshCharacterAvatarImages`）→ 从后端复读卡。
+- **离线**：新 PNG 加上原卡的 `chara` / `ccv3` 块（字节不变），先备份、临时文件 + 改名写入；卡文件比缩略图新，酒馆下次提供缩略图时自己重新生成。
+- **Studio**：选图后在浏览器里取中间的正方形、缩到最大 512px、转成 PNG 再上传（所以所有路径都只接收 PNG）。伴侣程序让这些头像的缓存失效；Studio 用响应里的 `avatarAt` 给头像地址加 `v`，各处的 `Avatar.vue` 一起更新。
 
 ### 离线访问（按酒馆数据目录）
 配置 `locations` 设置了酒馆目录、且该酒馆启用过一次 Cellar Link（其设置里保存了 `targetId`）时，伴侣程序为它建立离线链接 `OfflineLink`，接口与实时连接相同：

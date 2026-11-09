@@ -4,6 +4,7 @@ import { api, errorText } from '../api.js';
 import { uiStatus, isConflict } from './status.js';
 import { useLibrary } from '../stores/library.js';
 import { flushItem } from './useItem.js';
+import { warningText } from './warnings.js';
 
 /**
  * Sync (workspace -> tavern) or pull (tavern -> workspace) one binding, then refresh the store.
@@ -139,6 +140,112 @@ export async function removeItem(app, ui, path, keepFiles) {
 }
 
 const EDIT_DONE = { undo: '已撤回', redo: '已取消撤回', revert: '已撤销当前的修改，恢复成上一个版本' };
+
+/**
+ * Moves an item to a project folder ('' = back to its kind folder). Pending editor edits are written first; tabs,
+ * the open page and the 资料库 mark follow the new path.
+ * @param {any} app @param {any} ui @param {string} path @param {string} folder
+ * @returns {Promise<boolean>}
+ */
+export async function moveItem(app, ui, path, folder) {
+  try {
+    await flushItem(path);
+    const r = /** @type {any} */ (await api.moveItem(path, folder));
+    if (r.result === 'moved') {
+      ui.itemMoved(r.from, r.path);
+      for (const e of useLibrary().items) if (e.checkedOut === r.from) e.checkedOut = r.path;
+    }
+    await app.refreshStatus();
+    ui.toast(r.result === 'moved' ? '已移到 ' + r.path : '它已经在这个文件夹里');
+    return true;
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    return false;
+  }
+}
+
+/**
+ * Why 「改名…」 cannot run for an item now ('' = it can): every bound tavern must be running with a Cellar Link that
+ * supports renaming. Other preconditions (in sync, not pinned) are the companion's and come back as its error.
+ * @param {any} app @param {any} it status item
+ * @returns {string}
+ */
+export function renameBlocked(app, it) {
+  for (const b of it.bindings) {
+    const t = app.target(b.target);
+    const name = app.targetName(b.target);
+    if (!t.live) return name + ' 没有在运行：改名需要酒馆在运行（打开酒馆后再试）';
+    if (!(t.rename >= 1)) return name + ' 的 Cellar Link 太旧，不支持改名；请更新插件';
+  }
+  return '';
+}
+
+/**
+ * Renames a bound character / lorebook in its taverns (POST /api/rename). Pending editor edits are written first;
+ * tabs, the open page and the 资料库 mark follow a folder that was renamed with it (the card's lorebook too).
+ * @param {any} app @param {any} ui @param {string} path @param {string} name @param {boolean} withWorld
+ * @returns {Promise<boolean>}
+ */
+export async function renameItem(app, ui, path, name, withWorld) {
+  try {
+    await flushItem(path);
+    const r = /** @type {any} */ (await api.renameItem(path, name, withWorld));
+    const moves = [[r.from, r.path], ...(r.world && r.world.renamed ? [[r.world.from, r.world.path]] : [])];
+    for (const [from, to] of moves) {
+      if (from === to) continue;
+      ui.itemMoved(from, to);
+      for (const e of useLibrary().items) if (e.checkedOut === from) e.checkedOut = to;
+    }
+    await app.refreshStatus();
+    const notes = (r.warnings || []).map((/** @type {any} */ w) => warningText(w, app.settings?.ui?.messageLang));
+    const done = '已改名为「' + name + '」' + (r.world && r.world.renamed ? '（连同世界书）' : '');
+    ui.toast(notes.length ? done + '；' + notes.join('；') : done, notes.length ? 'alert' : 'check');
+    return true;
+  } catch (e) {
+    ui.toast(errorText(e), 'alert');
+    await app.refreshStatus();
+    return false;
+  }
+}
+
+/**
+ * Why 「更换头像…」 cannot run for a card now ('' = it can): it must be bound, and every bound tavern reachable for
+ * writing — running with a Cellar Link that supports avatars, or closed and set to 不开酒馆也同步.
+ * @param {any} app @param {any} it status item
+ * @returns {string}
+ */
+export function avatarBlocked(app, it) {
+  if (!it || !it.bindings.length) return '头像存在酒馆里：先发布到酒馆再换头像';
+  for (const b of it.bindings) {
+    const t = app.target(b.target);
+    const name = app.targetName(b.target);
+    if (t.live && !(t.avatar >= 1)) return name + ' 的 Cellar Link 太旧，不支持换头像；请更新插件';
+    if (!t.live && !t.offline) return name + ' 没有连接，也没有设置离线访问：打开酒馆后再换头像';
+    if (!t.live && t.offlineSync !== 'write') return name + ' 没有在运行，并且设为等酒馆启动再同步：打开酒馆后再换头像';
+  }
+  return '';
+}
+
+/**
+ * Replaces a bound card's avatar in its taverns (POST /api/avatar); every Avatar of it reloads.
+ * @param {any} app @param {any} ui @param {any} it status item @param {string} image base64 PNG
+ * @returns {Promise<boolean>}
+ */
+export async function setAvatar(app, ui, it, image) {
+  try {
+    const r = /** @type {any} */ (await api.setAvatar(it.path, image));
+    for (const [target, file] of Object.entries(r.ids)) app.avatarAt[target + '/' + file] = r.avatarAt;
+    ui.toast('已更换头像', 'check');
+    return true;
+  } catch (e) {
+    // A partial failure may have changed some taverns: reload the image anyway.
+    for (const b of it.bindings) app.avatarAt[b.target + '/' + b.id] = Date.now();
+    ui.toast(errorText(e), 'alert');
+    return false;
+  } finally {
+    await app.refreshStatus();
+  }
+}
 
 /**
  * 撤回 / 取消撤回 / 撤销当前的修改 of one item (the companion keeps the steps, docs/versioning.md §6). Pending

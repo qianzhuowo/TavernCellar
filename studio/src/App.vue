@@ -10,6 +10,10 @@ import Inspector from './components/Inspector.vue';
 import StatusBar from './components/StatusBar.vue';
 import Toasts from './components/Toasts.vue';
 import RemoveDialog from './components/RemoveDialog.vue';
+import MoveDialog from './components/MoveDialog.vue';
+import RenameDialog from './components/RenameDialog.vue';
+import ImportDialog from './components/ImportDialog.vue';
+import ChangesDialog from './components/ChangesDialog.vue';
 import Shortcuts from './components/Shortcuts.vue';
 import Wizard from './screens/Wizard.vue';
 import Library from './screens/Library.vue';
@@ -127,7 +131,11 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', onHash); if (st
     </div>
   </div>
 
-  <RemoveDialog v-if="app.ready && ui.removeAsk && app.item(ui.removeAsk)" :key="ui.removeAsk" :path="ui.removeAsk" />
+    <RemoveDialog v-if="app.ready && ui.removeAsk && app.item(ui.removeAsk)" :key="ui.removeAsk" :path="ui.removeAsk" />
+    <MoveDialog v-if="app.ready && ui.moveAsk && app.item(ui.moveAsk)" :key="ui.moveAsk" :path="ui.moveAsk" />
+    <RenameDialog v-if="app.ready && ui.renameAsk && app.item(ui.renameAsk)" :key="ui.renameAsk" :path="ui.renameAsk" />
+    <ImportDialog v-if="app.ready && ui.importAsk" />
+    <ChangesDialog v-if="app.ready && ui.changesAsk && app.item(ui.changesAsk.path)" :key="ui.changesAsk.path + '|' + ui.changesAsk.target" :path="ui.changesAsk.path" :target="ui.changesAsk.target" />
   <Toasts />
 </template>
 

@@ -3,23 +3,16 @@
  * See docs/architecture.md §4 (write paths) and docs/ROADMAP.md (source references).
  */
 import { diffPaths, hashData } from '../../shared/hash.js';
-import { ASSET_MAX_BYTES, CREATE_VERSION, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, PREVIEW_VERSION, ProtocolError, assertAssetRef, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
-import { world_names, newWorldInfoEntryTemplate, worldInfoCache } from '../../../../../world-info.js';
+import { ASSET_MAX_BYTES, AVATAR_VERSION, CREATE_VERSION, ERR, GLOBAL_REGEX_ID, MSG, PRESET_APIS, PREVIEW_VERSION, ProtocolError, RENAME_KINDS, RENAME_VERSION, assertAssetRef, assertAvatarRequest, assertItemRef, assertKind, assertNewItemName, canonicalCharacter, parsePresetId, presetId } from '../../shared/protocol.js';
+import { world_names, newWorldInfoEntryTemplate, worldInfoCache, world_info, selected_world_info } from '../../../../../world-info.js';
+import { active_character, setActiveCharacter, setCharacterId } from '../../../../../../script.js';
+import { renameTagKey } from '../../../../../tags.js';
+import { renameGroupMember } from '../../../../../group-chats.js';
+import { getCharaFilename } from '../../../../../utils.js';
 import { previewPrompt } from './preview.js';
 
 const ctx = () => SillyTavern.getContext();
 const watchKey = (kind, id) => `${kind}\u0000${id}`;
-
-/** Whether a dotted path from diffPaths exists in a value ('(root)' always does). */
-function hasPath(value, path) {
-    if (path === '(root)') return true;
-    let v = value;
-    for (const key of path.split('.')) {
-        if (v === null || typeof v !== 'object' || !Object.prototype.hasOwnProperty.call(v, key)) return false;
-        v = v[key];
-    }
-    return true;
-}
 
 async function postJson(url, body) {
     const response = await fetch(url, {
@@ -67,10 +60,32 @@ async function readCharacter(avatar) {
     return canonicalCharacter(JSON.parse(character.json_data), avatar);
 }
 
-async function writeCharacter(avatar, card) {
-    const response = await postJson('/api/characters/merge-attributes', canonicalCharacter(card, avatar));
+/**
+ * The body that makes `merge-attributes` store `card` in place of `stored`: the endpoint deep-merges into the stored
+ * card (ST `deepMerge`, tt `merge_json_value_with_unset`), so a key the card no longer has is sent as `null` — both
+ * hosts then store `null` there instead of keeping the old value. Arrays are replaced whole and need nothing.
+ */
+function characterPayload(card, avatar, stored) {
+    const out = canonicalCharacter(card, avatar);
+    const clear = (prev, next) => {
+        for (const key of Object.keys(prev)) {
+            if (!Object.prototype.hasOwnProperty.call(next, key)) next[key] = null;
+            else if (isPlainObject(prev[key]) && isPlainObject(next[key])) {
+                next[key] = { ...next[key] };
+                clear(prev[key], next[key]);
+            }
+        }
+    };
+    clear(stored, out);
+    return out;
+}
+
+/** Writes `payload` (from characterPayload) and returns the card the backend stored. */
+async function writeCharacter(avatar, payload) {
+    const response = await postJson('/api/characters/merge-attributes', payload);
     if (!response.ok) throw await responseError(response, `Saving character ${avatar}`);
     await refreshCharacterUi(avatar);
+    return readCharacter(avatar);
 }
 
 /** Updates the in-memory character list and re-renders the editor if this character is open. */
@@ -92,6 +107,75 @@ function listCharacters() {
             tags: Array.isArray(ch.tags) ? ch.tags : [],
             dateLastChat: ch.date_last_chat || 0,
         }));
+}
+
+/** The character whose avatar file a card named `name` gets (`<name>.png`, ignoring case: it is a file name). */
+function characterNamed(name) {
+    return ctx().characters.find(ch => ch?.avatar?.toLowerCase() === `${name}.png`.toLowerCase());
+}
+
+/**
+ * The tavern's own renameCharacter (script.js) without its popups and without needing the character to be open:
+ * the backend renames the card file and moves its chats; then everything the frontend keys by the avatar follows
+ * (tags, extra lorebooks, the character's author's note, the active character, group members) and
+ * CHARACTER_RENAMED is emitted. Past chat messages keep the old name, as when the user declines ST's offer.
+ */
+async function renameCharacterInTavern(avatar, name) {
+    const c = ctx();
+    const response = await postJson('/api/characters/rename', { avatar_url: avatar, new_name: name });
+    if (!response.ok) throw await responseError(response, `Renaming character ${avatar}`);
+    const newAvatar = (await response.json().catch(() => null))?.avatar;
+    if (typeof newAvatar !== 'string' || !newAvatar) throw new ProtocolError(ERR.HOST_ERROR, `Renaming character ${avatar}: the tavern did not return the new avatar`);
+    const oldKey = getCharaFilename(null, { manualAvatarKey: avatar });
+    const newKey = getCharaFilename(null, { manualAvatarKey: newAvatar });
+    renameTagKey(avatar, newAvatar);
+    const charLore = world_info.charLore?.find(x => x.name == oldKey);
+    if (charLore) charLore.name = newKey;
+    const charNote = c.extensionSettings.note?.chara?.find(x => x.name == oldKey);
+    if (charNote) charNote.name = newKey;
+    if (active_character === avatar) setActiveCharacter(newAvatar);
+    c.saveSettingsDebounced();
+    const wasOpen = c.characterId !== undefined && c.characters[c.characterId]?.avatar === avatar;
+    await c.eventSource.emit(c.eventTypes.CHARACTER_RENAMED, avatar, newAvatar);
+    // getCharacters re-selects the open character by its avatar and reloads the page when it is gone: unload it first.
+    if (wasOpen) setCharacterId(undefined);
+    await c.getCharacters();
+    if (wasOpen) {
+        const index = ctx().characters.findIndex(ch => ch.avatar === newAvatar);
+        if (index !== -1) await ctx().selectCharacterById(index, { switchMenu: false });
+    }
+    await renameGroupMember(avatar, newAvatar, name);
+    return newAvatar;
+}
+
+/**
+ * Replaces a character's avatar through the tavern's own `/api/characters/edit-avatar` (ST and tt: multipart
+ * `avatar_url` + `avatar`, no crop: the image is used as sent). The backend keeps the card chunks and invalidates
+ * its thumbnail; the page then reloads both avatar URLs from the server and re-shows every image using them, the way
+ * tt's refreshCharacterAvatarImages does (ST's own editor only reloads the thumbnail and chat avatars).
+ */
+async function replaceAvatarInTavern(avatar, png) {
+    const c = ctx();
+    const form = new FormData();
+    form.append('avatar_url', avatar);
+    form.append('avatar', new Blob([png], { type: 'image/png' }), 'avatar.png');
+    const headers = c.getRequestHeaders();
+    delete headers['Content-Type'];
+    const response = await fetch('/api/characters/edit-avatar', { method: 'POST', headers, body: form, cache: 'no-cache' });
+    if (!response.ok) throw await responseError(response, `Changing the avatar of ${avatar}`);
+    await refreshCharacterUi(avatar);
+    // The avatar is already replaced: a page that cannot refresh its images only shows the old one until reloaded.
+    await reloadAvatarImages(avatar).catch(error => console.warn('[TavernCellar] avatar images not refreshed', error));
+}
+
+async function reloadAvatarImages(avatar) {
+    const urls = [ctx().getThumbnailUrl('avatar', avatar), `/characters/${encodeURIComponent(avatar)}`].map(url => new URL(url, location.href).href);
+    await Promise.all(urls.map(url => fetch(url, { cache: 'reload' })));
+    const images = [...document.images].filter(image => urls.includes(image.src)).map(image => ({ image, src: image.src }));
+    for (const { image } of images) image.removeAttribute('src');
+    // Not requestAnimationFrame: the tavern tab is usually in the background while Studio is used.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    for (const { image, src } of images) image.src = src;
 }
 
 // ---- lorebooks ------------------------------------------------------------
@@ -127,6 +211,35 @@ async function writeLorebook(name, data) {
 
 function listLorebooks() {
     return (world_names ?? []).map(name => ({ id: name, name }));
+}
+
+/**
+ * The tavern's own renameWorldInfo (world-info.js) without its popup: the book is saved under the new name and the
+ * old file deleted; the global selection, characters' extra lorebooks and the persona lorebook keep pointing at it.
+ * The deletion is done here rather than through deleteWorldInfo, which would unlink the open character's book and
+ * save that character in the background (racing the companion's own update of the card's link), and clear the
+ * persona lorebook. Cards' `extensions.world` are not changed here (neither does the tavern): the companion updates
+ * the workspace cards that link to the book and syncs them.
+ */
+async function renameLorebookInTavern(oldName, name, data) {
+    const c = ctx();
+    const editorShowing = String($('#world_editor_select').find(':selected').text()) === oldName;
+    await writeLorebook(name, data);
+    const response = await postJson('/api/worldinfo/delete', { name: oldName });
+    if (!response.ok) throw await responseError(response, `Deleting lorebook ${oldName} after saving it as ${name} (both now exist)`);
+    worldInfoCache.delete(oldName);
+    const selected = selected_world_info.indexOf(oldName);
+    if (selected !== -1) selected_world_info.splice(selected, 1, name);
+    for (const charLore of world_info.charLore ?? []) {
+        if (charLore.extraBooks?.includes(oldName)) charLore.extraBooks = charLore.extraBooks.map(book => (book === oldName ? name : book));
+    }
+    const power = c.powerUserSettings;
+    if (power.persona_description_lorebook === oldName) power.persona_description_lorebook = name;
+    for (const persona of Object.values(power.persona_descriptions ?? {})) if (persona?.lorebook === oldName) persona.lorebook = name;
+    if ($('#character_world').val() === oldName) $('#character_world').val(name); // the open character's form
+    c.saveSettingsDebounced();
+    await c.updateWorldInfoList();
+    if (editorShowing) $('#world_editor_select').val(world_names.indexOf(name)).trigger('change');
 }
 
 // ---- global regex ---------------------------------------------------------
@@ -368,6 +481,8 @@ export class Host {
             kinds: ['character', 'lorebook', 'regex', 'preset'],
             preview: PREVIEW_VERSION,
             create: CREATE_VERSION,
+            rename: RENAME_VERSION,
+            avatar: AVATAR_VERSION,
             worldInfoEntryTemplate: structuredClone(newWorldInfoEntryTemplate),
         };
     }
@@ -397,6 +512,8 @@ export class Host {
             case MSG.ITEM_GET: return this.get(payload);
             case MSG.ITEM_PUT: return this.put(payload);
             case MSG.ITEM_CREATE: return this.create(payload);
+            case MSG.ITEM_RENAME: return this.rename(payload);
+            case MSG.ITEM_AVATAR: return this.setAvatar(payload);
             case MSG.WATCH_SET: return this.setWatch(payload);
             case MSG.ASSET_GET: assertAssetRef(payload); return readAsset(payload);
             case MSG.PROMPT_PREVIEW: return previewPrompt(payload);
@@ -442,7 +559,7 @@ export class Host {
     /**
      * `item.create`: makes an item that the tavern does not have yet, through the tavern's own endpoints (characters:
      * the create endpoint with the default avatar, then the full card; lorebooks: worldinfo/edit; presets:
-     * presets/save). An existing name is refused, never overwritten.
+     * presets/save). An existing name is refused (`conflict` with the existing `{ kind, id }`), never overwritten.
      */
     async create({ kind, name, id: requested, data }) {
         assertKind(kind);
@@ -452,9 +569,10 @@ export class Host {
         const c = ctx();
         let id;
         let stored;
+        let sent;
         if (kind === 'lorebook') {
             await c.updateWorldInfoList();
-            if (world_names?.includes(name)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的世界书：${name}`);
+            if (world_names?.includes(name)) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的世界书：${name}`, { kind, id: name });
             id = name;
             const response = await postJson('/api/worldinfo/edit', { name, data });
             if (!response.ok) throw await responseError(response, `Creating lorebook ${name}`);
@@ -464,7 +582,7 @@ export class Host {
             id = requested ?? presetId('openai', name);
             const { apiId } = parsePresetId(id);
             if (await readPresetFromDisk(id, { fresh: true }).then(() => true, () => false)) {
-                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的预设：${name}`);
+                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的预设：${name}`, { kind, id });
             }
             const manager = c.getPresetManager(apiId);
             const response = await postJson('/api/presets/save', { preset: data, name, apiId });
@@ -482,9 +600,8 @@ export class Host {
             }
         } else {
             await c.getCharacters();
-            if (c.characters.some(ch => ch?.avatar?.toLowerCase() === `${name}.png`.toLowerCase())) {
-                throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的角色卡：${name}`);
-            }
+            const existing = characterNamed(name);
+            if (existing) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的角色卡：${name}`, { kind, id: existing.avatar });
             const form = new FormData();
             form.append('ch_name', name);
             form.append('file_name', name);
@@ -493,12 +610,12 @@ export class Host {
             const response = await fetch('/api/characters/create', { method: 'POST', headers, body: form, cache: 'no-cache' });
             if (!response.ok) throw await responseError(response, `Creating character ${name}`);
             id = (await response.text()).trim();
-            await writeCharacter(id, data);
+            sent = characterPayload(data, id, await readCharacter(id));
+            stored = await writeCharacter(id, sent);
             await c.getCharacters();
-            stored = await readCharacter(id);
         }
         const hash = await hashData(stored);
-        const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
+        sent ??= data;
         const warnings = hash !== await hashData(sent) ? [{ code: 'normalized', paths: diffPaths(sent, stored) }] : [];
         return { kind, id, data: stored, hash, warnings };
     }
@@ -507,6 +624,68 @@ export class Host {
         assertItemRef(payload);
         const data = await this.read(payload.kind, payload.id);
         return { data, hash: await hashData(data) };
+    }
+
+    /**
+     * `item.rename`: renames a character or lorebook through the tavern's own rename steps (renameCharacterInTavern,
+     * renameLorebookInTavern). Checked first like `item.put` (`baseHash`), and a name another item has is refused
+     * (`conflict` with that item's `{ kind, id }`). Returns the renamed item re-read from the backend.
+     */
+    async rename(payload) {
+        assertItemRef(payload);
+        const { kind, id, name, baseHash } = payload;
+        if (!RENAME_KINDS.includes(kind)) throw new ProtocolError(ERR.BAD_REQUEST, '只能给角色卡和世界书改名');
+        assertNewItemName(name);
+        const key = watchKey(kind, id);
+        if (this.writing.has(key)) throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} is already being written`);
+        const keys = [key, watchKey(kind, name)];
+        for (const k of keys) this.writing.add(k);
+        try {
+            const c = ctx();
+            const current = await step(`Reading ${kind} ${id} before renaming (nothing changed)`, () => this.read(kind, id));
+            const currentHash = await hashData(current);
+            if (baseHash !== currentHash) throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
+            let existing;
+            if (kind === 'lorebook') {
+                await c.updateWorldInfoList();
+                existing = (world_names ?? []).find(n => n.toLowerCase() === name.toLowerCase());
+            } else {
+                if ((current.data?.name ?? current.name) === name) throw new ProtocolError(ERR.BAD_REQUEST, `新名称与现在的名称相同：${name}`);
+                await c.getCharacters();
+                existing = characterNamed(name)?.avatar;
+            }
+            if (existing === id) throw new ProtocolError(ERR.BAD_REQUEST, `新名称与现在的名称相同（不区分大小写）：${name}`);
+            if (existing) throw new ProtocolError(ERR.CONFLICT, `酒馆里已有同名的${kind === 'lorebook' ? '世界书' : '角色卡'}：${name}`, { kind, id: existing });
+            const newId = await step(`Renaming ${kind} ${id} (it may or may not have been renamed)`, async () => {
+                if (kind === 'character') return renameCharacterInTavern(id, name);
+                await renameLorebookInTavern(id, name, current);
+                return name;
+            });
+            const stored = kind === 'character' ? await readCharacter(newId) : await readLorebookFromDisk(newId);
+            return { kind, id: newId, data: stored, hash: await hashData(stored), warnings: [] };
+        } finally {
+            for (const k of keys) this.writing.delete(k);
+        }
+    }
+
+    /**
+     * `item.avatar`: replaces a character's avatar image (replaceAvatarInTavern). The card data stays; the response
+     * is the card re-read from the backend, so a host that re-serialized it shows up as a different hash.
+     */
+    async setAvatar(payload) {
+        assertAvatarRequest(payload);
+        const { kind, id, image } = payload;
+        const key = watchKey(kind, id);
+        if (this.writing.has(key)) throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} is already being written`);
+        this.writing.add(key);
+        try {
+            const png = Uint8Array.from(atob(image), ch => ch.charCodeAt(0));
+            await step(`Changing the avatar of ${id} (it may or may not have been changed)`, () => replaceAvatarInTavern(id, png));
+            const stored = await readCharacter(id);
+            return { kind, id, data: stored, hash: await hashData(stored) };
+        } finally {
+            this.writing.delete(key);
+        }
     }
 
     async put(payload) {
@@ -523,27 +702,19 @@ export class Host {
             if (baseHash !== currentHash) {
                 throw new ProtocolError(ERR.CONFLICT, `${kind} ${id} changed in the tavern`, { currentHash });
             }
+            // Characters: what is sent includes `null` at deleted keys (characterPayload), and is what the tavern stores.
+            const sent = kind === 'character' ? characterPayload(data, id, current) : data;
             const stored = await step(`Saving ${kind} ${id} (it may or may not have been saved)`, async () => {
-                if (kind === 'character') await writeCharacter(id, data);
-                else if (kind === 'regex') assertGlobalRegexData(data);
-                else if (kind !== 'preset') await writeLorebook(id, data);
-
-                // Re-read what the backend actually stored (lorebooks: bypass the frontend cache).
-                return kind === 'character' ? await readCharacter(id)
-                    : kind === 'regex' ? await writeGlobalRegex(data.scripts)
-                        : kind === 'preset' ? await writePreset(id, data)
-                            : await readLorebookFromDisk(id);
+                if (kind === 'character') return writeCharacter(id, sent);
+                if (kind === 'regex') { assertGlobalRegexData(data); return writeGlobalRegex(data.scripts); }
+                if (kind === 'preset') return writePreset(id, data);
+                await writeLorebook(id, data);
+                return readLorebookFromDisk(id); // re-read what the backend stored, bypassing the frontend cache
             });
-            const sent = kind === 'character' ? canonicalCharacter(data, id) : data;
             const hash = await hashData(stored);
             const sentHash = await hashData(sent);
             if (hash === currentHash && sentHash !== currentHash) {
-                // The only changes were deleted fields and the tavern kept them: saved, worth a warning, not an error.
-                const paths = diffPaths(sent, current, 50);
-                if (!paths.length || !paths.every(p => !hasPath(sent, p))) {
-                    throw new ProtocolError(ERR.HOST_ERROR, `${kind} ${id} was not saved (backend still returns the old data)`);
-                }
-                return { data: stored, hash, warnings: [{ code: 'kept-deleted', paths }] };
+                throw new ProtocolError(ERR.HOST_ERROR, `${kind} ${id} was not saved (backend still returns the old data)`);
             }
             const warnings = [];
             // Structured warnings ({ code, ...params }): Cellar Studio words them in the user's language.

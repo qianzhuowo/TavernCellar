@@ -109,7 +109,7 @@ export const useLibrary = defineStore('library', {
         if (seq === this.seq) { this.loading = false; this.slow = false; }
       }
     },
-    /** @param {any} entry @param {{exclude?: string[], withWorld?: boolean}} [opts] characters: file extraction */
+    /** @param {any} entry @param {{exclude?: string[], withWorld?: boolean, folder?: string}} [opts] characters: file extraction, project folder */
     async checkout(entry, opts) {
       const ui = useUi();
       const app = useApp();

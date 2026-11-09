@@ -48,7 +48,7 @@ const decoder = new TextDecoder();
  */
 export const itemKey = itemPath => createHash('sha1').update(itemPath, 'utf8').digest('hex').slice(0, 20);
 const ITEM_KEY_RE = /^[0-9a-f]{20}$/;
-/** Entries of #entries / #changedItems that are items (`<kind folder>/<name>`); root files are workspace settings. */
+/** Entries of #entries / #changedItems that are items (`<folder>/<name>`); root files are workspace settings. */
 export const isItemEntry = entryPath => entryPath.includes('/');
 
 export const deployedRef = (targetId, itemPath) => `${DEPLOYED_PREFIX}/${targetId}/${itemKey(itemPath)}`;
@@ -56,11 +56,15 @@ const originRef = itemPath => `${ORIGIN_PREFIX}/${itemKey(itemPath)}`;
 const tagRef = (itemPath, name) => `${TAGS_PREFIX}/${itemKey(itemPath)}/${name}`;
 
 export class Vcs {
-    /** @param {string} root workspace root; `ignore(name)` skips files and folders (temp files, editor backups) */
-    constructor(root, { ignore = () => false, warn = () => {} } = {}) {
+    /**
+     * @param {string} root workspace root; `ignore(name)` skips files and folders (temp files, editor backups);
+     * `itemPaths()` lists the workspace's current item paths (a moved item's pointers are keyed by its current path)
+     */
+    constructor(root, { ignore = () => false, warn = () => {}, itemPaths = () => [] } = {}) {
         this.dir = root;
         this.ignore = ignore;
         this.warn = warn;
+        this.itemPaths = itemPaths;
         this.queue = Promise.resolve();
         /** rel path -> {mtimeMs, size, oid, at}: content hashes of workspace files (see #blob) */
         this.hashes = new Map();
@@ -383,8 +387,9 @@ export class Vcs {
             if (!origin) continue;
             const o = (await git.readCommit(this.#opts({ oid: origin }))).commit;
             if ((o.parent[0] ?? null) !== parent) continue;
+            // Every deferred entry as it was there: the item may have been elsewhere then (moved since).
             const moved = await git.commit(this.#opts({
-                message: o.message, author: AUTHOR, tree: await this.#withEntries(tree, o.tree, [path]), parent: [oid], noUpdateBranch: true,
+                message: o.message, author: AUTHOR, tree: await this.#withEntries(tree, o.tree, defer), parent: [oid], noUpdateBranch: true,
             }));
             await git.writeRef(this.#opts({ ref: originRef(path), value: moved, force: true }));
         }
@@ -422,21 +427,24 @@ export class Vcs {
     }
 
     /**
-     * Tags one item at a version (default: the last recorded version). Tagging the draft records that item first
-     * (with `message`), so the tag names the version it became.
+     * Tags one item at a version (default: the last recorded version). `itemPaths`: the item's paths, current first
+     * (the tag is keyed by that one; a version from before a move has the item at a former path). Tagging the draft
+     * records that item first (with `message`), so the tag names the version it became.
      */
-    tag(name, itemPath, rev, message) {
+    tag(name, itemPaths, rev, message) {
+        const itemPath = itemPaths[0];
         return this.serial(async () => {
             const draft = await this.#draft();
             let oid = rev ? await this.#resolveLocked(rev) : null;
             if (oid && oid === draft) {
                 const { commit } = await git.readCommit(this.#opts({ oid: draft }));
-                const inDraft = (await this.#changedItems(commit.parent[0] ?? null, draft)).includes(itemPath);
-                oid = inDraft ? await this.#commitLocked(message, [itemPath]) : commit.parent[0] ?? null;
+                const inDraft = (await this.#changedItems(commit.parent[0] ?? null, draft)).some(p => itemPaths.includes(p));
+                oid = inDraft ? await this.#commitLocked(message, itemPaths) : commit.parent[0] ?? null;
             } else if (!oid) {
                 oid = draft ? (await git.readCommit(this.#opts({ oid: draft }))).commit.parent[0] ?? null : await this.#head();
             }
-            if (!oid || !(await this.#entries(oid)).has(itemPath)) throw new Error(`这个版本里没有 ${itemPath}`);
+            const entries = oid ? await this.#entries(oid) : new Map();
+            if (!itemPaths.some(p => entries.has(p))) throw new Error(`这个版本里没有 ${itemPath}`);
             if (await this.#ref(tagRef(itemPath, name))) throw Object.assign(new Error(`${itemPath} 已有标签 ${name}`), { code: 'AlreadyExistsError' });
             await git.writeRef(this.#opts({ ref: tagRef(itemPath, name), value: oid }));
             return oid;
@@ -464,11 +472,15 @@ export class Vcs {
         return out;
     }
 
-    /** Tags on a version as {path, name}: the item is found among the version's entries by its key. */
+    /**
+     * Tags on a version as {path, name}: the item is found among the version's entries by its key, else among the
+     * workspace's current items (a tag moved along with its item names it by the current path).
+     */
     async #tagsOn(oid, list) {
         const here = list.filter(t => t.oid === oid);
         if (!here.length) return [];
-        const byKey = new Map([...(await this.#entries(oid)).keys()].filter(isItemEntry).map(p => [itemKey(p), p]));
+        const paths = [...this.itemPaths(), ...[...(await this.#entries(oid)).keys()].filter(isItemEntry)];
+        const byKey = new Map(paths.map(p => [itemKey(p), p]));
         return here.filter(t => byKey.has(t.key)).map(t => ({ path: byKey.get(t.key), name: t.name }))
             .sort((a, b) => a.path.localeCompare(b.path) || a.name.localeCompare(b.name));
     }
@@ -544,30 +556,67 @@ export class Vcs {
     }
 
     /**
-     * Where 撤销当前的修改 goes for an item: its origin snapshot when that was taken in the current draft (the item
-     * entered the workspace after the last recorded version), else the last recorded version. Null: neither has it.
+     * Where 撤销当前的修改 goes for an item (`itemPaths`: current first, then former paths): its origin snapshot when
+     * that was taken in the current draft (the item entered the workspace after the last recorded version), else
+     * the last recorded version. Null: neither has it.
      */
-    revertPoint(itemPath) {
+    revertPoint(itemPaths) {
         return this.serial(async () => {
             const draft = await this.#draft();
             const last = draft ? (await git.readCommit(this.#opts({ oid: draft }))).commit.parent[0] ?? null : await this.#head();
-            const origin = await this.#ref(originRef(itemPath));
+            const origin = await this.#ref(originRef(itemPaths[0]));
             if (origin) {
                 const parent = await git.readCommit(this.#opts({ oid: origin })).then(c => c.commit.parent[0] ?? null, () => undefined);
                 if (parent !== undefined && parent === last && origin !== last) return { oid: origin, origin: true };
             }
             if (!last) return null;
-            try {
-                await git.readTree(this.#opts({ oid: last, filepath: itemPath }));
-                return { oid: last, origin: false };
-            } catch {
-                return null;
-            }
+            const entries = await this.#entries(last);
+            return itemPaths.some(p => entries.has(p)) ? { oid: last, origin: false } : null;
         });
     }
 
     dropOrigin(itemPath) {
         return this.serial(() => git.deleteRef(this.#opts({ ref: originRef(itemPath) })).catch(() => {}));
+    }
+
+    /**
+     * An item moved (SyncEngine.moveItem): its deployed and origin pointers and its tags follow it to the new key.
+     * All or nothing: the new refs are written first and the old ones deleted after; a failure undoes what was done,
+     * so the caller can refuse the move with nothing changed.
+     */
+    renameItem(fromPath, toPath) {
+        return this.serial(async () => {
+            const from = itemKey(fromPath);
+            const to = itemKey(toPath);
+            const moves = [];
+            for (const name of await git.listRefs(this.#opts({ filepath: DEPLOYED_PREFIX })).catch(() => [])) {
+                const [target, key] = name.split('/');
+                if (key === from) moves.push([`${DEPLOYED_PREFIX}/${name}`, `${DEPLOYED_PREFIX}/${target}/${to}`]);
+            }
+            moves.push([`${ORIGIN_PREFIX}/${from}`, `${ORIGIN_PREFIX}/${to}`]);
+            for (const t of await this.#tagList()) if (t.key === from) moves.push([`${TAGS_PREFIX}/${from}/${t.name}`, `${TAGS_PREFIX}/${to}/${t.name}`]);
+            const found = [];
+            for (const [ref, next] of moves) {
+                const oid = await this.#ref(ref);
+                if (oid) found.push({ ref, next, oid });
+            }
+            const written = [];
+            const deleted = [];
+            try {
+                for (const m of found) {
+                    await git.writeRef(this.#opts({ ref: m.next, value: m.oid, force: true }));
+                    written.push(m);
+                }
+                for (const m of found) {
+                    await git.deleteRef(this.#opts({ ref: m.ref }));
+                    deleted.push(m);
+                }
+            } catch (error) {
+                for (const m of deleted) await git.writeRef(this.#opts({ ref: m.ref, value: m.oid, force: true })).catch(() => {});
+                for (const m of written) await git.deleteRef(this.#opts({ ref: m.next })).catch(() => {});
+                throw error;
+            }
+        });
     }
 
     // ---- storage: 压缩历史 -------------------------------------------------------------------------------
@@ -698,29 +747,30 @@ export class Vcs {
         return out;
     }
 
-    /** Item folders (`<kind folder>/<name>`) whose content differs between two commits (either may be null). */
+    /** Item folders (`<folder>/<name>`) whose content differs between two commits (either may be null). */
     async #changedItems(fromOid, toOid) {
         const [a, b] = await Promise.all([this.#entries(fromOid), this.#entries(toOid)]);
         return [...new Set([...a.keys(), ...b.keys()])].filter(p => a.get(p) !== b.get(p)).sort();
     }
 
     /**
-     * Version list, newest first: {id, parents, message, time, draft, items, tags}. `path` keeps versions that touch
-     * that item. `items` are top-level paths that changed against the first parent; `tags` are [{path, name}];
-     * `message` is the latest description (a note written later wins over the one recorded).
+     * Version list, newest first: {id, parents, message, time, draft, items, tags}. `paths` (an item's current and
+     * former paths) keeps versions that touch that item. `items` are top-level paths that changed against the first
+     * parent; `tags` are [{path, name}]; `message` is the latest description (a note written later wins over the one
+     * recorded).
      */
-    log({ path, limit = 100 } = {}) {
+    log({ paths, limit = 100 } = {}) {
         return this.serial(async () => {
             const head = await this.#head();
             if (!head) return [];
             const draft = await this.#draft();
             const tags = await this.#tagList();
             const notes = await this.#notes();
-            const commits = await git.log(this.#opts({ ref: 'HEAD', depth: path ? Math.max(limit * 5, 200) : limit }));
+            const commits = await git.log(this.#opts({ ref: 'HEAD', depth: paths ? Math.max(limit * 5, 200) : limit }));
             const out = [];
             for (const { oid, commit } of commits) {
                 const items = await this.#changedItems(commit.parent[0] ?? null, oid);
-                if (path && !items.includes(path)) continue;
+                if (paths && !items.some(p => paths.includes(p))) continue;
                 out.push({
                     id: oid, parents: commit.parent, message: notes.get(oid) ?? commit.message.replace(/\n$/, ''), time: commit.committer.timestamp * 1000,
                     draft: oid === draft, items, tags: await this.#tagsOn(oid, tags),
