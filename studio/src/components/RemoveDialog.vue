@@ -32,7 +32,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey));
     <div class="drawer-scrim qo-scrim" @click="close" />
     <div class="dlg" role="alertdialog" aria-modal="true" aria-labelledby="rm-dlg-title">
       <h3 id="rm-dlg-title"><Icon name="trash" />从工作区移除「{{ name }}」？</h3>
-      <p class="faint">只从工作区移除：酒馆里的内容不受影响，之前的版本仍在版本历史中。文件夹里你自己的笔记会保留。</p>
+      <p class="faint">只从工作区移除：酒馆里的内容不受影响。这次移除会存档为一个版本，之前的版本仍在版本历史中；没存档的修改会一起去掉。文件夹里你自己的笔记会保留。</p>
       <label class="insp-check"><input v-model="keepFiles" type="checkbox" />保留文件夹里的全部文件</label>
       <div class="dlg-btns">
         <button ref="cancelBtn" class="btn sm" :disabled="busy" @click="close">取消</button>

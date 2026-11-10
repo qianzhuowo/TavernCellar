@@ -1,21 +1,21 @@
 <script setup>
 // 其他开场: collapsible textareas with add / delete / drag-to-reorder. Emits the whole new list on every change.
-import { ref, watch } from 'vue';
+import { ref } from 'vue';
 import { GripVertical } from 'lucide-vue-next';
 import Icon from '../Icon.vue';
 import CardText from './CardText.vue';
 import { countChars } from './cardFields.js';
 
 const props = defineProps({
-  items: { type: Array, default: () => [] },
-  /** bumped when the card reloads, to reset the open state */
-  version: { type: Number, default: 0 }
+  items: { type: Array, default: () => [] }
 });
 const emit = defineEmits(['update']);
 
-/** open state per row, kept parallel to items */
-const open = ref(/** @type {boolean[]} */ ([]));
-watch(() => props.version, () => { open.value = props.items.map((_, i) => i === 0); }, { immediate: true });
+/**
+ * Open state per row, kept parallel to items (rows past its end are closed). It survives reloads of the card, so a
+ * change written elsewhere does not fold the rows being read and move the page.
+ */
+const open = ref(/** @type {boolean[]} */ (props.items.map((_, i) => i === 0)));
 
 const armed = ref(-1);
 let armTimer = 0;

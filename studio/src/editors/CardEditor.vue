@@ -355,7 +355,7 @@ onBeforeUnmount(() => { document.removeEventListener('scroll', onScroll, true); 
       <CardText id="ce-sec-desc" big label="角色描述" :rows="8" :model-value="f('description')" @update:model-value="set('description', $event)" />
       <template v-if="extracted.has('greetings')">
         <CardText id="ce-sec-first" big label="第一条消息" :rows="6" :model-value="f('first_mes')" @update:model-value="set('first_mes', $event)" />
-        <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" :version="it.version.value" @update="set('alternate_greetings', $event)" />
+        <GreetingList id="ce-sec-greets" ref="greetList" :items="greetings" @update="set('alternate_greetings', $event)" />
       </template>
 
       <div class="card ce-adv-wrap" :class="{ collapsed: !advOpen }">

@@ -86,7 +86,9 @@ screenshots/
 
 # Temp files from editors and test scripts
 *.tmp
+*.tmp.*
 .tmp-*/
+*.7z
 
 # Live-test artifacts that could land outside .tmp/: settings backups, CDP scratch, crash dumps, Electron profiles
 *.cellar-*.tmp

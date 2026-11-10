@@ -170,7 +170,7 @@ export function errorText(e) {
   switch (e.code) {
     case 'conflict': return (e.message && /[\u4e00-\u9fff]/.test(e.message) ? e.message.replace(/^.*?与酒馆/, '与酒馆') : '存在冲突') + '。请在「处理冲突」中逐项选择';
     case 'waiting_for_tavern': return '酒馆未运行：修改已留在工作区，酒馆启动后再同步';
-    case 'tavern_running': return '酒馆正在运行：请在酒馆中启用 Cellar Link 后同步';
+    case 'tavern_running': return /[\u4e00-\u9fff]/.test(e.message || '') ? e.message : '酒馆正在运行，但 Cellar Link 没有连上：切换到酒馆页面会自动重连，连上后再试';
     case 'not_connected': return '酒馆未连接';
     case 'unauthorized': return '未授权：请从伴侣程序重新打开 Studio';
     case 'not_found': return e.message || '找不到该资料项';

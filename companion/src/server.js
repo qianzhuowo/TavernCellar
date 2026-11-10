@@ -361,6 +361,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
     engine.onHistory = () => emit('status', { reason: 'history' });
     await engine.upgradeLayouts();
     await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
+    await engine.recordRemovals();
     const cleanHistory = () => {
         const ui = { ...UI_DEFAULTS, ...config.ui };
         if (!ui.historyAutoClean) return;
@@ -462,6 +463,7 @@ export async function startServer({ config, workspace, log: baseLog = console.lo
         engine.local.clear();
         engine.edits.clear();
         await engine.versions().catch(error => log(`version history unavailable: ${error.message}`));
+        await engine.recordRemovals();
         stopWatching = startWatching();
         config.workspace = next.root;
         await persistConfig(config);

@@ -22,7 +22,7 @@ const MAX_BACKOFF_MS = 60000;
 // or when the user returns to the tab, at most every QUIET_FOCUS_MS). Each failed WebSocket attempt makes the
 // browser itself log an error that scripts cannot suppress, so fewer attempts is the only way to keep the console clean.
 const QUIET_AFTER = 6;
-const QUIET_MS = 5 * 60000;
+const QUIET_MS = 60000;
 const QUIET_FOCUS_MS = 30000;
 const KEEPALIVE_LOCK = 'tavern-cellar-link';
 

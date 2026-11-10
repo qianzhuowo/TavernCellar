@@ -47,28 +47,48 @@ export function useItem(pathRef) {
   /** Characters: parts not loaded because they are not extracted; sent back on save so they are kept. */
   const omitted = ref(/** @type {string[]} */ ([]));
   let timer = 0;
+  /** Bumped when a write starts: a read that overlapped one cannot tell our write from someone else's. */
+  let writes = 0;
   /** Plain copy of the data as last loaded or written (lorebooks: base for entry-by-entry writes). */
   let written = null;
+
+  /** Takes a read of the item (POST /api/item) as the editor's data. */
+  function apply(/** @type {any} */ r) {
+    data.value = r.data;
+    hash.value = r.hash;
+    written = clone(r.data);
+    entryTemplate.value = r.entryTemplate ?? null;
+    omitted.value = r.omitted ?? [];
+    dirty.value = false;
+    externalChange.value = false;
+    version.value++;
+  }
 
   async function load() {
     clearTimeout(timer);
     loading.value = true;
     error.value = '';
     try {
-      const r = await api.item(pathRef.value);
-      data.value = r.data;
-      hash.value = r.hash;
-      written = clone(r.data);
-      entryTemplate.value = r.entryTemplate ?? null;
-      omitted.value = r.omitted ?? [];
-      dirty.value = false;
-      externalChange.value = false;
-      version.value++;
+      apply(await api.item(pathRef.value));
     } catch (e) {
       error.value = errorText(e);
     } finally {
       loading.value = false;
     }
+  }
+
+  /**
+   * The workspace status names another hash than ours. Status replies can be older than our last write (they take
+   * a while on a large workspace), so the item itself is read to tell: the same hash, or a write of ours meanwhile,
+   * means nothing happened elsewhere.
+   */
+  async function verify() {
+    const seen = writes;
+    let r;
+    try { r = await api.item(pathRef.value); } catch (e) { return; }
+    if (seen !== writes || saving.value || r.hash === hash.value) return;
+    if (dirty.value) externalChange.value = true;
+    else apply(r);
   }
 
   /** Marks `data` as edited and schedules the write. */
@@ -83,6 +103,7 @@ export function useItem(pathRef) {
     if (!dirty.value || saving.value || !data.value) return;
     saving.value = true;
     dirty.value = false;
+    writes++;
     // What is sent now; edits made while the request runs stay dirty and go in the next round.
     const sent = clone(data.value);
     try {
@@ -124,6 +145,7 @@ export function useItem(pathRef) {
     await save();
     if (externalChange.value) { ui.toast('文件在别处被修改，请先重新加载', 'alert'); return null; }
     saving.value = true;
+    writes++;
     try {
       const r = await api.editEntries(pathRef.value, hash.value, ops);
       hash.value = r.hash;
@@ -149,11 +171,10 @@ export function useItem(pathRef) {
     }
   }
 
-  // Reload when the workspace hash moves without us (files edited elsewhere or a pull wrote them).
+  // Files edited elsewhere (VS Code, a pull) move the workspace hash: reload, or hold the edits when there are some.
   watch(() => app.item(pathRef.value)?.hash, (h) => {
     if (!h || !hash.value || h === hash.value || saving.value) return;
-    if (dirty.value) externalChange.value = true;
-    else load();
+    verify();
   });
   watch(pathRef, (p, old) => {
     if (old && openEditors.get(old) === flush) openEditors.delete(old);

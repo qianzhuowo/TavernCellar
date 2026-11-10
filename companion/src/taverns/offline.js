@@ -281,13 +281,24 @@ export class OfflineLink {
         return target;
     }
 
+    /**
+     * Writes go to the data folder only while the tavern is closed: a running one holds the data in memory and would
+     * write it back over ours. The message says what to do, as the usual cause is a Cellar Link that is not
+     * connected yet (it retries quietly while the companion was away).
+     */
+    async assertClosed(action) {
+        if (!(await this.isRunning(this.location))) return;
+        const name = this.location.label || (this.location.host === 'tt' ? 'TauriTavern' : 'SillyTavern');
+        throw new ProtocolError(ERR.TAVERN_RUNNING,
+            `「${name}」正在运行，但其中的 Cellar Link 没有连上，无法${action}。酒馆运行时不能直接写它的文件（它会用内存里的内容覆盖回去）。`
+            + '切换到酒馆页面，Cellar Link 会自动重连（也可以在扩展设置里点「连接」），连上后再试；或者关闭酒馆后离线写入。');
+    }
+
     async put({ kind, id, data, baseHash }) {
         assertItemRef({ kind, id });
         if (!isPlainObject(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
         if (typeof baseHash !== 'string') throw new ProtocolError(ERR.BAD_REQUEST, 'baseHash is required');
-        if (await this.isRunning(this.location)) {
-            throw new ProtocolError(ERR.TAVERN_RUNNING, `${this.location.label} is running; enable Cellar Link in it to sync, or close it to write offline`);
-        }
+        await this.assertClosed('同步');
         const file = this.fileFor(kind, id);
         const current = await this.readItem(kind, id);
         const currentHash = await hashData(current.data);
@@ -319,9 +330,7 @@ export class OfflineLink {
     async setAvatar(payload) {
         assertAvatarRequest(payload);
         const { kind, id, image } = payload;
-        if (await this.isRunning(this.location)) {
-            throw new ProtocolError(ERR.TAVERN_RUNNING, `${this.location.label} is running; enable Cellar Link in it to change the avatar, or close it to write offline`);
-        }
+        await this.assertClosed('更换头像');
         const file = this.fileFor(kind, id);
         const current = await this.readItem(kind, id);
         let content;
@@ -345,9 +354,7 @@ export class OfflineLink {
         if (kind === 'regex') throw new ProtocolError(ERR.BAD_REQUEST, 'The global regex list always exists');
         assertNewItemName(name);
         if (!isPlainObject(data)) throw new ProtocolError(ERR.BAD_REQUEST, 'data must be an object');
-        if (await this.isRunning(this.location)) {
-            throw new ProtocolError(ERR.TAVERN_RUNNING, `${this.location.label} is running; enable Cellar Link in it to create items, or close it to write offline`);
-        }
+        await this.assertClosed('新建');
         const id = kind === 'character' ? `${name}.png` : kind === 'preset' ? (requested ?? presetId('openai', name)) : name;
         assertItemRef({ kind, id });
         const file = this.fileFor(kind, id);

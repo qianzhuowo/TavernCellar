@@ -88,3 +88,54 @@ test('remove: a folder with only codec files is deleted entirely', async () => {
         await rm(dir, { recursive: true, force: true });
     }
 });
+
+test('remove: the removal is recorded as its own version, other draft edits stay in the draft', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cellar-remove3-'));
+    const start = async () => startServer({
+        config: { port: 0, token: TOKEN, allowOrigins: [], taverns: { st: true, tt: true }, stPorts: [] },
+        workspace: await Workspace.init(dir), log: () => {}, watch: false, persistConfig: async () => {},
+    });
+    await Workspace.init(dir);
+    let server = await start();
+    let tavern = new FakeTavern(server.port);
+    const api = async (path, body) => (await fetch(`http://127.0.0.1:${server.port}${path}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${TOKEN}` }, body: JSON.stringify(body ?? {}),
+    })).json();
+    const draftItems = async () => (await api('/api/history', {})).result.draft.items.filter(p => p.includes('/'));
+    try {
+        await tavern.ready;
+        const preset = (await api('/api/checkout', { kind: 'preset', id: 'openai/P1' })).result.path;
+        const book = (await api('/api/checkout', { kind: 'lorebook', id: 'Book' })).result.path;
+        assert.equal((await api('/api/history/commit', { message: 'v1' })).ok, true);
+        // Unsaved edits in both, then the preset goes.
+        await writeFile(join(dir, ...preset.split('/'), 'notes.md'), 'draft note');
+        const bookFile = (await readdir(join(dir, ...book.split('/')), { recursive: true })).find(f => f.endsWith('.md'));
+        await writeFile(join(dir, ...book.split('/'), bookFile), 'edited entry\n');
+        assert.deepEqual((await draftItems()).sort(), [book, preset].sort());
+
+        assert.equal((await api('/api/remove', { path: preset })).ok, true);
+        assert.deepEqual(await draftItems(), [book], 'only the book is left in the draft');
+        const versions = (await api('/api/history', {})).result.versions;
+        const removal = versions.find(v => v.message === '从工作区移除「openai-P1」');
+        assert.ok(removal, JSON.stringify(versions.map(v => v.message)));
+        assert.deepEqual(removal.items.filter(p => p.includes('/')), [preset]);
+        assert.equal(versions[0].draft, true, 'the book edit is a draft on top of the removal');
+
+        // A removal left in the draft by an older version (files and manifest entry gone without recording) is
+        // recorded when the companion opens the workspace.
+        tavern.close();
+        await server.close();
+        const ws = await Workspace.init(dir);
+        await rm(join(dir, ...book.split('/')), { recursive: true, force: true });
+        ws.manifest.items = ws.manifest.items.filter(i => i.path !== book);
+        await ws.saveManifest();
+        server = await start();
+        tavern = new FakeTavern(server.port);
+        assert.deepEqual(await draftItems(), []);
+        assert.ok((await api('/api/history', {})).result.versions.some(v => v.message === '从工作区移除「Book」'));
+    } finally {
+        tavern.close();
+        await server.close();
+        await rm(dir, { recursive: true, force: true });
+    }
+});

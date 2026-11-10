@@ -115,10 +115,11 @@ export class SyncEngine {
      * Structured data of a workspace item and its workspace hash; lorebooks also return the new-entry template.
      * Characters come without the parts that are not extracted (`omitted`, see omitParts): the editor only loads what
      * the user took out to edit, and hands `omitted` back when saving so those parts are kept as stored.
+     * Read under the item lock, so a write in progress (an editor save, a pull) is never seen half done.
      */
     async readItemData(path) {
         const item = this.requireItem(path);
-        const { data, hash } = await this.encodeItem(item);
+        const { data, hash } = await this.withLock(item.path, () => this.encodeItem(item));
         const out = { path: item.path, kind: item.kind, data, hash };
         if (item.kind === 'lorebook') out.entryTemplate = (await this.decodeOptions(item)).template ?? null;
         if (item.kind === 'character') Object.assign(out, omitParts(data, item.layout?.exclude ?? []));
@@ -732,11 +733,12 @@ export class SyncEngine {
     /**
      * Takes an item out of the workspace: all its bindings, sync state, base snapshots and conflicts are forgotten and
      * (unless `keepFiles`) the files the codec wrote are deleted; the user's own files in the folder stay. The
-     * taverns are never touched. Earlier versions remain in the version history.
+     * taverns are never touched. Earlier versions remain in the version history; the removal itself is recorded as a
+     * version of its own (recordRemovals), so it does not stay in the draft as an unsaved change.
      */
     async remove(path, { keepFiles = false } = {}) {
         const item = this.requireItem(path);
-        return this.withLock(path, async () => {
+        const result = await this.withLock(path, async () => {
             const targets = Object.keys(item.bindings ?? {});
             for (const targetId of targets) await this.ws.vcs.dropDeployed(targetId, item.path).catch(() => {});
             await this.ws.vcs.dropOrigin(item.path).catch(() => {});
@@ -749,6 +751,39 @@ export class SyncEngine {
             this.log(`removed ${item.path} from the workspace${keepFiles ? ' (files kept)' : ''}`);
             return { path: item.path, result: 'removed', kept: keepFiles ? null : kept };
         });
+        await this.recordRemovals();
+        return result;
+    }
+
+    /**
+     * An item taken out of the workspace does not stay in the draft as an unsaved change: every draft entry that was
+     * an item in the last version and is no longer the path of any workspace item (current or former) is recorded on
+     * its own as "从工作区移除", the rest of the draft staying on top of it (vcs.commit with paths). Runs after each
+     * removal and when the companion opens a workspace (removals made before this rule). Logged, never thrown.
+     */
+    async recordRemovals() {
+        try {
+            const vcs = await this.versions();
+            await vcs.snapshot();
+            const draft = await vcs.draftInfo();
+            const parent = draft.id ? await vcs.parentOf(draft.id) : null;
+            if (!parent) return;
+            const live = new Set(this.ws.manifest.items.flatMap(item => this.ws.itemPaths(item)));
+            const removed = [];
+            for (const p of draft.items) {
+                if (!isItemEntry(p) || live.has(p)) continue;
+                const before = await vcs.readItemAt(parent, p);
+                if (before && ITEM_META_FILE in before) removed.push(p);
+            }
+            if (!removed.length) return;
+            const names = removed.map(p => p.slice(p.indexOf('/') + 1));
+            const message = removed.length === 1 ? `从工作区移除「${names[0]}」` : `从工作区移除 ${removed.length} 项：${names.join('、')}`;
+            const oid = await vcs.commit(message, removed);
+            if (oid) this.log(`recorded version ${oid.slice(0, 8)} (removed ${removed.join(', ')})`);
+            this.onHistory();
+        } catch (error) {
+            this.log(`version history: ${error.message}`);
+        }
     }
 
     /**
