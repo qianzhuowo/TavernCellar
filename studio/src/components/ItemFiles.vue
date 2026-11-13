@@ -76,7 +76,10 @@ const groups = computed(() => {
   return [...m.values()].filter((g) => g.files.length);
 });
 const isCode = computed(() => /\.(json|js|txt|ya?ml)$/i.test(sel.value));
-const shortName = (/** @type {string} */ rel) => rel.slice(rel.lastIndexOf('/') + 1);
+const shortName = (/** @type {string} */ rel) => {
+  const slash = rel.indexOf('/');
+  return slash >= 0 ? rel.slice(slash + 1) : rel;
+};
 const sizeText = (/** @type {number} */ n) => (n < 1024 ? n + ' B' : (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB');
 
 async function loadList() {
