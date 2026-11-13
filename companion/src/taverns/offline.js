@@ -191,7 +191,7 @@ export class OfflineLink {
             const card = JSON.parse(readCardText(await readFile(file)));
             const data = isPlainObject(card.data) ? card.data : card;
             const cardName = data.name || card.name;
-            if (cardName) summary = { id: name, name: String(cardName), tags: Array.isArray(data.tags) ? data.tags : [] };
+            if (cardName) summary = { id: name, name: String(cardName), tags: Array.isArray(data.tags) ? data.tags : [], dateAdded: Math.round(info.mtimeMs) };
         } catch { /* not a character card */ }
         this.summaries.set(file, { mtimeMs: info.mtimeMs, size: info.size, summary });
         return summary;
@@ -240,7 +240,11 @@ export class OfflineLink {
             const q = query.trim().toLowerCase();
             items = items.filter(item => item.name.toLowerCase().includes(q) || item.id.toLowerCase().includes(q));
         }
-        items.sort((a, b) => a.name.localeCompare(b.name));
+        if (kind === 'character') {
+            items.sort((a, b) => ((b.dateLastChat || 0) - (a.dateLastChat || 0)) || ((b.dateAdded || 0) - (a.dateAdded || 0)) || a.name.localeCompare(b.name));
+        } else {
+            items.sort((a, b) => a.name.localeCompare(b.name));
+        }
         const start = Math.max(0, Number(offset) || 0);
         const count = Math.min(500, Math.max(1, Number(limit) || 50));
         return { total: items.length, items: items.slice(start, start + count) };

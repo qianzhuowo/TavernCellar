@@ -146,6 +146,23 @@ test('offline: `chat` is the tavern\'s own; opening a chat there changes nothing
     assert.equal(JSON.parse(readCardText(await readFile(cardFile))).chat, 'Card - 2026-11-09@12h00m00s');
     assert.equal('chat' in JSON.parse(await readFile(join(ws.root, 'characters', 'Card', 'card.json'), 'utf8')), false);
 });
+
+test('offline: character catalog defaults to tavern order (dateLastChat desc, then dateAdded desc)', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    const charsDir = join(dataRoot, 'default-user', 'characters');
+    const chatsDir = join(dataRoot, 'default-user', 'chats', 'Zoe');
+    await writeFile(join(charsDir, 'Zoe.png'), writeCard(png, { name: 'Zoe', spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'Zoe', description: 'z' } }));
+    await mkdir(chatsDir, { recursive: true });
+    await writeFile(join(chatsDir, '2026-11-11.jsonl'), '{}\n');
+    try {
+        const cat = await targets.resolve(TARGET).link.request('catalog.list', { kind: 'character' });
+        assert.deepEqual(cat.items.map(i => i.name), ['Zoe', 'Card']);
+    } finally {
+        await rm(join(charsDir, 'Zoe.png'), { force: true });
+        await rm(chatsDir, { recursive: true, force: true });
+    }
+});
+
 test('offline: a new avatar keeps the card chunks byte for byte and the binding in sync', async () => {
     const cardFile = join(dataRoot, 'default-user', 'characters', 'Card.png');
     const before = readCardText(await readFile(cardFile));

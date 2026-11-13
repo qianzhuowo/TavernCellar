@@ -73,8 +73,45 @@ test('file names decide order; deleting a file removes the item; edits are norma
 });
 
 test('ownership: part files are owned, notes inside regex/ and scripts/ are not', () => {
-    for (const rel of ['regex/01-a.json', 'regex/01-a.replace.txt', 'scripts/12-x.js', 'scripts/12-x.json', 'variables.json']) assert.ok(ownsCharacterFile(rel), rel);
-    for (const rel of ['regex/readme.md', 'scripts/notes.js', 'scripts/sub/01-a.js', 'regex/a.json']) assert.equal(ownsCharacterFile(rel), false, rel);
+    for (const rel of ['regex/01-a.json', 'regex/01-a.replace.txt', 'scripts/12-x.js', 'scripts/12-x.json', 'variables.json', 'character_book/0001-a.md', 'character_book/world/0001-a.md', 'character_book/world/sub/0002-b.md']) assert.ok(ownsCharacterFile(rel), rel);
+    for (const rel of ['regex/readme.md', 'scripts/notes.js', 'scripts/sub/01-a.js', 'regex/a.json', 'character_book/notes.md', 'character_book/world/notes.md']) assert.equal(ownsCharacterFile(rel), false, rel);
+});
+
+test('character_book: subfolder groups round-trip losslessly, move between folders, and reject duplicate group', () => {
+    const card = baseCard({});
+    card.data.character_book = {
+        name: 'Book',
+        entries: [
+            { id: 0, keys: ['a'], comment: 'World', content: 'w', extensions: { cellar: { group: 'world' } } },
+            { id: 1, keys: ['b'], comment: 'Sub', content: 's', extensions: { cellar: { group: 'character/intimate' }, other: 1 } },
+            { id: 2, keys: ['c'], comment: 'Root', content: 'r' },
+            { id: 3, keys: ['d'], comment: 'Bad', content: 'x', extensions: { cellar: { group: 'bad:name' } } },
+        ],
+    };
+    const files = decodeCharacter(card);
+    const bookFiles = Object.keys(files).filter(f => f.startsWith('character_book/')).sort();
+    assert.deepEqual(bookFiles, [
+        'character_book/0003-Root.md',
+        'character_book/0004-Bad.md',
+        'character_book/character/intimate/0002-Sub.md',
+        'character_book/world/0001-World.md',
+    ]);
+    assert.equal(files['character_book/world/0001-World.md'].includes('cellar'), false);
+    assert.deepStrictEqual(encodeCharacter(files), card);
+
+    // Moving a file between subfolders changes its group; moving to root removes it; numbering keeps entry order.
+    files['character_book/style/0003-Root.md'] = files['character_book/0003-Root.md'];
+    delete files['character_book/0003-Root.md'];
+    files['character_book/0001-World.md'] = files['character_book/world/0001-World.md'];
+    delete files['character_book/world/0001-World.md'];
+    const moved = encodeCharacter(files).data.character_book.entries;
+    assert.equal(moved[0].extensions, undefined);
+    assert.deepEqual(moved[2].extensions, { cellar: { group: 'style' } });
+
+    // Writing group in both folder and front matter is rejected.
+    files['character_book/world/0004-Bad.md'] = files['character_book/0004-Bad.md'];
+    delete files['character_book/0004-Bad.md'];
+    assert.throws(() => encodeCharacter(files), /分组同时写在文件夹和文件头里/);
 });
 
 test('startup upgrades a codec-1 layout in place without changing the content hash', async () => {

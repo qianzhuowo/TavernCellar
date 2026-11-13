@@ -103,7 +103,7 @@ characters/Alice/
   - 编辑器只加载提取的部分：`GET /api/item` 返回的 `data` 不含未提取部分，另附 `omitted`（被省略的路径）；`PUT /api/item` 带回 `omitted`，伴侣程序从磁盘上的完整卡按原键位补回这些部分再写入。未提取的内容同步时原样保留。
   - 运行时生效的是 `data.extensions.world` 绑定的世界书（ST 保存角色时从它生成 `character_book` 副本）。Studio 提取「角色世界书」时把绑定的书作为独立世界书资料项一起取出，在角色的「世界书」页编辑。
 - **框架识别**：取出结果和状态中的 `frameworks` 列出卡依赖的脚本框架（酒馆助手、MVU、小白X）及依据，用于提示“这张卡需要在酒馆中安装哪些插件”。
-- **内嵌世界书**（`data.character_book`）：每个条目拆成 `character_book/NNNN-<comment>.md`（YAML 头为除 `content` 外的字段，正文为 `content`），编号决定顺序；书的其他字段留在 `card.json`。条目形态无法识别时整本留在 `card.json`。可用 `layout.exclude` 的 `character_book` 保留在 `card.json`。
+- **内嵌世界书**（`data.character_book`）：每个条目拆成 `character_book/[<分组>/]NNNN-<comment>.md`（YAML 头为除 `content` 外的字段，正文为 `content`），编号决定顺序；`character_book/` 下的子文件夹对应条目的 Cellar 分组 `extensions.cellar.group`（规则同第 4 节「分组」）；书的其他字段留在 `card.json`。条目形态无法识别时整本留在 `card.json`。可用 `layout.exclude` 的 `character_book` 保留在 `card.json`。
 - **连同绑定世界书取出**：取出角色时传 `withWorld: true`，会把 `data.extensions.world` 指向的世界书一起取出；该书若已从同一酒馆取出则直接引用，不重复取出。关联不单独保存：状态中的 `world: { name, path }` 每次从卡的内容推导，`path` 为 null 表示绑定的书不在工作区。
 
 格式版本：元数据 `codec` 为 5。伴侣程序启动时把旧版本的资料项自动重新排布（`codec: 1` 的正则和脚本还在 `card.json` 里；`codec` 3 及以前的 `layout.exclude` 可含已取消的 `fields`，升级时去掉，基础文本字段重新各自成文件；`codec` 4 的 `scripts` 改为 `helper`、`variables` 去掉，并加入 `xiaobaix`——小白X数据在用户勾选前仍留在 `card.json`）；内容不变，哈希和同步状态不受影响，失败则回滚。文件暂时无法解析（例如正在编辑到一半）的项会跳过，下次启动再试。

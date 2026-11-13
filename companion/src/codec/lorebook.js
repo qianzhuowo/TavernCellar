@@ -28,20 +28,20 @@ export function ownsLorebookFile(rel) {
 // sub-folder under entries/, and the folder is its only source there (front matter does not repeat it).
 
 /** Folder segments for a group path, or null when it cannot be a folder losslessly (then it stays in front matter). */
-function groupFolders(group) {
+export function groupFolders(group) {
     if (typeof group !== 'string' || !group) return null;
     const parts = group.split('/');
     return parts.every(p => p && p !== '.' && p !== '..' && p === p.trim() && safeSegment(p, 80) === p) ? parts : null;
 }
 
 /** Group path of an entry file from its folder (entries/a/b/x.md -> "a/b"), or null at the top level. */
-function groupOfFile(name) {
+export function groupOfFile(name) {
     const parts = name.split('/').slice(1, -1);
     return parts.length ? parts.join('/') : null;
 }
 
 /** Removes extensions.cellar.group from a front matter copy, dropping objects it leaves empty. */
-function takeGroup(frontMatter) {
+export function takeGroup(frontMatter) {
     const ext = frontMatter.extensions;
     if (!isPlainObject(ext) || !isPlainObject(ext.cellar)) return null;
     const folders = groupFolders(ext.cellar.group);
@@ -53,7 +53,7 @@ function takeGroup(frontMatter) {
 }
 
 /** Puts the folder's group back onto an entry (inverse of takeGroup). */
-function putGroup(entry, group, name) {
+export function putGroup(entry, group, name) {
     const ext = entry.extensions;
     if (isPlainObject(ext) && isPlainObject(ext.cellar) && ext.cellar.group !== undefined) {
         throw new Error(`${name}: 分组同时写在文件夹和文件头里；在工作区中用文件夹表示分组，请删掉文件头中的 extensions.cellar.group`);

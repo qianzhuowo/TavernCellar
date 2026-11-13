@@ -540,7 +540,16 @@ export class Host {
         }
         // Browsing starts at page one: reload the list so items added outside this page show up; later pages reuse it.
         if (start === 0) await (kind === 'character' ? ctx().getCharacters() : ctx().updateWorldInfoList());
-        let items = kind === 'character' ? listCharacters() : listLorebooks();
+        if (kind === 'character') {
+            let items = listCharacters();
+            if (typeof query === 'string' && query.trim()) {
+                const q = query.trim().toLowerCase();
+                items = items.filter(item => item.name.toLowerCase().includes(q) || item.id.toLowerCase().includes(q));
+            }
+            const count = Math.min(500, Math.max(1, Number(limit) || 50));
+            return { total: items.length, items: items.slice(start, start + count) };
+        }
+        let items = listLorebooks();
         if (typeof query === 'string' && query.trim()) {
             const q = query.trim().toLowerCase();
             items = items.filter(item => item.name.toLowerCase().includes(q) || item.id.toLowerCase().includes(q));
